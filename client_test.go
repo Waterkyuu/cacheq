@@ -12,7 +12,7 @@ import (
 // TestCacheExpiration refreshes at the exact expiration boundary while isolating keys.
 func TestCacheExpiration(t *testing.T) {
 	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
-	cache := New[string, int](func() time.Time { return now })
+	cache := NewClient[string, int](Options{Clock: func() time.Time { return now }})
 	calls := 0
 	load := func(context.Context) (int, time.Time, error) {
 		calls++
@@ -35,7 +35,7 @@ func TestCacheExpiration(t *testing.T) {
 // TestCacheRetryExpiration reuses an explicitly cached failure and retries when its delay expires.
 func TestCacheRetryExpiration(t *testing.T) {
 	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
-	cache := New[string, string](func() time.Time { return now })
+	cache := NewClient[string, string](Options{Clock: func() time.Time { return now }})
 	failure := errors.New("unavailable")
 	calls := 0
 	load := func(context.Context) (string, time.Time, error) {
@@ -59,7 +59,7 @@ func TestCacheRetryExpiration(t *testing.T) {
 
 // TestCacheZeroExpiration leaves uncached results eligible for the next load.
 func TestCacheZeroExpiration(t *testing.T) {
-	cache := New[string, int](time.Now)
+	cache := NewClient[string, int](Options{})
 	calls := 0
 	load := func(context.Context) (int, time.Time, error) {
 		calls++
@@ -74,7 +74,7 @@ func TestCacheZeroExpiration(t *testing.T) {
 
 // TestCacheConcurrentLoads merges requests for one key without blocking other keys.
 func TestCacheConcurrentLoads(t *testing.T) {
-	cache := New[string, string](time.Now)
+	cache := NewClient[string, string](Options{})
 	var calls atomic.Int32
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -124,7 +124,7 @@ func TestCacheConcurrentLoads(t *testing.T) {
 
 // TestCacheWaiterCancellation does not cancel the caller that owns an active load.
 func TestCacheWaiterCancellation(t *testing.T) {
-	cache := New[string, string](time.Now)
+	cache := NewClient[string, string](Options{})
 	started := make(chan struct{})
 	release := make(chan struct{})
 	finished := make(chan error, 1)
@@ -159,7 +159,7 @@ func TestCacheWaiterCancellation(t *testing.T) {
 
 // TestCacheLoaderCancellation allows another caller to retry and never caches a canceled load.
 func TestCacheLoaderCancellation(t *testing.T) {
-	cache := New[string, string](time.Now)
+	cache := NewClient[string, string](Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	started := make(chan struct{})
