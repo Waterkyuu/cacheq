@@ -1,14 +1,24 @@
-## 安装
+<div align="center">
+  <img src="./assets/go-query.png" alt="go-query" width="144" />
 
-```sh
-go get github.com/Waterkyuu/go-query@v0.1.0
-```
+  <h1>go-query</h1>
 
-# go-query
+  <p><a href="./README.md">English</a> | <strong>简体中文</strong></p>
 
-![go-query](assets/go-query.png)
+  <p><strong>缓存、重试、共享查询数据</strong></p>
+  <p>面向 Go 1.22 及以上版本、没有外部依赖的查询客户端</p>
+  <p>多个组件共享数据、合并重复请求，并订阅查询状态。</p>
 
-面向 Go 1.22 及以上版本、没有外部依赖的查询客户端。多个组件复用同一个客户端，就能共享数据、合并重复请求，并订阅查询状态。
+  <p>
+    <img src="https://img.shields.io/badge/Go-1.22%2B-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.22+" />
+    <img src="https://img.shields.io/badge/Dependencies-0-64748B?style=flat-square" alt="Zero dependencies" />
+    <a href="https://github.com/Waterkyuu/go-query/actions/workflows/ci.yml"><img src="https://github.com/Waterkyuu/go-query/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  </p>
+
+  <p><a href="#功能">功能</a> · <a href="#安装">安装</a></p>
+</div>
+
+## 功能
 
 - 数据缓存，可配置 `StaleTime`，可判断数据是否过期。
 - 同一个查询键的并发请求共用一次加载，不同键独立加载。
@@ -16,6 +26,12 @@ go get github.com/Waterkyuu/go-query@v0.1.0
 - 多个组件共享查询数据与状态变化。
 - `Query` 立即返回已有数据，在后台刷新过期数据。
 - 支持手动失效、强制刷新、预加载、本地更新和取消。
+
+## 安装
+
+```sh
+go get github.com/Waterkyuu/go-query@v0.1.0
+```
 
 ## 查询和共享结果
 

@@ -1,14 +1,24 @@
-## Install
+<div align="center">
+  <img src="./assets/go-query.png" alt="go-query" width="144" />
 
-```sh
-go get github.com/Waterkyuu/go-query@v0.1.0
-```
+  <h1>go-query</h1>
 
-# go-query
+  <p><strong>English</strong> | <a href="./README.zh-CN.md">简体中文</a></p>
 
-![go-query](assets/go-query.png)
+  <p><strong>Cache, retry, and share your queries</strong></p>
+  <p>A typed, dependency-free query client for Go 1.22 and later</p>
+  <p>Share data across components, combine duplicate requests, and observe query state.</p>
 
-A typed, dependency-free query client for Go 1.22 and later. Share one client between components to reuse data, combine duplicate requests, and observe query state.
+  <p>
+    <img src="https://img.shields.io/badge/Go-1.22%2B-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.22+" />
+    <img src="https://img.shields.io/badge/Dependencies-0-64748B?style=flat-square" alt="Zero dependencies" />
+    <a href="https://github.com/Waterkyuu/go-query/actions/workflows/ci.yml"><img src="https://github.com/Waterkyuu/go-query/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  </p>
+
+  <p><a href="#features">Features</a> · <a href="#install">Install</a></p>
+</div>
+
+## Features
 
 - Data caching with configurable `StaleTime` and visible expiration.
 - One in-flight request per key; different keys load independently.
@@ -16,6 +26,12 @@ A typed, dependency-free query client for Go 1.22 and later. Share one client be
 - Shared data and state subscriptions for multiple components.
 - Immediate stale data with background refresh through `Query`.
 - Manual invalidation, forced refresh, prefetch, local updates, and cancellation.
+
+## Install
+
+```sh
+go get github.com/Waterkyuu/go-query@v0.1.0
+```
 
 ## Fetch and share data
 
