@@ -5,10 +5,20 @@ tasks:
     cmds:
       - task: help
   help:
-    desc: List available tasks
+    desc: Show command usage
     silent: true
     cmds:
-      - task --list
+      - |
+        echo "go-query"
+        echo ""
+        echo "Usage:"
+        echo "  task help              Show command usage"
+        echo "  task fmt               Format Go source"
+        echo "  task lint              Check Go code without modifying it"
+        echo "  task test              Run tests with race detection"
+        echo "  task test-cover        Run tests with coverage"
+        echo "  task build             Compile the library"
+        echo "  task hooks             Install local Git hooks"
   fmt:
     desc: Format Go source
     cmds:
