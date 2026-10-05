@@ -11,8 +11,6 @@
 
   <p>
     <img src="https://img.shields.io/badge/Go-1.22%2B-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.22+" />
-    <img src="https://img.shields.io/badge/Dependencies-0-64748B?style=flat-square" alt="Zero dependencies" />
-    <a href="https://github.com/Waterkyuu/go-query/actions/workflows/ci.yml"><img src="https://github.com/Waterkyuu/go-query/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   </p>
 
   <p><a href="#features">Features</a> · <a href="#install">Install</a></p>
