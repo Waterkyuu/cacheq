@@ -1,0 +1,30 @@
+version: "3"
+
+tasks:
+  fmt:
+    desc: Format Go source
+    cmds:
+      - gofmt -w .
+      - golangci-lint fmt
+  lint:
+    desc: Check Go code without modifying it
+    cmds:
+      - go vet ./...
+      - golangci-lint run --timeout=5m
+  test:
+    desc: Run tests with race detection
+    cmds:
+      - go test -race ./... -count=1
+  test-cover:
+    desc: Run tests with coverage
+    cmds:
+      - go test -race ./... -coverprofile=coverage.out -count=1
+      - go tool cover -func=coverage.out
+  build:
+    desc: Compile the library
+    cmds:
+      - go build ./...
+  hooks:
+    desc: Install local Git hooks
+    cmds:
+      - git config --local core.hooksPath .githooks

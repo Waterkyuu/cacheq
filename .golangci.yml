@@ -1,0 +1,59 @@
+version: "2"
+
+run:
+  concurrency: 6
+  timeout: 5m
+  tests: true
+  allow-parallel-runners: true
+
+output:
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+  sort-order:
+    - linter
+    - severity
+
+linters:
+  default: none
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - unused
+    - misspell
+    - gocritic
+    - gosec
+    - copyloopvar
+
+  exclusions:
+    rules:
+      - path: "_test\\.go$"
+        linters:
+          - errcheck
+          - gosec
+      - path: "vendor|third_party|mock"
+        linters: ["*"]
+      - linters:
+          - gosec
+        text: "G204"
+      - linters:
+          - gosec
+        text: "G301"
+      - linters:
+          - gosec
+        text: "G302"
+
+formatters:
+  settings:
+    golines:
+      max-len: 120
+      tab-len: 4
+      shorten-comments: false
+      reformat-tags: true
+      chain-split-dots: true
+  enable:
+    - goimports
+    - golines

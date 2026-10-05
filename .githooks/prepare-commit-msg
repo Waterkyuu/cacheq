@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+if [ "${LEFTHOOK:-}" = "0" ]; then
+  exit 0
+fi
+
+exec "${LEFTHOOK_BIN:-lefthook}" run --no-auto-install "prepare-commit-msg" "$@"
