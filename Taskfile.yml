@@ -44,5 +44,8 @@ tasks:
       - go build ./...
   hooks:
     desc: Install local Git hooks
+    preconditions:
+      - sh: command -v "${LEFTHOOK_BIN:-lefthook}"
+        msg: 'Install Lefthook first (for example: brew install lefthook), then run task hooks again.'
     cmds:
       - git config --local core.hooksPath .githooks

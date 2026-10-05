@@ -5,4 +5,18 @@ if [ "${LEFTHOOK:-}" = "0" ]; then
   exit 0
 fi
 
-exec "${LEFTHOOK_BIN:-lefthook}" run --no-auto-install "prepare-commit-msg" "$@"
+# GUI Git clients may omit Go and Homebrew directories from their inherited PATH.
+# Extend it for Lefthook and its Go checks while preserving existing tool choices.
+if [ -n "${HOME:-}" ]; then
+  PATH="${PATH:-/usr/bin:/bin}:$HOME/go/bin"
+fi
+PATH="${PATH:-/usr/bin:/bin}:/opt/homebrew/bin:/usr/local/bin:/usr/local/go/bin"
+export PATH
+
+lefthook_bin=${LEFTHOOK_BIN:-lefthook}
+if ! command -v "$lefthook_bin" >/dev/null 2>&1; then
+  printf '%s\n' 'Lefthook was not found. Install it and run task hooks, or set LEFTHOOK_BIN to its executable path.' >&2
+  exit 127
+fi
+
+exec "$lefthook_bin" run --no-auto-install "prepare-commit-msg" "$@"
