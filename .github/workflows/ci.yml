@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:
@@ -25,6 +26,10 @@ jobs:
           go-version: '1.25.x'
           cache: false
       - run: go mod verify
+      - name: Check release automation
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          sh .github/scripts/release_test.sh
       - name: Check module metadata
         run: |
           go mod tidy

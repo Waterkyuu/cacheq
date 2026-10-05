@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Stable version to publish (for example v0.1.1)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Generate and check notes without creating a Tag or Release'
+        default: false
+        type: boolean
+
+concurrency:
+  group: go-query-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release request
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          test -n "$DEEPSEEK_API_KEY"
+          sh .github/scripts/release.sh validate "$RELEASE_VERSION"
+
+  checks:
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+
+  security:
+    needs: validate
+    uses: ./.github/workflows/security.yml
+
+  notes:
+    needs: [checks, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare release context
+        run: sh .github/scripts/release.sh context "$RELEASE_VERSION"
+      - name: Write English release notes with DeepSeek Agent
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.DEEPSEEK_API_KEY }}
+          responses-api-endpoint: https://api.deepseek.com/responses
+          model: deepseek-flash
+          effort: medium
+          sandbox: read-only
+          prompt-file: .github/prompts/release-notes.md
+          output-file: release-notes.json
+          output-schema: |
+            {"type":"object","properties":{"version":{"type":"string"},"ready":{"type":"boolean"},"notes":{"type":"string"}},"required":["version","ready","notes"],"additionalProperties":false}
+      - name: Validate generated notes
+        run: sh .github/scripts/release.sh notes "$RELEASE_VERSION"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: |
+            release-notes.md
+            release-context.md
+          if-no-files-found: error
+          retention-days: 30
+      - name: Show release notes
+        run: cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: notes
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+      - name: Create Tag and Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          sh .github/scripts/release.sh publish "$RELEASE_VERSION"
