@@ -82,13 +82,13 @@ func NewClient[K comparable, V any](options Options) *Client[K, V] {
 
 // Fetch waits for fresh data using StaleTime to determine the result's expiration.
 func (c *Client[K, V]) Fetch(ctx context.Context, key K, fetch Fetcher[V]) (V, error) {
-	return c.Get(ctx, key, c.loader(fetch))
+	return c.FetchWithExpiry(ctx, key, c.loader(fetch))
 }
 
-// Get returns a fresh result or shares one loader with concurrent callers of the same key.
+// FetchWithExpiry returns a fresh result or shares one loader with concurrent callers of the same key.
 // Loaders control absolute freshness, preserving the age of data restored from disk.
 // A canceled waiter leaves the owner's load running. If the owner cancels, remaining callers may retry.
-func (c *Client[K, V]) Get(ctx context.Context, key K, load Loader[V]) (V, error) {
+func (c *Client[K, V]) FetchWithExpiry(ctx context.Context, key K, load Loader[V]) (V, error) {
 	var zero V
 	for {
 		if err := ctx.Err(); err != nil {

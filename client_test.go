@@ -19,7 +19,7 @@ func TestCacheExpiration(t *testing.T) {
 		return calls, now.Add(time.Hour), nil
 	}
 	for _, key := range []string{"a", "a", "b"} {
-		if _, err := cache.Get(context.Background(), key, load); err != nil {
+		if _, err := cache.FetchWithExpiry(context.Background(), key, load); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -27,7 +27,7 @@ func TestCacheExpiration(t *testing.T) {
 		t.Fatalf("loads = %d, want one per key", calls)
 	}
 	now = now.Add(time.Hour)
-	if got, err := cache.Get(context.Background(), "a", load); got != 3 || err != nil {
+	if got, err := cache.FetchWithExpiry(context.Background(), "a", load); got != 3 || err != nil {
 		t.Fatalf("expired result = %d, %v", got, err)
 	}
 }
@@ -43,7 +43,12 @@ func TestCacheRetryExpiration(t *testing.T) {
 		return "offline", now.Add(time.Minute), failure
 	}
 	for range 2 {
-		if value, err := cache.Get(context.Background(), "a", load); value != "offline" || !errors.Is(err, failure) {
+		if value, err := cache.FetchWithExpiry(
+			context.Background(),
+			"a",
+			load,
+		); value != "offline" ||
+			!errors.Is(err, failure) {
 			t.Fatalf("fallback = %q, %v", value, err)
 		}
 	}
@@ -51,7 +56,7 @@ func TestCacheRetryExpiration(t *testing.T) {
 		t.Fatalf("failure loaded %d times before retry expiration", calls)
 	}
 	now = now.Add(time.Minute)
-	_, _ = cache.Get(context.Background(), "a", load)
+	_, _ = cache.FetchWithExpiry(context.Background(), "a", load)
 	if calls != 2 {
 		t.Fatalf("failure was not retried: loads = %d", calls)
 	}
@@ -66,7 +71,7 @@ func TestCacheZeroExpiration(t *testing.T) {
 		return calls, time.Time{}, nil
 	}
 	for want := 1; want <= 2; want++ {
-		if value, err := cache.Get(context.Background(), "a", load); value != want || err != nil {
+		if value, err := cache.FetchWithExpiry(context.Background(), "a", load); value != want || err != nil {
 			t.Fatalf("uncached value = %d, %v; want %d", value, err, want)
 		}
 	}
@@ -94,7 +99,7 @@ func TestCacheConcurrentLoads(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if value, err := cache.Get(context.Background(), "a", load); value != "shared" || err != nil {
+			if value, err := cache.FetchWithExpiry(context.Background(), "a", load); value != "shared" || err != nil {
 				t.Errorf("shared result = %q, %v", value, err)
 			}
 		}()
@@ -102,7 +107,7 @@ func TestCacheConcurrentLoads(t *testing.T) {
 	<-started
 	other := make(chan string, 1)
 	go func() {
-		value, _ := cache.Get(context.Background(), "b", func(context.Context) (string, time.Time, error) {
+		value, _ := cache.FetchWithExpiry(context.Background(), "b", func(context.Context) (string, time.Time, error) {
 			return "independent", time.Now().Add(time.Hour), nil
 		})
 		other <- value
@@ -134,14 +139,14 @@ func TestCacheWaiterCancellation(t *testing.T) {
 		return "loaded", time.Now().Add(time.Hour), nil
 	}
 	go func() {
-		_, err := cache.Get(context.Background(), "a", load)
+		_, err := cache.FetchWithExpiry(context.Background(), "a", load)
 		finished <- err
 	}()
 	<-started
 	ctx, cancel := context.WithCancel(context.Background())
 	waiter := make(chan error, 1)
 	go func() {
-		_, err := cache.Get(ctx, "a", load)
+		_, err := cache.FetchWithExpiry(ctx, "a", load)
 		waiter <- err
 	}()
 	cancel()
@@ -152,7 +157,7 @@ func TestCacheWaiterCancellation(t *testing.T) {
 	if err := <-finished; err != nil {
 		t.Fatal(err)
 	}
-	if value, err := cache.Get(context.Background(), "a", load); value != "loaded" || err != nil {
+	if value, err := cache.FetchWithExpiry(context.Background(), "a", load); value != "loaded" || err != nil {
 		t.Fatalf("waiter discarded loaded value: %q, %v", value, err)
 	}
 }
@@ -165,7 +170,7 @@ func TestCacheLoaderCancellation(t *testing.T) {
 	started := make(chan struct{})
 	first := make(chan error, 1)
 	go func() {
-		_, err := cache.Get(ctx, "a", func(ctx context.Context) (string, time.Time, error) {
+		_, err := cache.FetchWithExpiry(ctx, "a", func(ctx context.Context) (string, time.Time, error) {
 			close(started)
 			<-ctx.Done()
 			return "canceled", time.Now().Add(time.Hour), nil
@@ -175,9 +180,13 @@ func TestCacheLoaderCancellation(t *testing.T) {
 	<-started
 	second := make(chan error, 1)
 	go func() {
-		value, err := cache.Get(context.Background(), "a", func(context.Context) (string, time.Time, error) {
-			return "retried", time.Now().Add(time.Hour), nil
-		})
+		value, err := cache.FetchWithExpiry(
+			context.Background(),
+			"a",
+			func(context.Context) (string, time.Time, error) {
+				return "retried", time.Now().Add(time.Hour), nil
+			},
+		)
 		if value != "retried" {
 			t.Errorf("remaining caller = %q", value)
 		}
@@ -190,7 +199,7 @@ func TestCacheLoaderCancellation(t *testing.T) {
 	if err := <-second; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cache.Get(ctx, "a", nil); !errors.Is(err, context.Canceled) {
+	if _, err := cache.FetchWithExpiry(ctx, "a", nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled caller used a cached result: %v", err)
 	}
 }
