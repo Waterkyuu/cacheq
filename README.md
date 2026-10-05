@@ -28,7 +28,7 @@
 ## Install
 
 ```sh
-go get github.com/Waterkyuu/go-query@v0.1.0
+go get github.com/Waterkyuu/go-query
 ```
 
 ## Fetch and share data
