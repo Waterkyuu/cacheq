@@ -6,6 +6,8 @@ go get github.com/Waterkyuu/go-query@v0.1.0
 
 # go-query
 
+![go-query](assets/go-query.png)
+
 A typed, dependency-free query client for Go 1.22 and later. Share one client between components to reuse data, combine duplicate requests, and observe query state.
 
 - Data caching with configurable `StaleTime` and visible expiration.

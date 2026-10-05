@@ -6,6 +6,8 @@ go get github.com/Waterkyuu/go-query@v0.1.0
 
 # go-query
 
+![go-query](assets/go-query.png)
+
 面向 Go 1.22 及以上版本、没有外部依赖的查询客户端。多个组件复用同一个客户端，就能共享数据、合并重复请求，并订阅查询状态。
 
 - 数据缓存，可配置 `StaleTime`，可判断数据是否过期。
