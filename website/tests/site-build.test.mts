@@ -55,8 +55,8 @@ test("every published page has server-rendered content and working internal link
 	const files = await htmlFiles(build);
 	assert.equal(
 		files.filter((file) => file.endsWith("index.html")).length,
-		10,
-		"Each language must publish one homepage and four guides without fallback duplicates",
+		12,
+		"Each language must publish one homepage and five guides without fallback duplicates",
 	);
 	for (const file of files) {
 		const html = await readFile(file, "utf8");
@@ -73,7 +73,14 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 	const descriptions = new Set<string>();
 	for (const locale of ["en", "zh-CN"]) {
 		const prefix = locale === "en" ? "" : "zh-CN/";
-		for (const route of ["", "docs/", "docs/queries/", "docs/cache/", "docs/invalidation/"]) {
+		for (const route of [
+			"",
+			"docs/",
+			"docs/queries/",
+			"docs/cache/",
+			"docs/invalidation/",
+			"docs/observability/",
+		]) {
 			const html = await readFile(path.join(build, prefix, route, "index.html"), "utf8");
 			const title = html.match(/<title>([^<]+)<\/title>/)?.[1];
 			assert.ok(
@@ -105,7 +112,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			}
 		}
 	}
-	assert.equal(descriptions.size, 10);
+	assert.equal(descriptions.size, 12);
 	assert.ok((await readFile(path.join(build, "cacheq.png"))).length > 0);
 });
 
@@ -126,6 +133,7 @@ test("Go search results resolve to published sections and public source declarat
 		),
 	);
 	assert.ok(index.some((record) => record.title === "Client.Invalidate"));
+	assert.ok(index.some((record) => record.title === "Client.Stats"));
 	assert.ok(index.some((record) => record.title === "Query"));
 	for (const record of documents)
 		await assertDestination(record.url, path.join(build, "index.html"));

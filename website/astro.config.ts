@@ -49,6 +49,11 @@ export default defineConfig({
 					translations: { "zh-CN": "缓存与生命周期" },
 				},
 				{ slug: "docs/invalidation", label: "Invalidation", translations: { "zh-CN": "缓存失效" } },
+				{
+					slug: "docs/observability",
+					label: "Observability",
+					translations: { "zh-CN": "可观测性" },
+				},
 			],
 			social: [{ icon: "github", label: "GitHub", href: "https://github.com/Waterkyuu/cacheq" }],
 			customCss: ["./src/css/custom.css"],

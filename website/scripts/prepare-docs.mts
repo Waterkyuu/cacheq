@@ -50,6 +50,16 @@ export const chapters: Chapter[] = [
 				"在 Go 中使用 cacheq 按单键、批量或条件使缓存失效，保留已有数据，并在业务更新后选择后台刷新或延迟加载。",
 		},
 	},
+	{
+		id: "observability",
+		zh: "可观测性",
+		en: "Observability",
+		description: {
+			en: "Measure cacheq activity in Go with per-client statistics: cache hits, shared requests, load outcomes and duration, retries, and cache cleanup counts.",
+			"zh-CN":
+				"通过 cacheq 的客户端统计衡量 Go 缓存收益，查看命中、请求合并、加载结果与耗时、重试和缓存清理次数。",
+		},
+	},
 ];
 
 // Adapt repository documentation without creating another maintained copy.
