@@ -115,3 +115,5 @@ meaning, contract, or reason for existing instead of translating its syntax.
 ## Document
 
 Upon completing a feature, create example documents (`example.en-US.md` and `example.zh-CN.md`) in the `docs` folder.
+
+If it is a fix, there is no need to add new documentation.
