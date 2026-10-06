@@ -13,14 +13,14 @@ import (
 // TestCacheExpiration refreshes at the exact expiration boundary while isolating keys.
 func TestCacheExpiration(t *testing.T) {
 	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
-	cache := NewClient[string, int](Options{Clock: func() time.Time { return now }})
+	cache := NewClient(Options{Clock: func() time.Time { return now }})
 	calls := 0
 	load := func(context.Context) (int, time.Time, error) {
 		calls++
 		return calls, now.Add(time.Hour), nil
 	}
 	for _, key := range []string{"a", "a", "b"} {
-		if _, err := cache.FetchWithExpiry(context.Background(), key, load); err != nil {
+		if _, err := FetchWithExpiry(context.Background(), cache, key, load); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -28,7 +28,7 @@ func TestCacheExpiration(t *testing.T) {
 		t.Fatalf("loads = %d, want one per key", calls)
 	}
 	now = now.Add(time.Hour)
-	if got, err := cache.FetchWithExpiry(context.Background(), "a", load); got != 3 || err != nil {
+	if got, err := FetchWithExpiry(context.Background(), cache, "a", load); got != 3 || err != nil {
 		t.Fatalf("expired result = %d, %v", got, err)
 	}
 }
@@ -36,7 +36,7 @@ func TestCacheExpiration(t *testing.T) {
 // TestCacheRetryExpiration reuses an explicitly cached failure and retries when its delay expires.
 func TestCacheRetryExpiration(t *testing.T) {
 	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
-	cache := NewClient[string, string](Options{Clock: func() time.Time { return now }})
+	cache := NewClient(Options{Clock: func() time.Time { return now }})
 	failure := errors.New("unavailable")
 	calls := 0
 	load := func(context.Context) (string, time.Time, error) {
@@ -44,8 +44,7 @@ func TestCacheRetryExpiration(t *testing.T) {
 		return "offline", now.Add(time.Minute), failure
 	}
 	for range 2 {
-		if value, err := cache.FetchWithExpiry(
-			context.Background(),
+		if value, err := FetchWithExpiry(context.Background(), cache,
 			"a",
 			load,
 		); value != "offline" ||
@@ -57,7 +56,7 @@ func TestCacheRetryExpiration(t *testing.T) {
 		t.Fatalf("failure loaded %d times before retry expiration", calls)
 	}
 	now = now.Add(time.Minute)
-	_, _ = cache.FetchWithExpiry(context.Background(), "a", load)
+	_, _ = FetchWithExpiry(context.Background(), cache, "a", load)
 	if calls != 2 {
 		t.Fatalf("failure was not retried: loads = %d", calls)
 	}
@@ -65,14 +64,14 @@ func TestCacheRetryExpiration(t *testing.T) {
 
 // TestCacheZeroExpiration leaves uncached results eligible for the next load.
 func TestCacheZeroExpiration(t *testing.T) {
-	cache := NewClient[string, int](Options{})
+	cache := NewClient(Options{})
 	calls := 0
 	load := func(context.Context) (int, time.Time, error) {
 		calls++
 		return calls, time.Time{}, nil
 	}
 	for want := 1; want <= 2; want++ {
-		if value, err := cache.FetchWithExpiry(context.Background(), "a", load); value != want || err != nil {
+		if value, err := FetchWithExpiry(context.Background(), cache, "a", load); value != want || err != nil {
 			t.Fatalf("uncached value = %d, %v; want %d", value, err, want)
 		}
 	}
@@ -80,7 +79,7 @@ func TestCacheZeroExpiration(t *testing.T) {
 
 // TestCacheConcurrentLoads merges requests for one key without blocking other keys.
 func TestCacheConcurrentLoads(t *testing.T) {
-	cache := NewClient[string, string](Options{})
+	cache := NewClient(Options{})
 	var calls atomic.Int32
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -100,7 +99,7 @@ func TestCacheConcurrentLoads(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if value, err := cache.FetchWithExpiry(context.Background(), "a", load); value != "shared" || err != nil {
+			if value, err := FetchWithExpiry(context.Background(), cache, "a", load); value != "shared" || err != nil {
 				t.Errorf("shared result = %q, %v", value, err)
 			}
 		}()
@@ -108,7 +107,7 @@ func TestCacheConcurrentLoads(t *testing.T) {
 	<-started
 	other := make(chan string, 1)
 	go func() {
-		value, _ := cache.FetchWithExpiry(context.Background(), "b", func(context.Context) (string, time.Time, error) {
+		value, _ := FetchWithExpiry(context.Background(), cache, "b", func(context.Context) (string, time.Time, error) {
 			return "independent", time.Now().Add(time.Hour), nil
 		})
 		other <- value
@@ -130,7 +129,7 @@ func TestCacheConcurrentLoads(t *testing.T) {
 
 // TestCacheWaiterCancellation does not cancel the caller that owns an active load.
 func TestCacheWaiterCancellation(t *testing.T) {
-	cache := NewClient[string, string](Options{})
+	cache := NewClient(Options{})
 	started := make(chan struct{})
 	release := make(chan struct{})
 	finished := make(chan error, 1)
@@ -140,14 +139,14 @@ func TestCacheWaiterCancellation(t *testing.T) {
 		return "loaded", time.Now().Add(time.Hour), nil
 	}
 	go func() {
-		_, err := cache.FetchWithExpiry(context.Background(), "a", load)
+		_, err := FetchWithExpiry(context.Background(), cache, "a", load)
 		finished <- err
 	}()
 	<-started
 	ctx, cancel := context.WithCancel(context.Background())
 	waiter := make(chan error, 1)
 	go func() {
-		_, err := cache.FetchWithExpiry(ctx, "a", load)
+		_, err := FetchWithExpiry(ctx, cache, "a", load)
 		waiter <- err
 	}()
 	cancel()
@@ -158,20 +157,20 @@ func TestCacheWaiterCancellation(t *testing.T) {
 	if err := <-finished; err != nil {
 		t.Fatal(err)
 	}
-	if value, err := cache.FetchWithExpiry(context.Background(), "a", load); value != "loaded" || err != nil {
+	if value, err := FetchWithExpiry(context.Background(), cache, "a", load); value != "loaded" || err != nil {
 		t.Fatalf("waiter discarded loaded value: %q, %v", value, err)
 	}
 }
 
 // TestCacheLoaderCancellation allows another caller to retry and never caches a canceled load.
 func TestCacheLoaderCancellation(t *testing.T) {
-	cache := NewClient[string, string](Options{})
+	cache := NewClient(Options{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	started := make(chan struct{})
 	first := make(chan error, 1)
 	go func() {
-		_, err := cache.FetchWithExpiry(ctx, "a", func(ctx context.Context) (string, time.Time, error) {
+		_, err := FetchWithExpiry(ctx, cache, "a", func(ctx context.Context) (string, time.Time, error) {
 			close(started)
 			<-ctx.Done()
 			return "canceled", time.Now().Add(time.Hour), nil
@@ -181,8 +180,7 @@ func TestCacheLoaderCancellation(t *testing.T) {
 	<-started
 	second := make(chan error, 1)
 	go func() {
-		value, err := cache.FetchWithExpiry(
-			context.Background(),
+		value, err := FetchWithExpiry(context.Background(), cache,
 			"a",
 			func(context.Context) (string, time.Time, error) {
 				return "retried", time.Now().Add(time.Hour), nil
@@ -200,7 +198,7 @@ func TestCacheLoaderCancellation(t *testing.T) {
 	if err := <-second; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cache.FetchWithExpiry(ctx, "a", nil); !errors.Is(err, context.Canceled) {
+	if _, err := FetchWithExpiry[string](ctx, cache, "a", nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled caller used a cached result: %v", err)
 	}
 }
@@ -208,12 +206,12 @@ func TestCacheLoaderCancellation(t *testing.T) {
 // TestClientRetries covers recovery and exhaustion using an immediate deterministic retry policy.
 func TestClientRetries(t *testing.T) {
 	for _, succeed := range []bool{true, false} {
-		client := NewClient[string, string](Options{
+		client := NewClient(Options{
 			StaleTime: time.Hour, Retry: 2, RetryDelay: func(int) time.Duration { return 0 },
 		})
 		calls := 0
 		failure := errors.New("unavailable")
-		value, err := client.Fetch(context.Background(), "a", func(context.Context) (string, error) {
+		value, err := Fetch(context.Background(), client, "a", func(context.Context) (string, error) {
 			calls++
 			if succeed && calls == 3 {
 				return "recovered", nil
@@ -231,7 +229,7 @@ func TestClientRetries(t *testing.T) {
 func TestRetryCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	client := NewClient[string, string](Options{
+	client := NewClient(Options{
 		Retry: 3,
 		RetryDelay: func(int) time.Duration {
 			cancel()
@@ -239,7 +237,7 @@ func TestRetryCancellation(t *testing.T) {
 		},
 	})
 	defer client.Close()
-	_, err := client.Fetch(ctx, "a", func(context.Context) (string, error) { return "", errors.New("offline") })
+	_, err := Fetch(ctx, client, "a", func(context.Context) (string, error) { return "", errors.New("offline") })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("retry cancellation = %v", err)
 	}
@@ -247,9 +245,9 @@ func TestRetryCancellation(t *testing.T) {
 
 // TestClientTimeout bounds all attempts and does not restart its own deadline as a canceled owner.
 func TestClientTimeout(t *testing.T) {
-	client := NewClient[string, string](Options{Timeout: time.Millisecond, Retry: 3})
+	client := NewClient(Options{Timeout: time.Millisecond, Retry: 3})
 	defer client.Close()
-	_, err := client.Fetch(context.Background(), "a", func(ctx context.Context) (string, error) {
+	_, err := Fetch(context.Background(), client, "a", func(ctx context.Context) (string, error) {
 		<-ctx.Done()
 		return "", ctx.Err()
 	})
@@ -326,11 +324,11 @@ func (s *manualGCScheduler) count() int {
 }
 
 // newGCClient creates a client whose clock and cleanup callbacks are controlled by the test.
-func newGCClient(t *testing.T, retention time.Duration) (*Client[string, string], *manualGCScheduler) {
+func newGCClient(t *testing.T, retention time.Duration) (*Client, *manualGCScheduler) {
 	t.Helper()
 	scheduler := &manualGCScheduler{timers: make([]*manualGCTimer, 0)}
 	scheduler.now.Store(time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC).UnixNano())
-	client := NewClient[string, string](Options{
+	client := NewClient(Options{
 		StaleTime: time.Hour,
 		GCTime:    retention,
 		Clock:     func() time.Time { return time.Unix(0, scheduler.now.Load()) },
@@ -345,7 +343,7 @@ func TestGCRetentionBoundary(t *testing.T) {
 	for _, elapsed := range []time.Duration{time.Minute - time.Nanosecond, time.Minute, time.Minute + time.Nanosecond} {
 		t.Run(elapsed.String(), func(t *testing.T) {
 			client, scheduler := newGCClient(t, time.Minute)
-			client.Set("a", "cached")
+			Set(client, "a", "cached")
 			timer := scheduler.latest(t)
 			scheduler.now.Add(int64(elapsed))
 			timer.callback()
@@ -354,7 +352,7 @@ func TestGCRetentionBoundary(t *testing.T) {
 					t.Fatalf("remaining retention = %v", delay)
 				}
 			}
-			state := client.Snapshot("a")
+			state := Get[string](client, "a")
 			if want := elapsed < time.Minute; state.HasData != want {
 				t.Fatalf("state after %v = %+v; want data = %v", elapsed, state, want)
 			}
@@ -370,9 +368,9 @@ func TestGCDisabled(t *testing.T) {
 	for _, retention := range []time.Duration{0, -time.Minute} {
 		t.Run(retention.String(), func(t *testing.T) {
 			client, scheduler := newGCClient(t, retention)
-			client.Set("a", "cached")
+			Set(client, "a", "cached")
 			scheduler.now.Add(int64(24 * time.Hour))
-			if state := client.Snapshot("a"); !state.HasData || !state.Stale {
+			if state := Get[string](client, "a"); !state.HasData || !state.Stale {
 				t.Fatalf("disabled cleanup = %+v", state)
 			}
 			if count := scheduler.count(); count != 0 {
@@ -387,20 +385,21 @@ func TestGCUseRestartsRetention(t *testing.T) {
 	for _, action := range []string{"fetch", "query", "snapshot", "set", "invalidate"} {
 		t.Run(action, func(t *testing.T) {
 			client, scheduler := newGCClient(t, time.Minute)
-			client.Set("a", "cached")
+			Set(client, "a", "cached")
 			previous := scheduler.latest(t)
 			scheduler.now.Add(int64(30 * time.Second))
 			switch action {
 			case "fetch":
-				if _, err := client.Fetch(context.Background(), "a", nil); err != nil {
+				if _, err := Fetch[string](context.Background(), client, "a", nil); err != nil {
 					t.Fatal(err)
 				}
 			case "query":
-				client.Query("a", nil)
+				handle := Query(client, "a", func(context.Context) (string, error) { return "unused", nil })
+				handle.Close()
 			case "snapshot":
-				client.Snapshot("a")
+				Get[string](client, "a")
 			case "set":
-				client.Set("a", "updated")
+				Set(client, "a", "updated")
 			case "invalidate":
 				client.Invalidate("a")
 			}
@@ -410,12 +409,12 @@ func TestGCUseRestartsRetention(t *testing.T) {
 			}
 			scheduler.now.Add(int64(30 * time.Second))
 			previous.callback()
-			if state := client.Snapshot("a"); !state.HasData {
+			if state := Get[string](client, "a"); !state.HasData {
 				t.Fatal("a stopped callback deleted reused data")
 			}
 			scheduler.now.Add(int64(time.Minute))
 			scheduler.latest(t).callback()
-			if state := client.Snapshot("a"); state.HasData {
+			if state := Get[string](client, "a"); state.HasData {
 				t.Fatalf("unused data was retained: %+v", state)
 			}
 		})
@@ -425,17 +424,29 @@ func TestGCUseRestartsRetention(t *testing.T) {
 // TestGCSubscriptions retains data until the final observer leaves and then starts a full retention window.
 func TestGCSubscriptions(t *testing.T) {
 	client, scheduler := newGCClient(t, time.Minute)
-	client.Set("a", "cached")
+	Set(client, "a", "cached")
 	previous := scheduler.latest(t)
-	first, cancelFirst := client.Subscribe("a")
+	firstHandle := Query(
+		client,
+		"a",
+		func(context.Context) (string, error) { return "unused", nil },
+		QueryOptions{Enabled: false},
+	)
+	first, cancelFirst := firstHandle.Updates(), firstHandle.Close
 	defer cancelFirst()
-	second, cancelSecond := client.Subscribe("a")
+	secondHandle := Query(
+		client,
+		"a",
+		func(context.Context) (string, error) { return "unused", nil },
+		QueryOptions{Enabled: false},
+	)
+	second, cancelSecond := secondHandle.Updates(), secondHandle.Close
 	defer cancelSecond()
 	<-first
 	<-second
 	scheduler.now.Add(int64(time.Hour))
 	previous.callback()
-	if state := client.Snapshot("a"); !state.HasData {
+	if state := Get[string](client, "a"); !state.HasData {
 		t.Fatal("cleanup deleted subscribed data")
 	}
 	if !previous.stopped.Load() || scheduler.count() != 1 {
@@ -452,7 +463,7 @@ func TestGCSubscriptions(t *testing.T) {
 	}
 	scheduler.now.Add(int64(time.Minute))
 	current.callback()
-	if state := client.Snapshot("a"); state.HasData {
+	if state := Get[string](client, "a"); state.HasData {
 		t.Fatalf("unsubscribed data was retained: %+v", state)
 	}
 }
@@ -462,7 +473,7 @@ func TestGCLoads(t *testing.T) {
 	for _, outcome := range []string{"success", "failure", "cancel"} {
 		t.Run(outcome, func(t *testing.T) {
 			client, scheduler := newGCClient(t, time.Minute)
-			client.Set("a", "old")
+			Set(client, "a", "old")
 			previous := scheduler.latest(t)
 			scheduler.now.Add(int64(time.Hour))
 			started, release := make(chan struct{}), make(chan struct{})
@@ -481,12 +492,12 @@ func TestGCLoads(t *testing.T) {
 			}
 			finished := make(chan error, 1)
 			go func() {
-				_, err := client.Fetch(context.Background(), "a", fetch)
+				_, err := Fetch(context.Background(), client, "a", fetch)
 				finished <- err
 			}()
 			<-started
 			previous.callback()
-			if state := client.Snapshot("a"); !state.HasData || !state.Fetching || state.Data != "old" {
+			if state := Get[string](client, "a"); !state.HasData || !state.Fetching || state.Data != "old" {
 				t.Fatalf("loading data = %+v", state)
 			}
 			if !previous.stopped.Load() || scheduler.count() != 1 {
@@ -519,7 +530,7 @@ func TestGCLoads(t *testing.T) {
 			}
 			scheduler.now.Add(int64(time.Minute))
 			current.callback()
-			if state := client.Snapshot("a"); state.HasData || state.Err != nil || state.Status != Idle {
+			if state := Get[string](client, "a"); state.HasData || state.Err != nil || state.Status != Idle {
 				t.Fatalf("completed load remained cached: %+v", state)
 			}
 		})
@@ -529,17 +540,17 @@ func TestGCLoads(t *testing.T) {
 // TestGCInitialLoad schedules cleanup for newly loaded data even when no previous entry exists.
 func TestGCInitialLoad(t *testing.T) {
 	client, scheduler := newGCClient(t, time.Minute)
-	if _, err := client.Fetch(context.Background(), "a", func(context.Context) (string, error) {
+	if _, err := Fetch(context.Background(), client, "a", func(context.Context) (string, error) {
 		return "loaded", nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 	scheduler.now.Add(int64(time.Minute))
 	scheduler.latest(t).callback()
-	if state := client.Snapshot("a"); state.HasData {
+	if state := Get[string](client, "a"); state.HasData {
 		t.Fatalf("initial load remained cached: %+v", state)
 	}
-	value, err := client.Fetch(context.Background(), "a", func(context.Context) (string, error) {
+	value, err := Fetch(context.Background(), client, "a", func(context.Context) (string, error) {
 		return "reloaded", nil
 	})
 	if value != "reloaded" || err != nil {
@@ -551,7 +562,7 @@ func TestGCInitialLoad(t *testing.T) {
 func TestGCInitialFailure(t *testing.T) {
 	client, scheduler := newGCClient(t, time.Minute)
 	failure := errors.New("offline")
-	_, err := client.Fetch(context.Background(), "a", func(context.Context) (string, error) {
+	_, err := Fetch(context.Background(), client, "a", func(context.Context) (string, error) {
 		return "", failure
 	})
 	if !errors.Is(err, failure) {
@@ -559,7 +570,7 @@ func TestGCInitialFailure(t *testing.T) {
 	}
 	scheduler.now.Add(int64(time.Minute))
 	scheduler.latest(t).callback()
-	if state := client.Snapshot("a"); state.Err != nil || state.Status != Idle {
+	if state := Get[string](client, "a"); state.Err != nil || state.Status != Idle {
 		t.Fatalf("initial failure remained cached: %+v", state)
 	}
 }
@@ -567,16 +578,16 @@ func TestGCInitialFailure(t *testing.T) {
 // TestGCKeyIsolation expires one key without deleting another key's more recently installed data.
 func TestGCKeyIsolation(t *testing.T) {
 	client, scheduler := newGCClient(t, time.Minute)
-	client.Set("a", "first")
+	Set(client, "a", "first")
 	first := scheduler.latest(t)
 	scheduler.now.Add(int64(30 * time.Second))
-	client.Set("b", "second")
+	Set(client, "b", "second")
 	scheduler.now.Add(int64(30 * time.Second))
 	first.callback()
-	if state := client.Snapshot("a"); state.HasData {
+	if state := Get[string](client, "a"); state.HasData {
 		t.Fatalf("expired key = %+v", state)
 	}
-	if state := client.Snapshot("b"); !state.HasData || state.Data != "second" {
+	if state := Get[string](client, "b"); !state.HasData || state.Data != "second" {
 		t.Fatalf("independent key = %+v", state)
 	}
 }
@@ -586,7 +597,7 @@ func TestGCRemovalStopsTimers(t *testing.T) {
 	for _, action := range []string{"remove", "clear", "close"} {
 		t.Run(action, func(t *testing.T) {
 			client, scheduler := newGCClient(t, time.Minute)
-			client.Set("a", "old")
+			Set(client, "a", "old")
 			previous := scheduler.latest(t)
 			switch action {
 			case "remove":
@@ -599,10 +610,10 @@ func TestGCRemovalStopsTimers(t *testing.T) {
 			if !previous.stopped.Load() {
 				t.Fatal("discarding state did not stop cleanup")
 			}
-			client.Set("a", "new")
+			Set(client, "a", "new")
 			scheduler.now.Add(int64(time.Minute))
 			previous.callback()
-			state := client.Snapshot("a")
+			state := Get[string](client, "a")
 			if action == "close" {
 				if state.HasData || !errors.Is(state.Err, ErrClosed) || scheduler.count() != 1 {
 					t.Fatalf("cleanup after close = %+v", state)
@@ -618,15 +629,15 @@ func TestGCRemovalStopsTimers(t *testing.T) {
 
 // Example_sharedCache shares one result across readers while its freshness window remains open.
 func Example_sharedCache() {
-	client := NewClient[string, string](Options{StaleTime: time.Hour})
+	client := NewClient(Options{StaleTime: time.Hour})
 	defer client.Close()
 	calls := 0
 	fetch := func(context.Context) (string, error) {
 		calls++
 		return "shared", nil
 	}
-	first, _ := client.Fetch(context.Background(), "models", fetch)
-	second, _ := client.Fetch(context.Background(), "models", fetch)
+	first, _ := Fetch(context.Background(), client, "models", fetch)
+	second, _ := Fetch(context.Background(), client, "models", fetch)
 	fmt.Println(first, second, calls)
 	// Output: shared shared 1
 }
@@ -634,14 +645,14 @@ func Example_sharedCache() {
 // Example_cacheFreshness checks expiration without starting a request.
 func Example_cacheFreshness() {
 	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
-	client := NewClient[string, string](Options{
+	client := NewClient(Options{
 		StaleTime: time.Hour, Clock: func() time.Time { return now },
 	})
 	defer client.Close()
-	client.Set("models", "available")
-	fmt.Println(client.Snapshot("models").Stale)
+	Set(client, "models", "available")
+	fmt.Println(Get[string](client, "models").Stale)
 	now = now.Add(time.Hour)
-	fmt.Println(client.Snapshot("models").Stale)
+	fmt.Println(Get[string](client, "models").Stale)
 	// Output:
 	// false
 	// true

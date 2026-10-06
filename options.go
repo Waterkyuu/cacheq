@@ -9,6 +9,18 @@ import (
 // ErrClosed indicates that the client has released its resources and cannot start more queries.
 var ErrClosed = errors.New("query client is closed")
 
+// ErrQueryClosed indicates a request attempted through a released query handle.
+var ErrQueryClosed = errors.New("query handle is closed")
+
+// ErrTypeMismatch indicates a key was reused with a different static result type.
+var ErrTypeMismatch = errors.New("query result type mismatch")
+
+// ErrInvalidKey indicates a nil or non-comparable key cannot identify a cache entry.
+var ErrInvalidKey = errors.New("query key must be non-nil and comparable")
+
+// ErrNoFetcher indicates an operation requiring data has no loader to execute.
+var ErrNoFetcher = errors.New("query has no fetcher")
+
 // Status describes the most recent result independently of background fetching.
 type Status uint8
 
@@ -25,7 +37,7 @@ const (
 
 // Options configures freshness and request policy for one shared client.
 type Options struct {
-	// StaleTime controls freshness for Fetch and Query; zero makes completed data immediately stale.
+	// StaleTime controls freshness for ordinary queries; zero makes completed data immediately stale.
 	StaleTime time.Duration
 	// GCTime removes cached state after this duration without reads, writes, loads, or subscriptions.
 	// Zero or a negative duration disables automatic deletion; freshness is controlled by StaleTime.
@@ -41,9 +53,10 @@ type Options struct {
 	Clock func() time.Time
 }
 
-// ObserveOptions controls automatic loading for one observer without disabling other consumers.
-type ObserveOptions struct {
-	// Enabled allows initial loading and invalidation refreshes; false keeps observation passive.
+// QueryOptions controls automatic loading for one query handle without disabling other consumers.
+// Query defaults to enabled when this optional configuration is omitted.
+type QueryOptions struct {
+	// Enabled allows initial loading and invalidation refreshes; false keeps the handle passive.
 	Enabled bool
 }
 

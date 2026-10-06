@@ -17,7 +17,7 @@ func scheduleGC(delay time.Duration, cleanup func()) func() {
 }
 
 // touchGCLocked restarts retention after use and suspends cleanup for subscribed or loading keys.
-func (c *Client[K, V]) touchGCLocked(key K) {
+func (c *Client) touchGCLocked(key any) {
 	c.stopGCLocked(key)
 	if c.closed || c.options.GCTime <= 0 {
 		return
@@ -34,7 +34,7 @@ func (c *Client[K, V]) touchGCLocked(key K) {
 }
 
 // collectGC deletes only the inactive state belonging to the current cleanup task.
-func (c *Client[K, V]) collectGC(key K, task *gcTask) {
+func (c *Client) collectGC(key any, task *gcTask) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Stop cannot retract a callback that has already started. Comparing task
@@ -53,7 +53,7 @@ func (c *Client[K, V]) collectGC(key K, task *gcTask) {
 }
 
 // stopGCLocked detaches a key's cleanup before stopping its timer.
-func (c *Client[K, V]) stopGCLocked(key K) {
+func (c *Client) stopGCLocked(key any) {
 	if task := c.gcTasks[key]; task != nil {
 		delete(c.gcTasks, key)
 		task.stop()
@@ -61,7 +61,7 @@ func (c *Client[K, V]) stopGCLocked(key K) {
 }
 
 // clearGCLocked releases every cleanup timer when cached state is discarded.
-func (c *Client[K, V]) clearGCLocked() {
+func (c *Client) clearGCLocked() {
 	for key := range c.gcTasks {
 		c.stopGCLocked(key)
 	}
