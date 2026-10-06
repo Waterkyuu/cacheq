@@ -15,6 +15,23 @@ export default defineConfig({
 			description: "One client, many types. Shared cache and background refresh for Go.",
 			logo: { src: "../assets/cacheq.png", alt: "cacheq" },
 			favicon: "/cacheq.png",
+			head: [
+				{
+					tag: "meta",
+					attrs: { property: "og:image", content: "https://waterkyuu.github.io/cacheq/cacheq.png" },
+				},
+				{ tag: "meta", attrs: { property: "og:image:alt", content: "cacheq logo" } },
+				{
+					tag: "meta",
+					attrs: {
+						name: "twitter:image",
+						content: "https://waterkyuu.github.io/cacheq/cacheq.png",
+					},
+				},
+				{ tag: "meta", attrs: { name: "twitter:image:alt", content: "cacheq logo" } },
+				// The existing square logo fits a summary card without a landscape crop.
+				{ tag: "meta", attrs: { name: "twitter:card", content: "summary" } },
+			],
 			locales: {
 				root: { label: "English", lang: "en" },
 				"zh-CN": { label: "简体中文", lang: "zh-CN" },

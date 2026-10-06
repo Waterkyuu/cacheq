@@ -6,13 +6,50 @@ export interface Chapter {
 	id: string;
 	zh: string;
 	en: string;
+	description: { en: string; "zh-CN": string };
 }
 
 export const chapters: Chapter[] = [
-	{ id: "getting-started", zh: "开始使用", en: "Getting started" },
-	{ id: "queries", zh: "查询与条件请求", en: "Queries & conditions" },
-	{ id: "cache", zh: "缓存与生命周期", en: "Cache & lifecycle" },
-	{ id: "invalidation", zh: "缓存失效", en: "Invalidation" },
+	{
+		id: "getting-started",
+		zh: "开始使用",
+		en: "Getting started",
+		description: {
+			en: "Install cacheq for Go 1.22+ and create your first typed query. Learn how one client shares cached data, deduplicates requests, and refreshes stale results.",
+			"zh-CN":
+				"安装适用于 Go 1.22 及以上版本的 cacheq，创建第一个类型安全查询，了解如何通过一个客户端共享缓存、合并请求并在后台刷新过期数据。",
+		},
+	},
+	{
+		id: "queries",
+		zh: "查询与条件请求",
+		en: "Queries & conditions",
+		description: {
+			en: "Use typed queries in Go with cacheq. Share requests across consumers, observe snapshots and updates, control conditional loading, and fetch or refetch data.",
+			"zh-CN":
+				"使用 cacheq 在 Go 中创建类型安全查询，共享请求，通过 Snapshot 和 Updates 读取状态，并控制条件加载、同步获取与手动刷新。",
+		},
+	},
+	{
+		id: "cache",
+		zh: "缓存与生命周期",
+		en: "Cache & lifecycle",
+		description: {
+			en: "Manage the cacheq shared cache in Go: read and write typed data, prefetch results, configure freshness, LRU eviction and maximum age, and release resources.",
+			"zh-CN":
+				"管理 cacheq 的 Go 共享缓存：读写类型安全数据、预取结果，配置新鲜时间、自动清理、LRU 容量淘汰与最大数据年龄，并正确释放资源。",
+		},
+	},
+	{
+		id: "invalidation",
+		zh: "缓存失效",
+		en: "Invalidation",
+		description: {
+			en: "Invalidate cacheq data in Go by key, batch, or predicate. Keep cached results available and choose background refresh or deferred loading after a mutation.",
+			"zh-CN":
+				"在 Go 中使用 cacheq 按单键、批量或条件使缓存失效，保留已有数据，并在业务更新后选择后台刷新或延迟加载。",
+		},
+	},
 ];
 
 // Adapt repository documentation without creating another maintained copy.
@@ -29,6 +66,7 @@ export function prepareMarkdown(
 	const header = [
 		"---",
 		`title: ${JSON.stringify(title)}`,
+		`description: ${JSON.stringify(chapter.description[locale === "en" ? "en" : "zh-CN"])}`,
 		`sidebar: { label: ${JSON.stringify(label)}, order: ${position} }`,
 		`editUrl: https://github.com/Waterkyuu/cacheq/edit/${branch}/docs/${chapter.id}.${suffix}.md`,
 		"---",
@@ -75,9 +113,17 @@ export async function prepareDocs(root: string) {
 			path.join(localeRoot, "index.mdx"),
 			[
 				"---",
-				"title: cacheq",
+				`title: ${JSON.stringify(locale === "en" ? "Typed Query Client and Shared Cache for Go" : "Go 类型安全查询客户端与共享缓存")}`,
+				`description: ${JSON.stringify(
+					locale === "en"
+						? "cacheq is a typed query client for Go with a shared in-memory cache, request deduplication, background refresh, and flexible invalidation. Zero core dependencies."
+						: "cacheq 是适用于 Go 的类型安全查询客户端，提供进程内共享缓存、请求合并、后台刷新与灵活的缓存失效机制，核心库零依赖。",
+				)}`,
 				"template: splash",
 				"editUrl: false",
+				"head:",
+				"  - tag: meta",
+				"    attrs: { property: 'og:type', content: website }",
 				"---",
 				"",
 				`import Home from '${component}';`,

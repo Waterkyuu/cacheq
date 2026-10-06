@@ -69,6 +69,46 @@ test("every published page has server-rendered content and working internal link
 	}
 });
 
+test("content pages publish distinct localized metadata and a usable sharing image", async () => {
+	const descriptions = new Set<string>();
+	for (const locale of ["en", "zh-CN"]) {
+		const prefix = locale === "en" ? "" : "zh-CN/";
+		for (const route of ["", "docs/", "docs/queries/", "docs/cache/", "docs/invalidation/"]) {
+			const html = await readFile(path.join(build, prefix, route, "index.html"), "utf8");
+			const title = html.match(/<title>([^<]+)<\/title>/)?.[1];
+			assert.ok(
+				title && title !== "cacheq | cacheq",
+				`Missing descriptive title: ${prefix}${route}`,
+			);
+			const metadata = [...html.matchAll(/<meta\b[^>]*>/g)].map((match) => match[0]);
+			const descriptionTags = metadata.filter((tag) => tag.includes('name="description"'));
+			assert.equal(descriptionTags.length, 1);
+			const description = descriptionTags[0].match(/content="([^"]+)"/)?.[1];
+			assert.ok(description, `Missing description: ${prefix}${route}`);
+			assert.ok(!descriptions.has(description), `Repeated description: ${prefix}${route}`);
+			descriptions.add(description);
+			assert.match(description, /cacheq/);
+			assert.equal(/[\u4e00-\u9fff]/u.test(description), locale === "zh-CN");
+			for (const attribute of ['property="og:image"', 'name="twitter:image"']) {
+				const images = metadata.filter((tag) => tag.includes(attribute));
+				assert.equal(images.length, 1);
+				assert.ok(images[0].includes('content="https://waterkyuu.github.io/cacheq/cacheq.png"'));
+			}
+			const cards = metadata.filter((tag) => tag.includes('name="twitter:card"'));
+			assert.equal(cards.length, 1);
+			assert.ok(cards[0].includes('content="summary"'));
+			if (!route) {
+				assert.match(title, /Go/);
+				const types = metadata.filter((tag) => tag.includes('property="og:type"'));
+				assert.equal(types.length, 1);
+				assert.ok(types[0].includes('content="website"'));
+			}
+		}
+	}
+	assert.equal(descriptions.size, 10);
+	assert.ok((await readFile(path.join(build, "cacheq.png"))).length > 0);
+});
+
 test("Go search results resolve to published sections and public source declarations", async () => {
 	const index: SearchRecord[] = JSON.parse(
 		await readFile(path.join(build, "search-index.json"), "utf8"),
