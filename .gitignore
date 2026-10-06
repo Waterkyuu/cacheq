@@ -2,3 +2,10 @@
 *.out
 coverage.out
 .DS_Store
+
+# Documentation build artifacts and local dependencies
+website/node_modules/
+website/.docusaurus/
+website/build/
+website/generated-docs/
+website/i18n/

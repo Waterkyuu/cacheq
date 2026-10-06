@@ -1,2 +1,4 @@
 .agents/skills/ export-ignore
 skills/** linguist-vendored
+# Keep documentation tooling out of GitHub language statistics.
+website/** -linguist-detectable
