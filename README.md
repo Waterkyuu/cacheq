@@ -18,14 +18,12 @@
 
 ## Features
 
-- Data caching with configurable `StaleTime` and visible expiration.
-- One in-flight request per key; different keys load independently.
-- Bounded retries with exponential backoff, custom delay, and request timeout.
-- Shared data and state subscriptions for multiple components.
-- Conditional observers with independent enablement for initial loads and invalidation refreshes.
-- Immediate stale data with background refresh through `Query`.
-- Single-key, batch, and predicate invalidation with optional background refresh, forced refresh, prefetch, local updates, and cancellation.
-- Optional automatic deletion of unused cached data, independent of freshness.
+- One shared client caches different result types: details, lists, and configuration.
+- Each query retains static typing; incompatible types for a key return an error.
+- One `Query` entry point supplies state, updates, enablement, and manual refresh.
+- Freshness, background refresh, same-key request sharing, retries, and load timeouts.
+- Single-key, mixed-type batch, and predicate invalidation with optional deferred refresh.
+- Local writes, prefetching, cancellation, and inactive cache cleanup.
 
 ## Install
 
@@ -33,152 +31,96 @@
 go get github.com/Waterkyuu/go-query
 ```
 
-## Fetch and share data
+Import `github.com/Waterkyuu/go-query` as package `query`. Requires Go 1.22 or later and has no external dependencies.
+
+## One client, different data types
 
 ```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "time"
-
-    query "github.com/Waterkyuu/go-query"
-)
-
-func main() {
-    client := query.NewClient[string, string](query.Options{
-        StaleTime: time.Minute,
-        Retry:     2,
-        Timeout:   10 * time.Second,
-    })
-    defer client.Close()
-
-    fetch := func(ctx context.Context) (string, error) {
-        return "hello", nil
-    }
-    value, err := client.Fetch(context.Background(), "greeting", fetch)
-    fmt.Println(value, err)
+// User contains a user's display data.
+type User struct {
+	// Name contains the user's display name.
+	Name string
 }
-```
 
-Reuse this client in every component that reads the same key. Fresh reads return cached data. Concurrent reads of a stale or missing key share one request. A key must identify the complete request, including parameters, provider, or user identity when relevant. Values are shared and read-only; clone slices and maps before modifying them.
-
-## Check freshness and refresh in the background
-
-```go
-state := client.Snapshot("greeting") // reads state without a request
-fmt.Println(state.HasData, state.Stale, state.Fetching, state.Err)
-
-state = client.Query("greeting", fetch) // returns current data immediately
-// If stale or missing, one background request updates the shared result.
-```
-
-`Status` is `Idle`, `Pending`, `Success`, or `Error`. `HasData` distinguishes missing data from an available zero value. `Fetching` is independent of the result status, so a successful result remains visible while refreshing. `UpdatedAt` and `ExpiresAt` expose the data's age and freshness deadline. Failed refreshes retain earlier data while exposing the error.
-
-## Observe changes
-
-```go
-updates, unsubscribe := client.Subscribe("greeting")
-defer unsubscribe()
-
-for state := range updates {
-    // Send state to your own UI or application event loop.
-    _ = state
-}
-```
-
-Subscriptions deliver the initial and latest states. Slow readers can skip intermediate transitions. Unsubscribe when a component closes. The loop ends when the subscription or client closes; start `Query` or `Fetch` separately to load data.
-
-## Request only when a condition is met
-
-Use `Observe` to bind a loader and an enabled condition to one subscription:
-
-```go
-users := client.Observe("users", getUsers, query.ObserveOptions{
-    Enabled: loggedIn,
-})
-defer users.Close()
-```
-
-When enabled, missing or stale data loads in the background and fresh data is reused. When disabled, the observer reads cached data and receives shared updates without initiating requests, including after invalidation. `ObserveOptions{}` is disabled; pass `Enabled: true` for an initially enabled observer. `users.Snapshot()` reads current state and `users.Updates()` delivers initial and latest state changes.
-
-When your application changes the condition, update the same observer explicitly:
-
-```go
-users.SetEnabled(loggedIn)
-```
-
-Enabling loads missing or stale data, sharing any active request. Go does not automatically watch changes to the original boolean variable. Disabling one observer does not prevent another enabled observer of the same key from loading, and disabled observers still receive those results. Existing `Subscribe` subscriptions remain enabled for invalidation refreshes and do not themselves initiate a load.
-
-Disabling or closing an observer does not cancel work already started. Explicit client calls to `Fetch`, `Query`, or `Refetch` can still request data; the switch only governs that observer's automatic loading. Call `Close` on observers to release their subscriptions; disabled subscriptions also keep cached data in use for `GCTime` retention.
-
-## Control the shared result
-
-| Method | Behavior |
-| --- | --- |
-| `Invalidate(key)` | Marks data stale; queries with enabled observers and loaders refresh automatically. |
-| `InvalidateMany(keys, options)` | Marks related keys stale, optionally deferring background refresh. |
-| `InvalidateWhere(matches, options)` | Selects cached or loading keys with a predicate and applies the same refresh policy. |
-| `Refetch(ctx, key, fetch)` | Loads again even when data is fresh, sharing an active request. |
-| `Prefetch(ctx, key, fetch)` | Warms the same cache before a component needs it. |
-| `Set(key, value)` | Installs local or optimistic data and prevents an older response from overwriting it. |
-| `Cancel(key)` | Cancels active work while retaining completed data. |
-| `Remove(key)` | Removes data and prevents an old load from restoring it. |
-| `Clear()` | Clears all results and cancels current requests. |
-| `Close()` | Stops work, closes subscriptions, and rejects new requests. |
-
-## Invalidate related queries
-
-After a successful update, invalidate the related keys in the same client together:
-
-```go
-keys := []string{"user:42", "users"}
-client.InvalidateMany(keys, query.InvalidateOptions{})
-```
-
-The zero-value options use `RefetchObserved`: queries with enabled observers and available loaders refresh in the background, while unobserved or exclusively disabled queries only become stale. To mark data stale and defer new background work, use `RefetchNone` instead:
-
-```go
-client.InvalidateMany(keys, query.InvalidateOptions{
-    Refetch: query.RefetchNone,
-})
-```
-
-Invalidation retains existing data and notifies subscribers. It does not cancel or duplicate active loads; results from loads invalidated in flight remain stale when they complete. Duplicate keys are processed once, and an empty batch has no effect. Use a one-element slice to defer refresh for a single key. The existing `Invalidate(key)` behavior is unchanged.
-
-To select related keys by a condition rather than list them, use `InvalidateWhere`. With `strings` imported, this example marks the user list and every user detail stale without starting new requests:
-
-```go
-client.InvalidateWhere(func(key string) bool {
-    return key == "users" || strings.HasPrefix(key, "user:")
-}, query.InvalidateOptions{Refetch: query.RefetchNone})
-```
-
-The same `InvalidateOptions` apply; zero-value options refresh matching queries with enabled observers and loaders. The predicate receives each distinct cached or loading key once, including keys whose initial load has not completed. Structured keys can be matched by their fields without a string convention. Predicates run outside the client lock and may read client state. Matching uses a snapshot of existing keys: newly added keys are excluded and removed keys are skipped before invalidation. A nil predicate has no effect.
-
-## Freshness, retries, and cancellation
-
-`StaleTime` defaults to zero: completed data is immediately stale. Set a positive duration to avoid unnecessary requests. `Retry` counts additional attempts and defaults to zero. When enabled, default backoff starts at one second and doubles up to thirty seconds; override `RetryDelay` when needed. Cancellation and deadline errors are never retried. `Timeout` bounds a complete load including retries.
-
-The first waiting caller controls its load through its context. Canceling another waiter leaves that load running. If the owner cancels, remaining callers may retry with their own contexts. Background loads belong to the client and stop on `Close`. Fetchers must honor context cancellation.
-
-## Preserve a disk snapshot's expiration
-
-`FetchWithExpiry` accepts a loader returning `(value, expiresAt, error)`. This keeps the absolute freshness of data restored from disk instead of granting it a new `StaleTime`. A zero expiration disables fresh reuse. Returning fallback data, a future expiration, and an error delays new requests until that deadline. Disk persistence and HTTP transport remain application-owned.
-
-## Delete unused cached data
-
-```go
-client := query.NewClient[string, string](query.Options{
-    StaleTime: time.Minute,
-    GCTime:    5 * time.Minute,
+client := query.NewClient(query.Options{
+	StaleTime: time.Minute,
+	GCTime:    5 * time.Minute,
 })
 defer client.Close()
+
+getUser := func(context.Context) (User, error) {
+	return User{Name: "Alice"}, nil
+}
+getUsers := func(context.Context) ([]User, error) {
+	return []User{{Name: "Alice"}}, nil
+}
+
+detail := query.Query(client, "user:42", getUser) // QueryHandle[User]
+users := query.Query(client, "users", getUsers)   // QueryHandle[[]User]
+defer detail.Close()
+defer users.Close()
+
+state := users.Snapshot()
+// state.Data is []User; state.Fetching reports an active request.
 ```
 
-`StaleTime` controls when data needs refreshing; `GCTime` controls when unused cached state is deleted. Reading a key with `Fetch`, `Query`, or `Snapshot`, or updating it, restarts its retention window. Subscribed keys and active loads are protected from deletion. A full retention window starts once the last subscription is released and no load remains, or once an unobserved load finishes. Cleanup removes the data, error, and retained loader without making a request.
+Create the client at the application boundary and inject it into consumers. Same-key queries share data and in-flight work; different keys may contain different types. Sharing is in-process.
 
-`GCTime` defaults to zero, which disables automatic deletion; negative values also disable it. `Remove`, `Clear`, and `Close` release the corresponding cleanup timers. No capacity limit or LRU eviction is applied.
+`Query` returns a handle immediately. Missing data loads in the background, fresh data is reused, and stale data stays available during refresh. Receive later state through `Updates()`. Use `query.Fetch(ctx, client, key, fetcher)` to await fresh data without a subscription.
 
-Inject `Options.Clock` for deterministic freshness and retention checks. The client provides no browser focus integration; close it at the end of its lifetime.
+## Load only when a condition permits
+
+```go
+users := query.Query(
+	client,
+	"users",
+	getUsers,
+	query.QueryOptions{
+		Enabled: loggedIn,
+	},
+)
+defer users.Close()
+
+// Update permission from the application's login-state change handler.
+if err := users.SetEnabled(true); err != nil {
+	return err
+}
+
+// Manual refresh uses the bound fetcher and also works while disabled.
+updatedUsers, err := users.Refetch(ctx)
+```
+
+Omitting options enables loading; an explicit empty `QueryOptions{}` disables it. Each consumer controls its own automatic requests while still receiving updates produced by other consumers.
+
+## Invalidate related data after a mutation
+
+```go
+if err := client.InvalidateMany(
+	[]any{"user:42", "users"},
+	query.InvalidateOptions{},
+); err != nil {
+	return err
+}
+```
+
+Detail `User` and list `[]User` results are invalidated in the same client. Enabled consumers refresh by default; `Refetch: query.RefetchNone` marks data stale without initiating work until a later use.
+
+## Feature guides
+
+| Guide | Coverage |
+| --- | --- |
+| [Queries and conditions](docs/queries.en-US.md) | `Query`, snapshots, updates, enablement, refresh, `Fetch`, and HTTP loaders |
+| [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
+| [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
+
+The guides explain every public API and include a complete runnable program. Treat cached values as immutable; copy slices and maps before modifying them. Different result types cannot reuse the same key.
+
+## Verify
+
+```sh
+task lint
+task test
+task build
+```
+
+`task test` includes race detection and [HTTP e2e tests](e2e/query_lifecycle_test.go). The isolated local service exercises mutations, heterogeneous cache data, enablement, request sharing, retries, and cancellation without external services.
