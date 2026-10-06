@@ -1,4 +1,4 @@
-package query
+package cacheq
 
 import (
 	"context"
@@ -8,6 +8,18 @@ import (
 
 // ErrClosed indicates that the client has released its resources and cannot start more queries.
 var ErrClosed = errors.New("query client is closed")
+
+// ErrQueryClosed indicates a request attempted through a released query handle.
+var ErrQueryClosed = errors.New("query handle is closed")
+
+// ErrTypeMismatch indicates a key was reused with a different static result type.
+var ErrTypeMismatch = errors.New("query result type mismatch")
+
+// ErrInvalidKey indicates a nil or non-comparable key, or a nil invalidation predicate.
+var ErrInvalidKey = errors.New("query key must be non-nil and comparable")
+
+// ErrNoFetcher indicates an operation requiring data has no loader to execute.
+var ErrNoFetcher = errors.New("query has no fetcher")
 
 // Status describes the most recent result independently of background fetching.
 type Status uint8
@@ -25,8 +37,17 @@ const (
 
 // Options configures freshness and request policy for one shared client.
 type Options struct {
-	// StaleTime controls freshness for Fetch and Query; zero makes completed data immediately stale.
+	// StaleTime controls freshness for ordinary queries; zero makes completed data immediately stale.
 	StaleTime time.Duration
+	// GCTime removes cached state after this duration without reads, writes, loads, or subscriptions.
+	// Zero or a negative duration disables automatic deletion; freshness is controlled by StaleTime.
+	GCTime time.Duration
+	// MaxEntries limits retained results and errors using least-recently-used eviction.
+	// Eviction preserves subscriptions, active loads, and their type bindings; non-positive values disable it.
+	MaxEntries int
+	// MaxAge bounds data availability since its last installation, including while stale or subscribed.
+	// Reads, invalidation, and ordinary failed refreshes do not renew it; non-positive values disable it.
+	MaxAge time.Duration
 	// Retry limits additional attempts after the initial load; zero disables retries.
 	Retry int
 	// RetryDelay supplies the delay before each additional attempt, numbered from one.
@@ -34,8 +55,31 @@ type Options struct {
 	RetryDelay func(attempt int) time.Duration
 	// Timeout bounds the entire load, including retries; zero uses the caller's deadline.
 	Timeout time.Duration
-	// Clock supplies freshness checks; nil uses time.Now.
+	// Clock supplies freshness and retention checks; nil uses time.Now.
 	Clock func() time.Time
+}
+
+// QueryOptions controls automatic loading for one query handle without disabling other consumers.
+// Query defaults to enabled when this optional configuration is omitted.
+type QueryOptions struct {
+	// Enabled allows initial loading and invalidation refreshes; false keeps the handle passive.
+	Enabled bool
+}
+
+// RefetchMode controls whether invalidation starts background work for subscribed queries.
+type RefetchMode uint8
+
+const (
+	// RefetchObserved refreshes queries with an enabled observer and loader when no load is active.
+	RefetchObserved RefetchMode = iota
+	// RefetchNone marks queries stale without initiating a new background load.
+	RefetchNone
+)
+
+// InvalidateOptions configures refresh behavior when a group of related queries becomes stale.
+type InvalidateOptions struct {
+	// Refetch selects background refresh behavior; the zero value uses RefetchObserved.
+	Refetch RefetchMode
 }
 
 // Snapshot exposes a query's data, freshness, request activity, and latest error.

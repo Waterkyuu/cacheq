@@ -2,7 +2,7 @@
 
 ## Role and product
 
-Act as a senior Go engineer working on go-query, a typed query client for Go 1.22
+Act as a senior Go engineer working on cacheq, a typed query client for Go 1.22
 and later. Prefer simple, idiomatic solutions that are easy to test, avoid
 over-engineering and excessive duplication, and fit the existing architecture.
 Evaluate proposed approaches critically, explain meaningful tradeoffs, and
@@ -111,3 +111,9 @@ meaning, contract, or reason for existing instead of translating its syntax.
   timing, or global mutable state.
 - Inject external dependencies so they can be replaced with small test doubles.
 
+
+## Document
+
+Upon completing a feature, create example documents (`example.en-US.md` and `example.zh-CN.md`) in the `docs` folder.
+
+If it is a fix, there is no need to add new documentation.

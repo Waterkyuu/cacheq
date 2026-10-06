@@ -1,0 +1,64 @@
+name: Website CI
+
+on:
+  workflow_call:
+    inputs:
+      upload-pages-artifact:
+        description: Upload the built website for the documentation deployment
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'website/**'
+      - '*.go'
+      - 'go.mod'
+      - '.github/workflows/website.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'website/**'
+      - '*.go'
+      - 'go.mod'
+      - '.github/workflows/website.yml'
+
+concurrency:
+  group: website-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Website checks
+    runs-on: ubuntu-latest
+    env:
+      DOCS_REF: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: website/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: pnpm --dir website install --frozen-lockfile
+      - run: pnpm --dir website lint
+      - run: pnpm --dir website fmt:check
+      - run: pnpm --dir website typecheck
+      - run: pnpm --dir website test
+      - run: pnpm --dir website build
+      - run: pnpm --dir website test:build
+      - uses: actions/upload-pages-artifact@v4
+        if: inputs.upload-pages-artifact
+        with:
+          path: website/build

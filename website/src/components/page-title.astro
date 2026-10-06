@@ -1,0 +1,6 @@
+---
+import Default from "@astrojs/starlight/components/PageTitle.astro";
+const splash = Astro.locals.starlightRoute.entry.data.template === "splash";
+---
+
+{!splash && <Default><slot /></Default>}

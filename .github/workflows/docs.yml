@@ -1,0 +1,54 @@
+name: Docs CI
+
+on:
+  push:
+    branches: [main, waterkyuu/feat/docs-site]
+    paths:
+      - 'docs/**'
+      - 'website/**'
+      - '*.go'
+      - 'go.mod'
+      - '.github/workflows/docs.yml'
+      - '.github/workflows/website.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'website/**'
+      - '*.go'
+      - 'go.mod'
+      - '.github/workflows/docs.yml'
+      - '.github/workflows/website.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.event_name == 'pull_request' && github.ref || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Docs build
+    uses: ./.github/workflows/website.yml
+    with:
+      upload-pages-artifact: ${{ github.event_name != 'pull_request' }}
+
+  deploy:
+    name: Publish docs
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Deploy documentation
+        id: deployment
+        uses: actions/deploy-pages@v4

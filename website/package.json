@@ -1,0 +1,36 @@
+{
+	"name": "cacheq-docs",
+	"version": "0.1.0",
+	"private": true,
+	"scripts": {
+		"prepare:docs": "node scripts/prepare-docs.mts",
+		"start": "pnpm prepare:docs && astro dev",
+		"build": "pnpm prepare:docs && astro build && go run ./search-index -build build -base-path /cacheq",
+		"serve": "astro preview",
+		"test": "node --test scripts/*.test.mts && go test -race ./search-index",
+		"lint": "oxlint --deny-warnings .",
+		"fmt": "oxfmt .",
+		"fmt:check": "oxfmt --check .",
+		"typecheck": "astro check && tsc --noEmit",
+		"test:build": "node --test tests/*.test.mts"
+	},
+	"dependencies": {
+		"@astrojs/react": "7.0.1",
+		"@astrojs/starlight": "0.42.5",
+		"astro": "7.3.6",
+		"react": "19.2.0",
+		"react-dom": "19.2.0"
+	},
+	"devDependencies": {
+		"@astrojs/check": "0.9.10",
+		"@types/node": "24.19.1",
+		"@types/react": "19.3.0",
+		"oxfmt": "0.72.0",
+		"oxlint": "1.87.0",
+		"typescript": "5.9.3"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"packageManager": "pnpm@11.10.0"
+}

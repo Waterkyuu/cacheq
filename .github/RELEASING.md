@@ -1,4 +1,4 @@
-# Releasing go-query
+# Releasing cacheq
 
 Open **Actions → Release → Run workflow**, select `main`, and enter a stable
 version such as `v0.1.1`. Leave **dry_run** unchecked to publish.

@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="./assets/go-query.png" alt="go-query" width="144" />
+  <img src="./assets/cacheq.png" alt="cacheq" width="144" />
 
-  <h1>go-query</h1>
+  <h1>cacheq</h1>
 
   <p><strong>English</strong> | <a href="./README.zh-CN.md">简体中文</a></p>
 
@@ -18,97 +18,84 @@
 
 ## Features
 
-- Data caching with configurable `StaleTime` and visible expiration.
-- One in-flight request per key; different keys load independently.
-- Bounded retries with exponential backoff, custom delay, and request timeout.
-- Shared data and state subscriptions for multiple components.
-- Immediate stale data with background refresh through `Query`.
-- Manual invalidation, forced refresh, prefetch, local updates, and cancellation.
+- One shared client caches different result types: details, lists, and configuration.
+- Each query retains static typing; incompatible types for a key return an error.
+- One `Query` entry point supplies state, updates, enablement, and manual refresh.
+- Freshness, background refresh, same-key request sharing, retries, and load timeouts.
+- Single-key, mixed-type batch, and predicate invalidation with optional deferred refresh.
+- Local writes, prefetching, cancellation, and inactive cache cleanup.
 
 ## Install
 
 ```sh
-go get github.com/Waterkyuu/go-query
+go get github.com/Waterkyuu/cacheq
 ```
 
-## Fetch and share data
+Import `github.com/Waterkyuu/cacheq` as package `cacheq`. Requires Go 1.22 or later and has no external dependencies.
+
+## Quick start
 
 ```go
-package main
+client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+defer client.Close()
 
-import (
-    "context"
-    "fmt"
-    "time"
-
-    query "github.com/Waterkyuu/go-query"
-)
-
-func main() {
-    client := query.NewClient[string, string](query.Options{
-        StaleTime: time.Minute,
-        Retry:     2,
-        Timeout:   10 * time.Second,
-    })
-    defer client.Close()
-
-    fetch := func(ctx context.Context) (string, error) {
-        return "hello", nil
-    }
-    value, err := client.Fetch(context.Background(), "greeting", fetch)
-    fmt.Println(value, err)
-}
+query := cacheq.Query(client, "greeting", func(context.Context) (string, error) {
+	return "hello", nil
+})
+defer query.Close()
 ```
 
-Reuse this client in every component that reads the same key. Fresh reads return cached data. Concurrent reads of a stale or missing key share one request. A key must identify the complete request, including parameters, provider, or user identity when relevant. Values are shared and read-only; clone slices and maps before modifying them.
+`Query` loads in the background; queries with the same key share cached data and requests. Use `Snapshot()` for state, `Updates()` for notifications, or `Fetch` to wait for a result.
 
-## Check freshness and refresh in the background
+## Use cases
 
-```go
-state := client.Snapshot("greeting") // reads state without a request
-fmt.Println(state.HasData, state.Stale, state.Fetching, state.Err)
+| Scenario | Pair with | Purpose |
+| --- | --- | --- |
+| Bubble Tea / TUI | `Query` + `Updates()` + `tea.Cmd` | Deliver loading, refresh, and error state to the message loop |
+| CLI / background jobs | `Fetch` + `Options.Timeout` | Wait for results, reuse in-process data, and bound load time |
+| HTTP handlers | A shared `Client` + `Fetch(r.Context(), ...)` | Merge concurrent same-key requests and respond to cancellation |
+| MCP resources | `FetchWithExpiry` + `Invalidate` + `Stats()` | Share backend reads across connections, preserve TTL, and notify after changes |
 
-state = client.Query("greeting", fetch) // returns current data immediately
-// If stale or missing, one background request updates the shared result.
+After a successful mutation, use `Invalidate` for related queries. HTTP cache keys must include result-affecting parameters and user or tenant scope. See the [query guide](docs/queries.en-US.md) and [invalidation guide](docs/invalidation.en-US.md) for API usage.
+
+## Bubble Tea example
+
+[Full source and instructions](examples/bubbletea/) demonstrate query updates in a TUI, background refresh, retained data on failure, and exit cleanup. The example requires Go 1.26+.
+
+```sh
+cd examples/bubbletea
+go run .
 ```
 
-`Status` is `Idle`, `Pending`, `Success`, or `Error`. `HasData` distinguishes missing data from an available zero value. `Fetching` is independent of the result status, so a successful result remains visible while refreshing. `UpdatedAt` and `ExpiresAt` expose the data's age and freshness deadline. Failed refreshes retain earlier data while exposing the error.
+## MCP example
 
-## Observe changes
+[Full source and instructions](examples/mcp/) demonstrate resource caching, change notifications, and private scopes. The example requires Go 1.25+.
 
-```go
-updates, unsubscribe := client.Subscribe("greeting")
-defer unsubscribe()
-
-for state := range updates {
-    // Send state to your own UI or application event loop.
-    _ = state
-}
+```sh
+cd examples/mcp
+go run .
 ```
 
-Subscriptions deliver the initial and latest states. Slow readers can skip intermediate transitions. Unsubscribe when a component closes. The loop ends when the subscription or client closes; start `Query` or `Fetch` separately to load data.
+## Feature guides
 
-## Control the shared result
+Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English or Chinese.
 
-| Method | Behavior |
+| Guide | Coverage |
 | --- | --- |
-| `Invalidate(key)` | Marks data stale; subscribed queries refresh automatically. |
-| `Refetch(ctx, key, fetch)` | Loads again even when data is fresh, sharing an active request. |
-| `Prefetch(ctx, key, fetch)` | Warms the same cache before a component needs it. |
-| `Set(key, value)` | Installs local or optimistic data and prevents an older response from overwriting it. |
-| `Cancel(key)` | Cancels active work while retaining completed data. |
-| `Remove(key)` | Removes data and prevents an old load from restoring it. |
-| `Clear()` | Clears all results and cancels current requests. |
-| `Close()` | Stops work, closes subscriptions, and rejects new requests. |
+| [Queries and conditions](docs/queries.en-US.md) | `Query`, snapshots, updates, enablement, refresh, `Fetch`, and HTTP loaders |
+| [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
+| [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
+| [Observability](docs/observability.en-US.md) | Cache hits, shared requests, load outcomes and duration, retries, and cleanup statistics |
+| [MCP resource caching](docs/mcp.en-US.md) | Server-side reuse, remaining TTL, change notifications, private scopes, and e2e |
 
-## Freshness, retries, and cancellation
+Complete integrations live in `examples`; the guides cover API details. Treat cached values as immutable; copy slices and maps before modifying them. Different result types cannot reuse the same key.
 
-`StaleTime` defaults to zero: completed data is immediately stale. Set a positive duration to avoid unnecessary requests. `Retry` counts additional attempts and defaults to zero. When enabled, default backoff starts at one second and doubles up to thirty seconds; override `RetryDelay` when needed. Cancellation and deadline errors are never retried. `Timeout` bounds a complete load including retries.
+## Verify
 
-The first waiting caller controls its load through its context. Canceling another waiter leaves that load running. If the owner cancels, remaining callers may retry with their own contexts. Background loads belong to the client and stop on `Close`. Fetchers must honor context cancellation.
+```sh
+task lint
+task test
+task build
+```
 
-## Preserve a disk snapshot's expiration
-
-`FetchWithExpiry` accepts a loader returning `(value, expiresAt, error)`. This keeps the absolute freshness of data restored from disk instead of granting it a new `StaleTime`. A zero expiration disables fresh reuse. Returning fallback data, a future expiration, and an error delays new requests until that deadline. Disk persistence and HTTP transport remain application-owned.
-
-Inject `Options.Clock` for deterministic freshness checks. The client provides no browser focus integration or automatic garbage collection; remove unused keys explicitly and close the client at the end of its lifetime.
+`task test` includes race detection and [HTTP e2e tests](e2e/query_lifecycle_test.go). The isolated local service exercises mutations, heterogeneous cache data, enablement, request sharing, retries, and cancellation without external services.

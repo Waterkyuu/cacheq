@@ -1,24 +1,39 @@
-// Package query provides typed shared query state, caching, retries, and background refreshes.
-package query
+// Package cacheq provides typed shared query state, caching, retries, and background refreshes.
+package cacheq
 
 import (
+	"container/list"
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"sync"
 	"time"
 )
 
-// Client owns shared results and merges concurrent requests by key.
+// Client owns shared results of different types and merges concurrent requests by key.
 // Reuse one client across components and call Close to stop background work.
-type Client[K comparable, V any] struct {
+type Client struct {
 	// mu protects state transitions; loaders always run outside the lock.
 	mu sync.Mutex
+	// stats accumulates this client's cache decisions, load outcomes, and cleanup activity under mu.
+	stats Stats
+	// loadNow measures elapsed load time independently of the freshness clock; tests may replace it.
+	loadNow func() time.Time
 	// entries contains completed query state, including expired data for background refresh.
-	entries map[K]entry[V]
+	entries map[any]entry
+	// recency orders retained results and errors from least to most recently used.
+	recency list.List
+	// recencyEntries connects cached keys to their positions without scanning the cache.
+	recencyEntries map[any]*list.Element
 	// pending contains at most one active loader per key.
-	pending map[K]*flight[V]
-	// observers receives the latest state for each subscribed key.
-	observers map[K]map[chan Snapshot[V]]struct{}
+	pending map[any]*flight
+	// observers receives shared state and tracks each subscriber's automatic loading permission.
+	observers map[any]map[*subscription]struct{}
+	// gcTasks owns at most one scheduled cleanup for each inactive cached key.
+	gcTasks map[any]*gcTask
+	// gcAfterFunc schedules cleanup and returns a stop function; tests can replace the timer source.
+	gcAfterFunc func(time.Duration, func()) func()
 	// options supplies freshness and request policies.
 	options Options
 	// ctx owns background loads until Close is called.
@@ -29,10 +44,12 @@ type Client[K comparable, V any] struct {
 	closed bool
 }
 
-// entry retains one completed query result and its refresh function.
-type entry[V any] struct {
+// entry retains one typed result, including stale data and the latest load error.
+type entry struct {
+	// typ binds this key to one static result type until its state and subscriptions are released.
+	typ reflect.Type
 	// value is shared, immutable query data.
-	value V
+	value any
 	// hasData distinguishes a usable result from an initial failure.
 	hasData bool
 	// expiresAt controls reuse independently of how long data stays available.
@@ -41,12 +58,12 @@ type entry[V any] struct {
 	updatedAt time.Time
 	// err records the most recent failure while earlier data can remain available.
 	err error
-	// load permits an observed query to refresh after invalidation.
-	load Loader[V]
 }
 
 // flight shares one loader's completion with all waiting callers.
-type flight[V any] struct {
+type flight struct {
+	// startedAt marks the beginning of shared work, including scheduling and retry waits.
+	startedAt time.Time
 	// done closes after value and err have been published.
 	done chan struct{}
 	// cancel stops this load without canceling unrelated query keys.
@@ -56,7 +73,7 @@ type flight[V any] struct {
 	// detached prevents explicit Cancel, Remove, and Set from restarting the canceled load.
 	detached bool
 	// value becomes visible when done closes.
-	value V
+	value any
 	// err becomes visible when done closes.
 	err error
 	// invalidated prevents a refresh invalidated in flight from being marked fresh.
@@ -64,7 +81,7 @@ type flight[V any] struct {
 }
 
 // NewClient constructs an independently owned client with optional freshness and retry policies.
-func NewClient[K comparable, V any](options Options) *Client[K, V] {
+func NewClient(options Options) *Client {
 	if options.Clock == nil {
 		options.Clock = time.Now
 	}
@@ -73,194 +90,168 @@ func NewClient[K comparable, V any](options Options) *Client[K, V] {
 	}
 	// The cancellation is transferred to Client.Close rather than a constructor defer.
 	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- Close owns the client's lifetime.
-	return &Client[K, V]{
-		entries: make(map[K]entry[V]), pending: make(map[K]*flight[V]),
-		observers: make(map[K]map[chan Snapshot[V]]struct{}),
-		options:   options, ctx: ctx, cancel: cancel,
+	return &Client{
+		entries: make(map[any]entry), pending: make(map[any]*flight),
+		recencyEntries: make(map[any]*list.Element),
+		observers:      make(map[any]map[*subscription]struct{}),
+		gcTasks:        make(map[any]*gcTask), gcAfterFunc: scheduleGC,
+		options: options, ctx: ctx, cancel: cancel,
+		loadNow: time.Now,
 	}
 }
 
-// Fetch waits for fresh data using StaleTime to determine the result's expiration.
-func (c *Client[K, V]) Fetch(ctx context.Context, key K, fetch Fetcher[V]) (V, error) {
-	return c.FetchWithExpiry(ctx, key, c.loader(fetch))
-}
-
-// FetchWithExpiry returns a fresh result or shares one loader with concurrent callers of the same key.
-// Loaders control absolute freshness, preserving the age of data restored from disk.
-// A canceled waiter leaves the owner's load running. If the owner cancels, remaining callers may retry.
-func (c *Client[K, V]) FetchWithExpiry(ctx context.Context, key K, load Loader[V]) (V, error) {
-	var zero V
-	for {
-		if err := ctx.Err(); err != nil {
-			return zero, err
-		}
-		c.mu.Lock()
-		if c.closed {
-			c.mu.Unlock()
-			return zero, ErrClosed
-		}
-		if cached, ok := c.entries[key]; ok && c.options.Clock().Before(cached.expiresAt) {
-			c.mu.Unlock()
-			return cached.value, cached.err
-		}
-		pending := c.pending[key]
-		if pending == nil {
-			pending = c.startLocked(ctx, key, load)
-		}
-		c.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return zero, ctx.Err()
-		case <-pending.done:
-			if err := ctx.Err(); err != nil {
-				return zero, err
-			}
-			// A component can dismiss its request while another still needs
-			// the shared value. Retry using the remaining caller's context.
-			if pending.owner.Err() != nil && !pending.detached {
-				continue
-			}
-			return pending.value, pending.err
-		}
+// Invalidate marks a key, a []any batch, or keys matching func(any) bool stale while retaining data.
+// By default it refreshes queries with enabled observers and loaders; the last option wins.
+// Batches are validated before any changes, and duplicate keys are invalidated once.
+// Predicates run outside the client lock against a snapshot of cached or loading keys.
+// Newly added keys are excluded, and keys removed before invalidation are skipped.
+// Nil targets and predicates return ErrInvalidKey; empty batches do nothing.
+// Closed clients return ErrClosed without evaluating predicates.
+func (c *Client) Invalidate(target any, options ...InvalidateOptions) error {
+	mode := RefetchObserved
+	for _, option := range options {
+		mode = option.Refetch
+	}
+	switch selected := target.(type) {
+	case []any:
+		return c.invalidateKeys(selected, mode)
+	case func(any) bool:
+		return c.invalidateMatching(selected, mode)
+	default:
+		return c.invalidateKeys([]any{target}, mode)
 	}
 }
 
-// Query returns current data immediately and refreshes stale or missing data in the background.
-func (c *Client[K, V]) Query(key K, fetch Fetcher[V]) Snapshot[V] {
+// invalidateKeys validates the entire selection before invalidating each distinct key.
+func (c *Client) invalidateKeys(keys []any, mode RefetchMode) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.closed && c.snapshotLocked(key).Stale && c.pending[key] == nil {
-		c.startLocked(c.ctx, key, c.loader(fetch))
+	if c.closed {
+		return ErrClosed
 	}
-	return c.snapshotLocked(key)
+	for _, key := range keys {
+		if err := c.checkLocked(key, nil); err != nil {
+			return err
+		}
+	}
+	seen := make(map[any]struct{}, len(keys))
+	for _, key := range keys {
+		// Repeating a key would invalidate the refresh just started for its
+		// first occurrence, leaving an otherwise current result stale.
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		c.invalidateLocked(key, mode)
+	}
+	return nil
 }
 
-// Snapshot reads data and freshness without starting a network request.
-func (c *Client[K, V]) Snapshot(key K) Snapshot[V] {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.snapshotLocked(key)
-}
-
-// Prefetch warms the shared cache using the same freshness and request policy as Fetch.
-func (c *Client[K, V]) Prefetch(ctx context.Context, key K, fetch Fetcher[V]) error {
-	_, err := c.Fetch(ctx, key, fetch)
-	return err
-}
-
-// Refetch requests a new result even if existing data is fresh, sharing any active load.
-func (c *Client[K, V]) Refetch(ctx context.Context, key K, fetch Fetcher[V]) (V, error) {
+// invalidateMatching evaluates user code outside the lock and invalidates surviving selected keys.
+func (c *Client) invalidateMatching(matches func(any) bool, mode RefetchMode) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		var zero V
-		return zero, ErrClosed
+		return ErrClosed
 	}
-	cached := c.entries[key]
-	cached.expiresAt = time.Time{}
-	c.entries[key] = cached
-	c.notifyLocked(key)
+	if matches == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("%w: nil invalidation predicate", ErrInvalidKey)
+	}
+	keys := make([]any, 0, len(c.entries)+len(c.pending))
+	for key := range c.entries {
+		keys = append(keys, key)
+	}
+	for key := range c.pending {
+		if _, cached := c.entries[key]; !cached {
+			keys = append(keys, key)
+		}
+	}
 	c.mu.Unlock()
-	return c.Fetch(ctx, key, fetch)
-}
-
-// Invalidate marks data stale and refreshes subscribed queries that have a retained loader.
-func (c *Client[K, V]) Invalidate(key K) {
+	selected := keys[:0]
+	for _, key := range keys {
+		if matches(key) {
+			selected = append(selected, key)
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return
+		return ErrClosed
 	}
+	for _, key := range selected {
+		// A predicate or concurrent cleanup can remove state while matching
+		// runs outside the lock. Do not recreate that removed cache entry.
+		if _, cached := c.entries[key]; !cached && c.pending[key] == nil {
+			continue
+		}
+		c.invalidateLocked(key, mode)
+	}
+	return nil
+}
+
+// invalidateLocked applies one key's invalidation and refresh policy while the client lock is held.
+func (c *Client) invalidateLocked(key any, refetch RefetchMode) {
 	cached := c.entries[key]
 	cached.expiresAt = time.Time{}
 	c.entries[key] = cached
 	if pending := c.pending[key]; pending != nil {
 		pending.invalidated = true
-	} else if !c.closed && len(c.observers[key]) > 0 && cached.load != nil {
-		c.startLocked(c.ctx, key, cached.load)
-	}
-	c.notifyLocked(key)
-}
-
-// Set installs shared data and stops an older load from overwriting an optimistic or local update.
-func (c *Client[K, V]) Set(key K, value V) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return
-	}
-	c.cancelLocked(key)
-	now := c.options.Clock()
-	c.entries[key] = entry[V]{
-		value: value, hasData: true, updatedAt: now,
-		expiresAt: now.Add(c.options.StaleTime), load: c.entries[key].load,
-	}
-	c.notifyLocked(key)
-}
-
-// Subscribe delivers the initial and latest query states; slow readers may skip intermediate states.
-// Canceling the returned subscription closes its channel and releases the observer.
-func (c *Client[K, V]) Subscribe(key K) (<-chan Snapshot[V], func()) {
-	c.mu.Lock()
-	updates := make(chan Snapshot[V], 1)
-	updates <- c.snapshotLocked(key)
-	if c.closed {
-		close(updates)
-	} else {
-		if c.observers[key] == nil {
-			c.observers[key] = make(map[chan Snapshot[V]]struct{})
+	} else if refetch == RefetchObserved {
+		if load := c.observedLoaderLocked(key); load != nil {
+			c.startLocked(c.ctx, key, load)
 		}
-		c.observers[key][updates] = struct{}{}
 	}
-	c.mu.Unlock()
-	var once sync.Once
-	return updates, func() {
-		once.Do(func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if _, exists := c.observers[key][updates]; exists {
-				delete(c.observers[key], updates)
-				if len(c.observers[key]) == 0 {
-					delete(c.observers, key)
-				}
-				close(updates)
-			}
-		})
-	}
+	c.touchCapacityLocked(key)
+	c.touchGCLocked(key)
+	c.notifyLocked(key)
 }
 
 // Cancel stops an active load while retaining previously completed data.
-func (c *Client[K, V]) Cancel(key K) {
+func (c *Client) Cancel(key any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkLocked(key, nil); err != nil {
+		return err
+	}
 	c.cancelLocked(key)
+	c.touchGCLocked(key)
 	c.notifyLocked(key)
+	return nil
 }
 
 // Remove discards a key's result and prevents its active loader from restoring removed data.
-func (c *Client[K, V]) Remove(key K) {
+func (c *Client) Remove(key any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.checkLocked(key, nil); err != nil {
+		return err
+	}
 	c.cancelLocked(key)
-	delete(c.entries, key)
+	c.discardLocked(key)
+	c.stopGCLocked(key)
 	c.notifyLocked(key)
+	return nil
 }
 
 // Clear removes all results and cancels active loads while retaining live subscriptions.
-func (c *Client[K, V]) Clear() {
+func (c *Client) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for key := range c.pending {
 		c.cancelLocked(key)
 	}
-	clear(c.entries)
+	for key := range c.entries {
+		c.discardLocked(key)
+	}
+	c.clearGCLocked()
 	for key := range c.observers {
 		c.notifyLocked(key)
 	}
 }
 
 // Close cancels active work, closes subscriptions, and prevents new requests; it is idempotent.
-func (c *Client[K, V]) Close() {
+func (c *Client) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -272,27 +263,20 @@ func (c *Client[K, V]) Close() {
 		c.cancelLocked(key)
 	}
 	for _, observers := range c.observers {
-		for updates := range observers {
-			close(updates)
+		for observer := range observers {
+			observer.close()
 		}
 	}
 	clear(c.observers)
 	clear(c.entries)
-}
-
-// loader converts a fetcher into an absolute-expiration loader without introducing transport ownership.
-func (c *Client[K, V]) loader(fetch Fetcher[V]) Loader[V] {
-	return func(ctx context.Context) (V, time.Time, error) {
-		value, err := fetch(ctx)
-		if err != nil {
-			return value, time.Time{}, err
-		}
-		return value, c.options.Clock().Add(c.options.StaleTime), nil
-	}
+	c.recency.Init()
+	clear(c.recencyEntries)
+	c.clearGCLocked()
 }
 
 // startLocked publishes pending state before starting one asynchronous load.
-func (c *Client[K, V]) startLocked(ctx context.Context, key K, load Loader[V]) *flight[V] {
+func (c *Client) startLocked(ctx context.Context, key any, load Loader[any]) *flight {
+	c.stopGCLocked(key)
 	owner := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	if c.options.Timeout > 0 {
@@ -301,36 +285,54 @@ func (c *Client[K, V]) startLocked(ctx context.Context, key K, load Loader[V]) *
 		previousCancel := cancel
 		cancel = func() { timeoutCancel(); previousCancel() }
 	}
-	pending := &flight[V]{done: make(chan struct{}), cancel: cancel, owner: owner}
+	pending := &flight{done: make(chan struct{}), cancel: cancel, owner: owner, startedAt: c.loadNow()}
 	c.pending[key] = pending
+	c.stats.Loads++
 	c.notifyLocked(key)
-	go c.execute(ctx, key, pending, load)
+	go c.execute(
+		ctx,
+		key,
+		pending,
+		load,
+	)
 	return pending
 }
 
 // execute publishes a completed load only while it still owns the key's active request.
-func (c *Client[K, V]) execute(ctx context.Context, key K, pending *flight[V], load Loader[V]) {
+func (c *Client) execute(ctx context.Context, key any, pending *flight, load Loader[any]) {
 	defer pending.cancel()
 	value, expiresAt, err := c.run(ctx, load)
 	if ctx.Err() != nil {
-		var zero V
-		value, expiresAt, err = zero, time.Time{}, ctx.Err()
+		value, expiresAt, err = nil, time.Time{}, ctx.Err()
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.stats.TotalLoadDuration += c.loadNow().Sub(pending.startedAt)
+	switch {
+	case err == nil:
+		c.stats.LoadSuccesses++
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		c.stats.LoadCancellations++
+	default:
+		c.stats.LoadFailures++
+	}
 	if c.pending[key] == pending {
 		delete(c.pending, key)
 		if !c.closed && ctx.Err() == nil {
+			c.expireDataLocked(key)
 			cached := c.entries[key]
 			if err == nil || c.options.Clock().Before(expiresAt) {
 				cached.value, cached.hasData, cached.updatedAt = value, true, c.options.Clock()
+				expiresAt = c.limitExpiry(cached.updatedAt, expiresAt)
 			}
 			if pending.invalidated {
 				expiresAt = time.Time{}
 			}
-			cached.err, cached.expiresAt, cached.load = err, expiresAt, load
+			cached.err, cached.expiresAt = err, expiresAt
 			c.entries[key] = cached
+			c.touchCapacityLocked(key)
 		}
+		c.touchGCLocked(key)
 	}
 	pending.value, pending.err = value, err
 	c.notifyLocked(key)
@@ -338,32 +340,37 @@ func (c *Client[K, V]) execute(ctx context.Context, key K, pending *flight[V], l
 }
 
 // run applies bounded retries and stops immediately for cancellation or deadline errors.
-func (c *Client[K, V]) run(ctx context.Context, load Loader[V]) (V, time.Time, error) {
+func (c *Client) run(ctx context.Context, load Loader[any]) (any, time.Time, error) {
 	for attempt := 0; ; attempt++ {
 		if ctx.Err() != nil {
-			var zero V
-			return zero, time.Time{}, ctx.Err()
+			return nil, time.Time{}, ctx.Err()
+		}
+		if attempt > 0 {
+			c.mu.Lock()
+			c.stats.Retries++
+			c.mu.Unlock()
 		}
 		value, expiresAt, err := load(ctx)
-		if err == nil || attempt >= c.options.Retry || ctx.Err() != nil ||
-			errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		stopped := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+		shouldRetry := err != nil && attempt < c.options.Retry && !stopped
+		if !shouldRetry {
 			return value, expiresAt, err
 		}
 		timer := time.NewTimer(c.options.RetryDelay(attempt + 1))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			var zero V
-			return zero, time.Time{}, ctx.Err()
+			return nil, time.Time{}, ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
 
-// snapshotLocked derives freshness from the clock without scheduling a request.
-func (c *Client[K, V]) snapshotLocked(key K) Snapshot[V] {
+// snapshotLocked removes data beyond MaxAge and derives state without scheduling a request.
+func (c *Client) snapshotLocked(key any) Snapshot[any] {
+	c.expireDataLocked(key)
 	cached := c.entries[key]
-	state := Snapshot[V]{
+	state := Snapshot[any]{
 		Data: cached.value, HasData: cached.hasData, Err: cached.err,
 		Stale:    !cached.hasData || !c.options.Clock().Before(cached.expiresAt),
 		Fetching: c.pending[key] != nil, UpdatedAt: cached.updatedAt, ExpiresAt: cached.expiresAt,
@@ -383,33 +390,75 @@ func (c *Client[K, V]) snapshotLocked(key K) Snapshot[V] {
 	return state
 }
 
-// notifyLocked publishes the most recent state without allowing a slow observer to block a loader.
-func (c *Client[K, V]) notifyLocked(key K) {
+// notifyLocked publishes the latest state while the client lock prevents subscription closure races.
+func (c *Client) notifyLocked(key any) {
 	if len(c.observers[key]) == 0 {
 		return
 	}
 	state := c.snapshotLocked(key)
-	for updates := range c.observers[key] {
-		select {
-		case updates <- state:
-		default:
-			select {
-			case <-updates:
-			default:
-			}
-			select {
-			case updates <- state:
-			default:
-			}
-		}
+	for observer := range c.observers[key] {
+		observer.publish(state)
 	}
 }
 
 // cancelLocked detaches the active load so canceled or obsolete results cannot overwrite current data.
-func (c *Client[K, V]) cancelLocked(key K) {
+func (c *Client) cancelLocked(key any) {
 	if pending := c.pending[key]; pending != nil {
 		pending.detached = true
 		pending.cancel()
 		delete(c.pending, key)
 	}
+}
+
+// checkLocked rejects closed clients, unsafe keys, and incompatible static result types without changing state.
+func (c *Client) checkLocked(key any, typ reflect.Type) error {
+	if c.closed {
+		return ErrClosed
+	}
+	if key == nil || !reflect.ValueOf(key).Comparable() {
+		return fmt.Errorf("%w: %T", ErrInvalidKey, key)
+	}
+	cached := c.entries[key]
+	typeMismatch := typ != nil && cached.typ != nil && cached.typ != typ
+	if typeMismatch {
+		return fmt.Errorf(
+			"%w: key %v contains %v, requested %v",
+			ErrTypeMismatch,
+			key,
+			cached.typ,
+			typ,
+		)
+	}
+	return nil
+}
+
+// bindLocked installs a static type before a result or flight can become visible to other callers.
+func (c *Client) bindLocked(key any, typ reflect.Type) error {
+	if err := c.checkLocked(key, typ); err != nil {
+		return err
+	}
+	cached := c.entries[key]
+	cached.typ = typ
+	c.entries[key] = cached
+	return nil
+}
+
+// discardLocked preserves active type bindings while clearing completed data and capacity bookkeeping.
+func (c *Client) discardLocked(key any) {
+	c.forgetCapacityLocked(key)
+	if len(c.observers[key]) > 0 || c.pending[key] != nil {
+		c.entries[key] = entry{typ: c.entries[key].typ}
+		return
+	}
+	delete(c.entries, key)
+}
+
+// observedLoaderLocked selects a loader belonging to an enabled query handle.
+func (c *Client) observedLoaderLocked(key any) Loader[any] {
+	for observer := range c.observers[key] {
+		if observer.enabled && observer.load != nil {
+			return observer.load
+		}
+	}
+	return nil
 }

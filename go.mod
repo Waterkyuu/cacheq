@@ -1,3 +1,3 @@
-module github.com/Waterkyuu/go-query
+module github.com/Waterkyuu/cacheq
 
 go 1.22

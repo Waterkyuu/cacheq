@@ -1,4 +1,4 @@
-Write the English GitHub release notes for go-query.
+Write the English GitHub release notes for cacheq.
 
 Read release-context.md first. It identifies the requested version, exact target
 commit, previous release tag, comparison range, and completed checks. Use shell
