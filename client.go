@@ -205,6 +205,50 @@ func (c *Client[K, V]) InvalidateMany(keys []K, options InvalidateOptions) {
 	}
 }
 
+// InvalidateWhere marks cached or loading keys stale when matches returns true.
+// Matches runs outside the client lock against a snapshot of existing keys and may read client state.
+// Keys added after that snapshot are excluded, and keys removed before invalidation are skipped.
+// Nil matches and closed clients have no effect; refresh behavior follows InvalidateMany.
+func (c *Client[K, V]) InvalidateWhere(matches func(K) bool, options InvalidateOptions) {
+	if matches == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	keys := make([]K, 0, len(c.entries)+len(c.pending))
+	for key := range c.entries {
+		keys = append(keys, key)
+	}
+	for key := range c.pending {
+		if _, cached := c.entries[key]; !cached {
+			keys = append(keys, key)
+		}
+	}
+	c.mu.Unlock()
+	selected := keys[:0]
+	for _, key := range keys {
+		if matches(key) {
+			selected = append(selected, key)
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	for _, key := range selected {
+		// A predicate or concurrent cleanup can remove state while matching
+		// runs outside the lock. Do not recreate that removed cache entry.
+		if _, cached := c.entries[key]; !cached && c.pending[key] == nil {
+			continue
+		}
+		c.invalidateLocked(key, options.Refetch)
+	}
+}
+
 // invalidateLocked applies one key's invalidation and refresh policy while the client lock is held.
 func (c *Client[K, V]) invalidateLocked(key K, refetch RefetchMode) {
 	cached := c.entries[key]

@@ -24,7 +24,7 @@
 - Shared data and state subscriptions for multiple components.
 - Conditional observers with independent enablement for initial loads and invalidation refreshes.
 - Immediate stale data with background refresh through `Query`.
-- Single-key and batch invalidation with optional background refresh, forced refresh, prefetch, local updates, and cancellation.
+- Single-key, batch, and predicate invalidation with optional background refresh, forced refresh, prefetch, local updates, and cancellation.
 - Optional automatic deletion of unused cached data, independent of freshness.
 
 ## Install
@@ -119,6 +119,7 @@ Disabling or closing an observer does not cancel work already started. Explicit 
 | --- | --- |
 | `Invalidate(key)` | Marks data stale; queries with enabled observers and loaders refresh automatically. |
 | `InvalidateMany(keys, options)` | Marks related keys stale, optionally deferring background refresh. |
+| `InvalidateWhere(matches, options)` | Selects cached or loading keys with a predicate and applies the same refresh policy. |
 | `Refetch(ctx, key, fetch)` | Loads again even when data is fresh, sharing an active request. |
 | `Prefetch(ctx, key, fetch)` | Warms the same cache before a component needs it. |
 | `Set(key, value)` | Installs local or optimistic data and prevents an older response from overwriting it. |
@@ -145,6 +146,16 @@ client.InvalidateMany(keys, query.InvalidateOptions{
 ```
 
 Invalidation retains existing data and notifies subscribers. It does not cancel or duplicate active loads; results from loads invalidated in flight remain stale when they complete. Duplicate keys are processed once, and an empty batch has no effect. Use a one-element slice to defer refresh for a single key. The existing `Invalidate(key)` behavior is unchanged.
+
+To select related keys by a condition rather than list them, use `InvalidateWhere`. With `strings` imported, this example marks the user list and every user detail stale without starting new requests:
+
+```go
+client.InvalidateWhere(func(key string) bool {
+    return key == "users" || strings.HasPrefix(key, "user:")
+}, query.InvalidateOptions{Refetch: query.RefetchNone})
+```
+
+The same `InvalidateOptions` apply; zero-value options refresh matching queries with enabled observers and loaders. The predicate receives each distinct cached or loading key once, including keys whose initial load has not completed. Structured keys can be matched by their fields without a string convention. Predicates run outside the client lock and may read client state. Matching uses a snapshot of existing keys: newly added keys are excluded and removed keys are skipped before invalidation. A nil predicate has no effect.
 
 ## Freshness, retries, and cancellation
 

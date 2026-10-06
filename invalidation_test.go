@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -201,5 +202,208 @@ func TestInvalidateManyBoundaries(t *testing.T) {
 	client.InvalidateMany([]string{"", "missing"}, InvalidateOptions{})
 	if state := client.Snapshot(""); state.HasData || state.Fetching || !errors.Is(state.Err, ErrClosed) {
 		t.Fatalf("closed client invalidation = %+v", state)
+	}
+}
+
+// TestInvalidateWhere applies refresh policy only to matching keys with enabled observers.
+func TestInvalidateWhere(t *testing.T) {
+	for name, mode := range map[string]RefetchMode{"observed": RefetchObserved, "none": RefetchNone} {
+		t.Run(name, func(t *testing.T) {
+			client := newInvalidationClient(t)
+			calls := make(map[string]*atomic.Int32)
+			observers := make(map[string]*Observer[string, int])
+			for _, key := range []string{"users:42", "users:list", "users:unobserved", "projects:list"} {
+				calls[key] = &atomic.Int32{}
+				fetch := func(context.Context) (int, error) { return int(calls[key].Add(1)), nil }
+				if _, err := client.Fetch(context.Background(), key, fetch); err != nil {
+					t.Fatal(err)
+				}
+				if key != "users:unobserved" {
+					observer := client.Observe(key, fetch, ObserveOptions{Enabled: key != "users:list"})
+					t.Cleanup(observer.Close)
+					observers[key] = observer
+					<-observer.Updates()
+				}
+			}
+			client.InvalidateWhere(func(key string) bool {
+				return strings.HasPrefix(key, "users:")
+			}, InvalidateOptions{Refetch: mode})
+			active := observers["users:42"]
+			if mode == RefetchObserved {
+				state := awaitState(
+					t,
+					active.Updates(),
+					func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching },
+				)
+				if state.Stale || state.Err != nil || calls["users:42"].Load() != 2 {
+					t.Fatalf("matching active query = %+v", state)
+				}
+			} else {
+				if state := active.Snapshot(); !state.Stale || state.Fetching || state.Data != 1 {
+					t.Fatalf("deferred matching query = %+v", state)
+				}
+				active.SetEnabled(false)
+				active.SetEnabled(true)
+				state := awaitState(
+					t,
+					active.Updates(),
+					func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching },
+				)
+				if state.Stale {
+					t.Fatalf("re-enabled matching query = %+v", state)
+				}
+			}
+			for _, key := range []string{"users:list", "users:unobserved"} {
+				if state := client.Snapshot(
+					key,
+				); !state.Stale || state.Fetching || state.Data != 1 ||
+					calls[key].Load() != 1 {
+					t.Fatalf("matching passive query %s = %+v", key, state)
+				}
+			}
+			if state := observers["projects:list"].Snapshot(); state.Stale || state.Data != 1 ||
+				calls["projects:list"].Load() != 1 {
+				t.Fatalf("nonmatching query = %+v", state)
+			}
+		})
+	}
+}
+
+// TestInvalidateWherePending includes loading-only keys and evaluates cached/loading keys just once.
+func TestInvalidateWherePending(t *testing.T) {
+	for _, cached := range []bool{false, true} {
+		client := newInvalidationClient(t)
+		if cached {
+			client.Set("users:42", 7)
+			client.Invalidate("users:42")
+		}
+		updates, unsubscribe := client.Subscribe("users:42")
+		t.Cleanup(unsubscribe)
+		var calls atomic.Int32
+		started, release := make(chan struct{}), make(chan struct{})
+		fetch := func(ctx context.Context) (int, error) {
+			call := calls.Add(1)
+			if call == 1 {
+				close(started)
+				select {
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				case <-release:
+				}
+			}
+			return int(call), nil
+		}
+		client.Query("users:42", fetch)
+		<-started
+		matches := 0
+		client.InvalidateWhere(func(key string) bool {
+			matches++
+			return key == "users:42"
+		}, InvalidateOptions{Refetch: RefetchNone})
+		close(release)
+		state := awaitState(t, updates, func(s Snapshot[int]) bool { return s.HasData && !s.Fetching })
+		if !state.Stale || state.Data != 1 || state.Err != nil || matches != 1 {
+			t.Fatalf("pending predicate invalidation = %+v; matches = %d", state, matches)
+		}
+		if value, err := client.Fetch(context.Background(), "users:42", fetch); value != 2 || err != nil {
+			t.Fatalf("read after predicate invalidation = %d, %v", value, err)
+		}
+	}
+}
+
+// TestInvalidateWhereReentrant evaluates callbacks outside locks and skips keys removed while matching.
+func TestInvalidateWhereReentrant(t *testing.T) {
+	client := newInvalidationClient(t)
+	for _, key := range []string{"selected", "removed", "untouched"} {
+		client.Set(key, 7)
+	}
+	finished := make(chan struct{})
+	go func() {
+		client.InvalidateWhere(func(key string) bool {
+			client.Snapshot(key)
+			client.Set("new", 99)
+			client.Remove("removed")
+			return key != "untouched"
+		}, InvalidateOptions{Refetch: RefetchNone})
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(3 * time.Second):
+		t.Fatal("predicate could not reenter the client")
+	}
+	if state := client.Snapshot("selected"); !state.Stale || state.Data != 7 {
+		t.Fatalf("selected query = %+v", state)
+	}
+	for key, value := range map[string]int{"untouched": 7, "new": 99} {
+		if state := client.Snapshot(key); state.Stale || state.Data != value {
+			t.Fatalf("excluded query %s = %+v", key, state)
+		}
+	}
+	seen := make(map[string]bool)
+	client.InvalidateWhere(func(key string) bool {
+		seen[key] = true
+		return false
+	}, InvalidateOptions{})
+	if seen["removed"] {
+		t.Fatal("predicate invalidation recreated removed state")
+	}
+}
+
+// TestInvalidateWhereBoundaries leaves state unchanged for nil, nonmatching, or closed-client predicates.
+func TestInvalidateWhereBoundaries(t *testing.T) {
+	client := newInvalidationClient(t)
+	client.Set("users", 7)
+	client.InvalidateWhere(nil, InvalidateOptions{})
+	matches := 0
+	client.InvalidateWhere(func(string) bool {
+		matches++
+		return false
+	}, InvalidateOptions{})
+	if state := client.Snapshot("users"); state.Stale || state.Data != 7 || matches != 1 {
+		t.Fatalf("nonmatching predicate = %+v; matches = %d", state, matches)
+	}
+	client.Close()
+	client.InvalidateWhere(func(string) bool {
+		matches++
+		return true
+	}, InvalidateOptions{})
+	if matches != 1 {
+		t.Fatal("closed client evaluated its predicate")
+	}
+	if state := client.Snapshot("users"); state.HasData || !errors.Is(state.Err, ErrClosed) {
+		t.Fatalf("closed predicate invalidation = %+v", state)
+	}
+}
+
+// scopedQueryKey identifies a resource within one tenant without encoding fields into a string.
+type scopedQueryKey struct {
+	// resource identifies the kind of data returned by this query.
+	resource string
+	// tenant isolates queries belonging to separate tenants.
+	tenant int
+}
+
+// TestInvalidateWhereTypedKeys matches structured keys without imposing a string or prefix convention.
+func TestInvalidateWhereTypedKeys(t *testing.T) {
+	client := NewClient[scopedQueryKey, int](Options{
+		StaleTime: time.Hour, Clock: func() time.Time { return time.Unix(0, 0) },
+	})
+	t.Cleanup(client.Close)
+	keys := []scopedQueryKey{
+		{resource: "users", tenant: 42},
+		{resource: "users", tenant: 7},
+		{resource: "projects", tenant: 42},
+	}
+	for _, key := range keys {
+		client.Set(key, 1)
+	}
+	client.InvalidateWhere(func(key scopedQueryKey) bool {
+		return key.resource == "users" && key.tenant == 42
+	}, InvalidateOptions{Refetch: RefetchNone})
+	for _, key := range keys {
+		if state := client.Snapshot(key); state.Stale != (key == keys[0]) || state.Data != 1 {
+			t.Fatalf("typed query %v = %+v", key, state)
+		}
 	}
 }
