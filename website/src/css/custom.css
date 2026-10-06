@@ -152,7 +152,7 @@ h3 {
 }
 .install-snippet > div {
 	margin: 0;
-	background: var(--color-canvas);
+	background: transparent;
 	box-shadow: none;
 }
 .install-snippet .frame {
@@ -160,9 +160,9 @@ h3 {
 	box-shadow: none;
 }
 .install-snippet pre {
-	background: var(--color-canvas) !important;
+	background: var(--color-surface-soft) !important;
 	border: 0;
-	border-radius: 0;
+	border-radius: 9999px;
 	box-shadow: none;
 	font-size: 13px;
 	text-align: left;
