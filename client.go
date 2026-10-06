@@ -1,5 +1,5 @@
-// Package query provides typed shared query state, caching, retries, and background refreshes.
-package query
+// Package cacheq provides typed shared query state, caching, retries, and background refreshes.
+package cacheq
 
 import (
 	"context"

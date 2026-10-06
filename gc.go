@@ -1,4 +1,4 @@
-package query
+package cacheq
 
 import "time"
 
