@@ -3,11 +3,280 @@ package query
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// TestCacheExpiration refreshes at the exact expiration boundary while isolating keys.
+func TestCacheExpiration(t *testing.T) {
+	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	cache := NewClient[string, int](Options{Clock: func() time.Time { return now }})
+	calls := 0
+	load := func(context.Context) (int, time.Time, error) {
+		calls++
+		return calls, now.Add(time.Hour), nil
+	}
+	for _, key := range []string{"a", "a", "b"} {
+		if _, err := cache.FetchWithExpiry(context.Background(), key, load); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("loads = %d, want one per key", calls)
+	}
+	now = now.Add(time.Hour)
+	if got, err := cache.FetchWithExpiry(context.Background(), "a", load); got != 3 || err != nil {
+		t.Fatalf("expired result = %d, %v", got, err)
+	}
+}
+
+// TestCacheRetryExpiration reuses an explicitly cached failure and retries when its delay expires.
+func TestCacheRetryExpiration(t *testing.T) {
+	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	cache := NewClient[string, string](Options{Clock: func() time.Time { return now }})
+	failure := errors.New("unavailable")
+	calls := 0
+	load := func(context.Context) (string, time.Time, error) {
+		calls++
+		return "offline", now.Add(time.Minute), failure
+	}
+	for range 2 {
+		if value, err := cache.FetchWithExpiry(
+			context.Background(),
+			"a",
+			load,
+		); value != "offline" ||
+			!errors.Is(err, failure) {
+			t.Fatalf("fallback = %q, %v", value, err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("failure loaded %d times before retry expiration", calls)
+	}
+	now = now.Add(time.Minute)
+	_, _ = cache.FetchWithExpiry(context.Background(), "a", load)
+	if calls != 2 {
+		t.Fatalf("failure was not retried: loads = %d", calls)
+	}
+}
+
+// TestCacheZeroExpiration leaves uncached results eligible for the next load.
+func TestCacheZeroExpiration(t *testing.T) {
+	cache := NewClient[string, int](Options{})
+	calls := 0
+	load := func(context.Context) (int, time.Time, error) {
+		calls++
+		return calls, time.Time{}, nil
+	}
+	for want := 1; want <= 2; want++ {
+		if value, err := cache.FetchWithExpiry(context.Background(), "a", load); value != want || err != nil {
+			t.Fatalf("uncached value = %d, %v; want %d", value, err, want)
+		}
+	}
+}
+
+// TestCacheConcurrentLoads merges requests for one key without blocking other keys.
+func TestCacheConcurrentLoads(t *testing.T) {
+	cache := NewClient[string, string](Options{})
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	load := func(ctx context.Context) (string, time.Time, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+		}
+		select {
+		case <-ctx.Done():
+			return "", time.Time{}, ctx.Err()
+		case <-release:
+			return "shared", time.Now().Add(time.Hour), nil
+		}
+	}
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if value, err := cache.FetchWithExpiry(context.Background(), "a", load); value != "shared" || err != nil {
+				t.Errorf("shared result = %q, %v", value, err)
+			}
+		}()
+	}
+	<-started
+	other := make(chan string, 1)
+	go func() {
+		value, _ := cache.FetchWithExpiry(context.Background(), "b", func(context.Context) (string, time.Time, error) {
+			return "independent", time.Now().Add(time.Hour), nil
+		})
+		other <- value
+	}()
+	select {
+	case value := <-other:
+		if value != "independent" {
+			t.Errorf("other key = %q", value)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("one key's loader blocked another key")
+	}
+	close(release)
+	wg.Wait()
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("same key loaded %d times", got)
+	}
+}
+
+// TestCacheWaiterCancellation does not cancel the caller that owns an active load.
+func TestCacheWaiterCancellation(t *testing.T) {
+	cache := NewClient[string, string](Options{})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan error, 1)
+	load := func(context.Context) (string, time.Time, error) {
+		close(started)
+		<-release
+		return "loaded", time.Now().Add(time.Hour), nil
+	}
+	go func() {
+		_, err := cache.FetchWithExpiry(context.Background(), "a", load)
+		finished <- err
+	}()
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	waiter := make(chan error, 1)
+	go func() {
+		_, err := cache.FetchWithExpiry(ctx, "a", load)
+		waiter <- err
+	}()
+	cancel()
+	if err := <-waiter; !errors.Is(err, context.Canceled) {
+		t.Errorf("waiter cancellation = %v", err)
+	}
+	close(release)
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	if value, err := cache.FetchWithExpiry(context.Background(), "a", load); value != "loaded" || err != nil {
+		t.Fatalf("waiter discarded loaded value: %q, %v", value, err)
+	}
+}
+
+// TestCacheLoaderCancellation allows another caller to retry and never caches a canceled load.
+func TestCacheLoaderCancellation(t *testing.T) {
+	cache := NewClient[string, string](Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{})
+	first := make(chan error, 1)
+	go func() {
+		_, err := cache.FetchWithExpiry(ctx, "a", func(ctx context.Context) (string, time.Time, error) {
+			close(started)
+			<-ctx.Done()
+			return "canceled", time.Now().Add(time.Hour), nil
+		})
+		first <- err
+	}()
+	<-started
+	second := make(chan error, 1)
+	go func() {
+		value, err := cache.FetchWithExpiry(
+			context.Background(),
+			"a",
+			func(context.Context) (string, time.Time, error) {
+				return "retried", time.Now().Add(time.Hour), nil
+			},
+		)
+		if value != "retried" {
+			t.Errorf("remaining caller = %q", value)
+		}
+		second <- err
+	}()
+	cancel()
+	if err := <-first; !errors.Is(err, context.Canceled) {
+		t.Errorf("loader cancellation = %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.FetchWithExpiry(ctx, "a", nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled caller used a cached result: %v", err)
+	}
+}
+
+// TestClientRetries covers recovery and exhaustion using an immediate deterministic retry policy.
+func TestClientRetries(t *testing.T) {
+	for _, succeed := range []bool{true, false} {
+		client := NewClient[string, string](Options{
+			StaleTime: time.Hour, Retry: 2, RetryDelay: func(int) time.Duration { return 0 },
+		})
+		calls := 0
+		failure := errors.New("unavailable")
+		value, err := client.Fetch(context.Background(), "a", func(context.Context) (string, error) {
+			calls++
+			if succeed && calls == 3 {
+				return "recovered", nil
+			}
+			return "", failure
+		})
+		if calls != 3 || succeed && (err != nil || value != "recovered") || !succeed && !errors.Is(err, failure) {
+			t.Fatalf("retry result = %q, %v; calls = %d", value, err, calls)
+		}
+		client.Close()
+	}
+}
+
+// TestRetryCancellation stops during backoff without starting another attempt.
+func TestRetryCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := NewClient[string, string](Options{
+		Retry: 3,
+		RetryDelay: func(int) time.Duration {
+			cancel()
+			return time.Hour
+		},
+	})
+	defer client.Close()
+	_, err := client.Fetch(ctx, "a", func(context.Context) (string, error) { return "", errors.New("offline") })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("retry cancellation = %v", err)
+	}
+}
+
+// TestClientTimeout bounds all attempts and does not restart its own deadline as a canceled owner.
+func TestClientTimeout(t *testing.T) {
+	client := NewClient[string, string](Options{Timeout: time.Millisecond, Retry: 3})
+	defer client.Close()
+	_, err := client.Fetch(context.Background(), "a", func(ctx context.Context) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("query timeout = %v", err)
+	}
+}
+
+// TestDefaultRetryBackoff doubles retry delays while bounding later attempts.
+func TestDefaultRetryBackoff(t *testing.T) {
+	want := []time.Duration{
+		time.Second,
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+		16 * time.Second,
+		30 * time.Second,
+	}
+	for i, delay := range want {
+		if got := retryDelay(i + 1); got != delay {
+			t.Fatalf("retry %d delay = %v, want %v", i+1, got, delay)
+		}
+	}
+	if got := retryDelay(100); got != 30*time.Second {
+		t.Fatalf("late retry delay = %v", got)
+	}
+}
 
 // manualGCTimer lets tests deliver callbacks, including callbacks already racing with Stop.
 type manualGCTimer struct {
@@ -345,4 +614,35 @@ func TestGCRemovalStopsTimers(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Example_sharedCache shares one result across readers while its freshness window remains open.
+func Example_sharedCache() {
+	client := NewClient[string, string](Options{StaleTime: time.Hour})
+	defer client.Close()
+	calls := 0
+	fetch := func(context.Context) (string, error) {
+		calls++
+		return "shared", nil
+	}
+	first, _ := client.Fetch(context.Background(), "models", fetch)
+	second, _ := client.Fetch(context.Background(), "models", fetch)
+	fmt.Println(first, second, calls)
+	// Output: shared shared 1
+}
+
+// Example_cacheFreshness checks expiration without starting a request.
+func Example_cacheFreshness() {
+	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	client := NewClient[string, string](Options{
+		StaleTime: time.Hour, Clock: func() time.Time { return now },
+	})
+	defer client.Close()
+	client.Set("models", "available")
+	fmt.Println(client.Snapshot("models").Stale)
+	now = now.Add(time.Hour)
+	fmt.Println(client.Snapshot("models").Stale)
+	// Output:
+	// false
+	// true
 }
