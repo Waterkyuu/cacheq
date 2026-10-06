@@ -54,6 +54,7 @@ defer query.Close()
 | Bubble Tea / TUI | `Query` + `Updates()` + `tea.Cmd` | Deliver loading, refresh, and error state to the message loop |
 | CLI / background jobs | `Fetch` + `Options.Timeout` | Wait for results, reuse in-process data, and bound load time |
 | HTTP handlers | A shared `Client` + `Fetch(r.Context(), ...)` | Merge concurrent same-key requests and respond to cancellation |
+| MCP resources | `FetchWithExpiry` + `Invalidate` + `Stats()` | Share backend reads across connections, preserve TTL, and notify after changes |
 
 After a successful mutation, use `Invalidate` for related queries. HTTP cache keys must include result-affecting parameters and user or tenant scope. See the [query guide](docs/queries.en-US.md) and [invalidation guide](docs/invalidation.en-US.md) for API usage.
 
@@ -63,6 +64,15 @@ After a successful mutation, use `Invalidate` for related queries. HTTP cache ke
 
 ```sh
 cd examples/bubbletea
+go run .
+```
+
+## MCP example
+
+[Full source and instructions](examples/mcp/) demonstrate resource caching, change notifications, and private scopes. The example requires Go 1.25+.
+
+```sh
+cd examples/mcp
 go run .
 ```
 
@@ -76,8 +86,9 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
 | [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
 | [Observability](docs/observability.en-US.md) | Cache hits, shared requests, load outcomes and duration, retries, and cleanup statistics |
+| [MCP resource caching](docs/mcp.en-US.md) | Server-side reuse, remaining TTL, change notifications, private scopes, and e2e |
 
-The full Bubble Tea program lives in `examples/bubbletea`; the guides cover API details. Treat cached values as immutable; copy slices and maps before modifying them. Different result types cannot reuse the same key.
+Complete integrations live in `examples`; the guides cover API details. Treat cached values as immutable; copy slices and maps before modifying them. Different result types cannot reuse the same key.
 
 ## Verify
 

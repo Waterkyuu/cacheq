@@ -54,6 +54,7 @@ defer query.Close()
 | Bubble Tea / TUI | `Query` + `Updates()` + `tea.Cmd` | 把加载、刷新和错误状态送入消息循环 |
 | CLI / 后台任务 | `Fetch` + `Options.Timeout` | 等待结果，同进程复用缓存并限制加载时间 |
 | HTTP 处理器 | 共享 `Client` + `Fetch(r.Context(), ...)` | 合并同键并发请求，响应请求取消 |
+| MCP 资源 | `FetchWithExpiry` + `Invalidate` + `Stats()` | 跨连接复用资源、按 TTL 过期并在修改后通知重读 |
 
 更新操作成功后用 `Invalidate` 使相关查询失效。HTTP 缓存键要包含影响结果的参数、用户或租户范围。各 API 的具体用法见[查询文档](docs/queries.zh-CN.md)与[失效文档](docs/invalidation.zh-CN.md)。
 
@@ -63,6 +64,15 @@ defer query.Close()
 
 ```sh
 cd examples/bubbletea
+go run .
+```
+
+## MCP 示例
+
+[完整代码与说明](examples/mcp/)展示资源缓存、变化通知和授权隔离。示例需要 Go 1.25+。
+
+```sh
+cd examples/mcp
 go run .
 ```
 
@@ -76,8 +86,9 @@ go run .
 | [缓存与生命周期](docs/cache.zh-CN.md) | 所有缓存读写、配置、自动删除、取消、删除、关闭及错误处理 |
 | [缓存失效](docs/invalidation.zh-CN.md) | 单键、批量、条件失效及刷新模式 |
 | [可观测性](docs/observability.zh-CN.md) | 缓存命中、请求合并、加载结果与耗时、重试和清理统计 |
+| [MCP 资源缓存](docs/mcp.zh-CN.md) | 服务端资源复用、剩余 TTL、变化通知、授权隔离和 e2e |
 
-完整 Bubble Tea 程序在 `examples/bubbletea`，API 细节见功能文档。缓存值作为共享只读数据使用；修改切片或映射前先复制。不同类型不能复用同一个键。
+完整集成程序在 `examples`，API 细节见功能文档。缓存值作为共享只读数据使用；修改切片或映射前先复制。不同类型不能复用同一个键。
 
 ## 验证
 
