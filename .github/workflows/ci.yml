@@ -43,6 +43,27 @@ jobs:
           golangci-lint fmt
           git diff --exit-code
 
+  bubbletea:
+    name: Bubble Tea example
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/bubbletea
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: examples/bubbletea/go.sum
+      - run: go mod verify
+      - name: Check example module metadata
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - run: go vet ./...
+      - run: go test -race ./... -count=1
+      - run: go build -o "$RUNNER_TEMP/cacheq-bubbletea" .
+
   test:
     name: Test (${{ matrix.os }}, Go ${{ matrix.go }})
     runs-on: ${{ matrix.os }}
