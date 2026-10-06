@@ -2,6 +2,7 @@
 package cacheq
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -17,6 +18,10 @@ type Client struct {
 	mu sync.Mutex
 	// entries contains completed query state, including expired data for background refresh.
 	entries map[any]entry
+	// recency orders retained results and errors from least to most recently used.
+	recency list.List
+	// recencyEntries connects cached keys to their positions without scanning the cache.
+	recencyEntries map[any]*list.Element
 	// pending contains at most one active loader per key.
 	pending map[any]*flight
 	// observers receives shared state and tracks each subscriber's automatic loading permission.
@@ -81,8 +86,9 @@ func NewClient(options Options) *Client {
 	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- Close owns the client's lifetime.
 	return &Client{
 		entries: make(map[any]entry), pending: make(map[any]*flight),
-		observers: make(map[any]map[*subscription]struct{}),
-		gcTasks:   make(map[any]*gcTask), gcAfterFunc: scheduleGC,
+		recencyEntries: make(map[any]*list.Element),
+		observers:      make(map[any]map[*subscription]struct{}),
+		gcTasks:        make(map[any]*gcTask), gcAfterFunc: scheduleGC,
 		options: options, ctx: ctx, cancel: cancel,
 	}
 }
@@ -189,6 +195,7 @@ func (c *Client) invalidateLocked(key any, refetch RefetchMode) {
 			c.startLocked(c.ctx, key, load)
 		}
 	}
+	c.touchCapacityLocked(key)
 	c.touchGCLocked(key)
 	c.notifyLocked(key)
 }
@@ -255,6 +262,8 @@ func (c *Client) Close() {
 	}
 	clear(c.observers)
 	clear(c.entries)
+	c.recency.Init()
+	clear(c.recencyEntries)
 	c.clearGCLocked()
 }
 
@@ -302,6 +311,7 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight, load Loa
 			}
 			cached.err, cached.expiresAt = err, expiresAt
 			c.entries[key] = cached
+			c.touchCapacityLocked(key)
 		}
 		c.touchGCLocked(key)
 	}
@@ -408,9 +418,10 @@ func (c *Client) bindLocked(key any, typ reflect.Type) error {
 	return nil
 }
 
-// discardLocked preserves the type contract of live handles while clearing all previously loaded data.
+// discardLocked preserves active type bindings while clearing completed data and capacity bookkeeping.
 func (c *Client) discardLocked(key any) {
-	if len(c.observers[key]) > 0 {
+	c.forgetCapacityLocked(key)
+	if len(c.observers[key]) > 0 || c.pending[key] != nil {
 		c.entries[key] = entry{typ: c.entries[key].typ}
 		return
 	}

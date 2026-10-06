@@ -42,6 +42,9 @@ type Options struct {
 	// GCTime removes cached state after this duration without reads, writes, loads, or subscriptions.
 	// Zero or a negative duration disables automatic deletion; freshness is controlled by StaleTime.
 	GCTime time.Duration
+	// MaxEntries limits retained results and errors using least-recently-used eviction.
+	// Eviction preserves subscriptions, active loads, and their type bindings; non-positive values disable it.
+	MaxEntries int
 	// Retry limits additional attempts after the initial load; zero disables retries.
 	Retry int
 	// RetryDelay supplies the delay before each additional attempt, numbered from one.

@@ -16,10 +16,24 @@ func scheduleGC(delay time.Duration, cleanup func()) func() {
 	return func() { timer.Stop() }
 }
 
-// touchGCLocked restarts retention after use and suspends cleanup for subscribed or loading keys.
+// touchGCLocked restarts retention and releases empty, unowned bindings when capacity limiting is enabled.
+// Subscribed or loading keys suspend timed cleanup.
 func (c *Client) touchGCLocked(key any) {
 	c.stopGCLocked(key)
-	if c.closed || c.options.GCTime <= 0 {
+	if c.closed {
+		return
+	}
+	cached := c.entries[key]
+	unowned := len(c.observers[key]) == 0 && c.pending[key] == nil
+	empty := !cached.hasData && cached.err == nil
+	releaseBinding := c.options.MaxEntries > 0 && unowned && empty
+	if releaseBinding {
+		// An evicted key needs its type binding only while a handle or load owns it.
+		// Release empty metadata when that owner leaves, even when timed GC is disabled.
+		c.discardLocked(key)
+		return
+	}
+	if c.options.GCTime <= 0 {
 		return
 	}
 	if _, exists := c.entries[key]; !exists {
@@ -48,7 +62,7 @@ func (c *Client) collectGC(key any, task *gcTask) {
 	}
 	delete(c.gcTasks, key)
 	if len(c.observers[key]) == 0 && c.pending[key] == nil {
-		delete(c.entries, key)
+		c.discardLocked(key)
 	}
 }
 
