@@ -15,7 +15,7 @@ var ErrQueryClosed = errors.New("query handle is closed")
 // ErrTypeMismatch indicates a key was reused with a different static result type.
 var ErrTypeMismatch = errors.New("query result type mismatch")
 
-// ErrInvalidKey indicates a nil or non-comparable key cannot identify a cache entry.
+// ErrInvalidKey indicates a nil or non-comparable key, or a nil invalidation predicate.
 var ErrInvalidKey = errors.New("query key must be non-nil and comparable")
 
 // ErrNoFetcher indicates an operation requiring data has no loader to execute.

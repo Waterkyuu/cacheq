@@ -70,7 +70,7 @@ func TestQueryDisabled(t *testing.T) {
 			if state.Fetching || calls.Load() != 0 {
 				t.Fatalf("disabled invalidation = %+v; calls = %d", state, calls.Load())
 			}
-			client.InvalidateMany([]any{"users"}, InvalidateOptions{})
+			client.Invalidate([]any{"users"}, InvalidateOptions{})
 			if state = observer.Snapshot(); state.Fetching || calls.Load() != 0 {
 				t.Fatalf("disabled batch invalidation = %+v; calls = %d", state, calls.Load())
 			}
@@ -105,7 +105,7 @@ func TestQueryEnableTransitions(t *testing.T) {
 	client.Invalidate("users")
 	awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching })
 	observer.SetEnabled(false)
-	client.InvalidateMany([]any{"users"}, InvalidateOptions{})
+	client.Invalidate([]any{"users"}, InvalidateOptions{})
 	state = awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Stale && !s.Fetching })
 	if state.Data != 2 || calls.Load() != 2 {
 		t.Fatalf("disabled refresh = %+v; calls = %d", state, calls.Load())
@@ -484,7 +484,7 @@ func TestHeterogeneousQueries(t *testing.T) {
 		!settings.Snapshot().Data["dark"] {
 		t.Fatal("heterogeneous cache lost typed values")
 	}
-	if err := c.InvalidateMany([]any{"user:42", "users", "users"}, InvalidateOptions{}); err != nil {
+	if err := c.Invalidate([]any{"user:42", "users", "users"}, InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	awaitState(t, detail.Updates(), func(s Snapshot[testUser]) bool { return detailCalls.Load() == 2 && !s.Fetching })
@@ -683,7 +683,7 @@ func TestInvalidKeys(t *testing.T) {
 		if err := c.Invalidate(key); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid invalidate = %v", err)
 		}
-		if err := c.InvalidateMany([]any{"safe", key}, InvalidateOptions{}); !errors.Is(err, ErrInvalidKey) {
+		if err := c.Invalidate([]any{"safe", key}, InvalidateOptions{}); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid batch = %v", err)
 		}
 		if Get[int](c, "safe").Stale {
@@ -823,7 +823,7 @@ func TestInvalidateDeferred(t *testing.T) {
 	var calls atomic.Int32
 	handle := Query(c, "user", func(context.Context) (string, error) { calls.Add(1); return "new", nil })
 	t.Cleanup(handle.Close)
-	c.InvalidateMany([]any{"user", "users"}, InvalidateOptions{Refetch: RefetchNone})
+	c.Invalidate([]any{"user", "users"}, InvalidateOptions{Refetch: RefetchNone})
 	if state := handle.Snapshot(); !state.Stale || state.Data != "cached" || state.Fetching || calls.Load() != 0 {
 		t.Fatalf("deferred = %+v", state)
 	}
@@ -864,7 +864,7 @@ func TestInvalidateDuringLoad(t *testing.T) {
 	})
 	t.Cleanup(handle.Close)
 	<-started
-	c.InvalidateMany([]any{"user", "user"}, InvalidateOptions{})
+	c.Invalidate([]any{"user", "user"}, InvalidateOptions{})
 	close(release)
 	state := awaitState(t, handle.Updates(), func(s Snapshot[string]) bool { return s.HasData && !s.Fetching })
 	if !state.Stale || state.Data != "loaded" || calls.Load() != 1 {
@@ -880,8 +880,8 @@ type testScopedKey struct {
 	Tenant int
 }
 
-// TestInvalidateWhere supports structured keys, reentrant matching, and removal during a predicate.
-func TestInvalidateWhere(t *testing.T) {
+// TestInvalidatePredicate supports structured keys, reentrant matching, and removal during a predicate.
+func TestInvalidatePredicate(t *testing.T) {
 	c := newInvalidationClient(t)
 	key := testScopedKey{Resource: "users", Tenant: 42}
 	Set(c, key, []string{"Alice"})
@@ -889,13 +889,15 @@ func TestInvalidateWhere(t *testing.T) {
 	Set(c, "unrelated", 7)
 	Set(c, "removed", 1)
 	seen := make(map[any]int)
-	c.InvalidateWhere(func(candidate any) bool {
+	if err := c.Invalidate(func(candidate any) bool {
 		seen[candidate]++
 		Get[int](c, "unrelated")
 		Set(c, "added", true)
 		c.Remove("removed")
 		return candidate != "unrelated"
-	}, InvalidateOptions{Refetch: RefetchNone})
+	}, InvalidateOptions{Refetch: RefetchNone}); err != nil {
+		t.Fatal(err)
+	}
 	if !Get[[]string](c, key).Stale || !Get[string](c, "users:42").Stale || Get[int](c, "unrelated").Stale {
 		t.Fatal("predicate selected wrong typed keys")
 	}
@@ -903,10 +905,11 @@ func TestInvalidateWhere(t *testing.T) {
 		t.Fatal("predicate included newly added key")
 	}
 	foundRemoved := false
-	c.InvalidateWhere(
+	if err := c.Invalidate(
 		func(candidate any) bool { foundRemoved = foundRemoved || candidate == "removed"; return false },
-		InvalidateOptions{},
-	)
+	); err != nil {
+		t.Fatal(err)
+	}
 	if foundRemoved {
 		t.Fatal("predicate recreated removed cache")
 	}
@@ -915,9 +918,129 @@ func TestInvalidateWhere(t *testing.T) {
 			t.Fatal("predicate evaluated key twice")
 		}
 	}
-	c.InvalidateWhere(nil, InvalidateOptions{})
 	c.Close()
-	c.InvalidateWhere(func(any) bool { t.Fatal("closed client evaluated predicate"); return true }, InvalidateOptions{})
+	if err := c.Invalidate(func(any) bool {
+		t.Fatal("closed client evaluated predicate")
+		return true
+	}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("closed invalidation = %v", err)
+	}
+}
+
+// TestInvalidateTargets verifies selection by argument type and rejects invalid targets without partial changes.
+func TestInvalidateTargets(t *testing.T) {
+	structured := testScopedKey{Resource: "users", Tenant: 42}
+	array := [2]string{"user", "42"}
+	keys := []any{"user:42", "users", "settings", structured, array}
+	for _, tc := range []struct {
+		// name identifies the selection or validation boundary under test.
+		name string
+		// target supplies a key, explicit batch, or predicate to the public API.
+		target any
+		// stale lists the cached keys expected to become stale.
+		stale []any
+		// err identifies the expected validation failure, if any.
+		err error
+	}{
+		{name: "single", target: "user:42", stale: []any{"user:42"}},
+		{name: "structured", target: structured, stale: []any{structured}},
+		{name: "array key", target: array, stale: []any{array}},
+		{name: "batch", target: []any{"user:42", structured}, stale: []any{"user:42", structured}},
+		{name: "duplicate batch", target: []any{"users", "users"}, stale: []any{"users"}},
+		{name: "empty batch", target: []any{}},
+		{name: "nil batch", target: []any(nil)},
+		{name: "predicate", target: func(key any) bool { return key == structured }, stale: []any{structured}},
+		{name: "no matches", target: func(any) bool { return false }},
+		{name: "all matches", target: func(any) bool { return true }, stale: keys},
+		{name: "nil target", err: ErrInvalidKey},
+		{name: "nil predicate", target: (func(any) bool)(nil), err: ErrInvalidKey},
+		{name: "other slice", target: []string{"users"}, err: ErrInvalidKey},
+		{name: "other function", target: func(string) bool { return true }, err: ErrInvalidKey},
+		{name: "invalid batch", target: []any{"users", nil}, err: ErrInvalidKey},
+		{name: "nested batch", target: []any{"users", []any{"settings"}}, err: ErrInvalidKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newInvalidationClient(t)
+			for _, key := range keys {
+				if err := Set(c, key, 7); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := c.Invalidate(tc.target); !errors.Is(err, tc.err) {
+				t.Fatalf("invalidation = %v, want %v", err, tc.err)
+			}
+			stale := make(map[any]bool, len(tc.stale))
+			for _, key := range tc.stale {
+				stale[key] = true
+			}
+			for _, key := range keys {
+				state := Get[int](c, key)
+				if state.Stale != stale[key] || !state.HasData || state.Data != 7 {
+					t.Fatalf("key %v = %+v", key, state)
+				}
+			}
+			c.Close()
+			if err := c.Invalidate(tc.target); !errors.Is(err, ErrClosed) {
+				t.Fatalf("closed invalidation = %v", err)
+			}
+		})
+	}
+}
+
+// TestInvalidateRefreshModes applies default and last-option refresh policies to all selection forms.
+func TestInvalidateRefreshModes(t *testing.T) {
+	for _, target := range []any{"users", []any{"users", "users"}, func(key any) bool { return key == "users" }} {
+		for _, tc := range []struct {
+			// name identifies the option precedence scenario.
+			name string
+			// options configures whether invalidation should start a refresh.
+			options []InvalidateOptions
+			// refresh reports whether the observer should receive fresh data.
+			refresh bool
+		}{
+			{name: "default", refresh: true},
+			{name: "deferred", options: []InvalidateOptions{{Refetch: RefetchNone}}},
+			{name: "last enables", options: []InvalidateOptions{{Refetch: RefetchNone}, {}}, refresh: true},
+			{name: "last defers", options: []InvalidateOptions{{}, {Refetch: RefetchNone}}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c := newInvalidationClient(t)
+				if err := Set(c, "users", 1); err != nil {
+					t.Fatal(err)
+				}
+				query := Query(c, "users", func(context.Context) (int, error) { return 2, nil })
+				t.Cleanup(query.Close)
+				if err := c.Invalidate(target, tc.options...); err != nil {
+					t.Fatal(err)
+				}
+				state := query.Snapshot()
+				if tc.refresh {
+					state = awaitState(t, query.Updates(), func(s Snapshot[int]) bool {
+						return s.Data == 2 && !s.Fetching
+					})
+					if state.Stale || state.Err != nil {
+						t.Fatalf("refreshed = %+v", state)
+					}
+				} else if !state.Stale || state.Fetching || state.Data != 1 {
+					t.Fatalf("deferred = %+v", state)
+				}
+			})
+		}
+	}
+}
+
+// TestInvalidatePredicateClose reports closure during matching without deadlocking or installing new state.
+func TestInvalidatePredicateClose(t *testing.T) {
+	c := newInvalidationClient(t)
+	if err := Set(c, "users", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Invalidate(func(any) bool {
+		c.Close()
+		return true
+	}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("closure during matching = %v", err)
+	}
 }
 
 // TestQueryBackgroundRefresh immediately exposes stale data while sharing the replacement load.

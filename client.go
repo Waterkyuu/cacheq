@@ -87,26 +87,30 @@ func NewClient(options Options) *Client {
 	}
 }
 
-// Invalidate marks data stale and refreshes queries with an enabled observer and available loader.
-func (c *Client) Invalidate(key any, options ...InvalidateOptions) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.checkLocked(key, nil); err != nil {
-		return err
-	}
+// Invalidate marks a key, a []any batch, or keys matching func(any) bool stale while retaining data.
+// By default it refreshes queries with enabled observers and loaders; the last option wins.
+// Batches are validated before any changes, and duplicate keys are invalidated once.
+// Predicates run outside the client lock against a snapshot of cached or loading keys.
+// Newly added keys are excluded, and keys removed before invalidation are skipped.
+// Nil targets and predicates return ErrInvalidKey; empty batches do nothing.
+// Closed clients return ErrClosed without evaluating predicates.
+func (c *Client) Invalidate(target any, options ...InvalidateOptions) error {
 	mode := RefetchObserved
 	for _, option := range options {
 		mode = option.Refetch
 	}
-	c.invalidateLocked(key, mode)
-	return nil
+	switch selected := target.(type) {
+	case []any:
+		return c.invalidateKeys(selected, mode)
+	case func(any) bool:
+		return c.invalidateMatching(selected, mode)
+	default:
+		return c.invalidateKeys([]any{target}, mode)
+	}
 }
 
-// InvalidateMany marks each distinct key stale while retaining its data and notifying subscribers.
-// Zero-value options refresh queries with enabled observers and loaders; RefetchNone defers new work.
-// Active loads are neither canceled nor duplicated, and their results remain stale on completion.
-// Empty batches have no effect; invalid keys reject the entire batch and closed clients return ErrClosed.
-func (c *Client) InvalidateMany(keys []any, options InvalidateOptions) error {
+// invalidateKeys validates the entire selection before invalidating each distinct key.
+func (c *Client) invalidateKeys(keys []any, mode RefetchMode) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -125,23 +129,21 @@ func (c *Client) InvalidateMany(keys []any, options InvalidateOptions) error {
 			continue
 		}
 		seen[key] = struct{}{}
-		c.invalidateLocked(key, options.Refetch)
+		c.invalidateLocked(key, mode)
 	}
 	return nil
 }
 
-// InvalidateWhere marks cached or loading keys stale when matches returns true.
-// Matches runs outside the client lock against a snapshot of existing keys and may read client state.
-// Keys added after that snapshot are excluded, and keys removed before invalidation are skipped.
-// Nil matches and closed clients have no effect; refresh behavior follows InvalidateMany.
-func (c *Client) InvalidateWhere(matches func(any) bool, options InvalidateOptions) {
-	if matches == nil {
-		return
-	}
+// invalidateMatching evaluates user code outside the lock and invalidates surviving selected keys.
+func (c *Client) invalidateMatching(matches func(any) bool, mode RefetchMode) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return
+		return ErrClosed
+	}
+	if matches == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("%w: nil invalidation predicate", ErrInvalidKey)
 	}
 	keys := make([]any, 0, len(c.entries)+len(c.pending))
 	for key := range c.entries {
@@ -162,7 +164,7 @@ func (c *Client) InvalidateWhere(matches func(any) bool, options InvalidateOptio
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return
+		return ErrClosed
 	}
 	for _, key := range selected {
 		// A predicate or concurrent cleanup can remove state while matching
@@ -170,8 +172,9 @@ func (c *Client) InvalidateWhere(matches func(any) bool, options InvalidateOptio
 		if _, cached := c.entries[key]; !cached && c.pending[key] == nil {
 			continue
 		}
-		c.invalidateLocked(key, options.Refetch)
+		c.invalidateLocked(key, mode)
 	}
+	return nil
 }
 
 // invalidateLocked applies one key's invalidation and refresh policy while the client lock is held.

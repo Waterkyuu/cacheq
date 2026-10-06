@@ -196,7 +196,7 @@ func TestSharedClientMutation(t *testing.T) {
 	if detail.Snapshot().Data.Name != "Alice" {
 		t.Fatal("mutation changed cache without invalidation")
 	}
-	if err := client.InvalidateMany([]any{"user:42", "users", "users"}, cacheq.InvalidateOptions{}); err != nil {
+	if err := client.Invalidate([]any{"user:42", "users", "users"}, cacheq.InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
@@ -227,10 +227,12 @@ func TestDeferredPredicateInvalidation(t *testing.T) {
 	await(t, list, func(s cacheq.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
 	cacheq.Set(client, "settings", settings{Theme: "dark"})
 	api.update(t, user{Name: "Bob"})
-	client.InvalidateWhere(func(key any) bool {
+	if err := client.Invalidate(func(key any) bool {
 		text, ok := key.(string)
 		return ok && (text == "users" || strings.HasPrefix(text, "user:"))
-	}, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	}, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone}); err != nil {
+		t.Fatal(err)
+	}
 	if !detail.Snapshot().Stale || !list.Snapshot().Stale || detail.Snapshot().Data.Name != "Alice" ||
 		api.count("/users/42") != 1 || api.count("/users") != 1 {
 		t.Fatal("deferred invalidation issued HTTP work")

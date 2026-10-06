@@ -85,7 +85,7 @@ test("Go search results resolve to published sections and public source declarat
 				record.url.includes("#"),
 		),
 	);
-	assert.ok(index.some((record) => record.title === "Client.InvalidateWhere"));
+	assert.ok(index.some((record) => record.title === "Client.Invalidate"));
 	assert.ok(index.some((record) => record.title === "Query"));
 	for (const record of documents)
 		await assertDestination(record.url, path.join(build, "index.html"));
