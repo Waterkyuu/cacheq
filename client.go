@@ -17,8 +17,8 @@ type Client[K comparable, V any] struct {
 	entries map[K]entry[V]
 	// pending contains at most one active loader per key.
 	pending map[K]*flight[V]
-	// observers receives the latest state for each subscribed key.
-	observers map[K]map[chan Snapshot[V]]struct{}
+	// observers receives shared state and tracks each subscriber's automatic loading permission.
+	observers map[K]map[chan Snapshot[V]]*Observer[K, V]
 	// gcTasks owns at most one scheduled cleanup for each inactive cached key.
 	gcTasks map[K]*gcTask
 	// gcAfterFunc schedules cleanup and returns a stop function; tests can replace the timer source.
@@ -79,7 +79,7 @@ func NewClient[K comparable, V any](options Options) *Client[K, V] {
 	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- Close owns the client's lifetime.
 	return &Client[K, V]{
 		entries: make(map[K]entry[V]), pending: make(map[K]*flight[V]),
-		observers: make(map[K]map[chan Snapshot[V]]struct{}),
+		observers: make(map[K]map[chan Snapshot[V]]*Observer[K, V]),
 		gcTasks:   make(map[K]*gcTask), gcAfterFunc: scheduleGC,
 		options: options, ctx: ctx, cancel: cancel,
 	}
@@ -173,7 +173,7 @@ func (c *Client[K, V]) Refetch(ctx context.Context, key K, fetch Fetcher[V]) (V,
 	return c.Fetch(ctx, key, fetch)
 }
 
-// Invalidate marks data stale and refreshes subscribed queries that have a retained loader.
+// Invalidate marks data stale and refreshes queries with an enabled observer and available loader.
 func (c *Client[K, V]) Invalidate(key K) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -184,7 +184,7 @@ func (c *Client[K, V]) Invalidate(key K) {
 }
 
 // InvalidateMany marks each distinct key stale while retaining its data and notifying subscribers.
-// Zero-value options refresh subscribed queries with retained loaders; RefetchNone defers new work.
+// Zero-value options refresh queries with enabled observers and loaders; RefetchNone defers new work.
 // Active loads are neither canceled nor duplicated, and their results remain stale on completion.
 // An empty key list or a closed client has no effect.
 func (c *Client[K, V]) InvalidateMany(keys []K, options InvalidateOptions) {
@@ -213,8 +213,8 @@ func (c *Client[K, V]) invalidateLocked(key K, refetch RefetchMode) {
 	if pending := c.pending[key]; pending != nil {
 		pending.invalidated = true
 	} else if refetch == RefetchObserved {
-		if len(c.observers[key]) > 0 && cached.load != nil {
-			c.startLocked(c.ctx, key, cached.load)
+		if load := c.observedLoaderLocked(key); load != nil {
+			c.startLocked(c.ctx, key, load)
 		}
 	}
 	c.touchGCLocked(key)
@@ -240,35 +240,12 @@ func (c *Client[K, V]) Set(key K, value V) {
 
 // Subscribe delivers the initial and latest query states; slow readers may skip intermediate states.
 // Canceling the returned subscription closes its channel and releases the observer.
+// Legacy subscriptions remain enabled for invalidation refreshes; use Observe for conditional loading.
 func (c *Client[K, V]) Subscribe(key K) (<-chan Snapshot[V], func()) {
 	c.mu.Lock()
-	updates := make(chan Snapshot[V], 1)
-	updates <- c.snapshotLocked(key)
-	if c.closed {
-		close(updates)
-	} else {
-		if c.observers[key] == nil {
-			c.observers[key] = make(map[chan Snapshot[V]]struct{})
-		}
-		c.observers[key][updates] = struct{}{}
-		c.stopGCLocked(key)
-	}
-	c.mu.Unlock()
-	var once sync.Once
-	return updates, func() {
-		once.Do(func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if _, exists := c.observers[key][updates]; exists {
-				delete(c.observers[key], updates)
-				if len(c.observers[key]) == 0 {
-					delete(c.observers, key)
-				}
-				close(updates)
-				c.touchGCLocked(key)
-			}
-		})
-	}
+	defer c.mu.Unlock()
+	observer := c.newObserverLocked(key, nil, true)
+	return observer.Updates(), observer.Close
 }
 
 // Cancel stops an active load while retaining previously completed data.

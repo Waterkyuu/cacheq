@@ -22,6 +22,7 @@
 - One in-flight request per key; different keys load independently.
 - Bounded retries with exponential backoff, custom delay, and request timeout.
 - Shared data and state subscriptions for multiple components.
+- Conditional observers with independent enablement for initial loads and invalidation refreshes.
 - Immediate stale data with background refresh through `Query`.
 - Single-key and batch invalidation with optional background refresh, forced refresh, prefetch, local updates, and cancellation.
 - Optional automatic deletion of unused cached data, independent of freshness.
@@ -89,11 +90,34 @@ for state := range updates {
 
 Subscriptions deliver the initial and latest states. Slow readers can skip intermediate transitions. Unsubscribe when a component closes. The loop ends when the subscription or client closes; start `Query` or `Fetch` separately to load data.
 
+## Request only when a condition is met
+
+Use `Observe` to bind a loader and an enabled condition to one subscription:
+
+```go
+users := client.Observe("users", getUsers, query.ObserveOptions{
+    Enabled: loggedIn,
+})
+defer users.Close()
+```
+
+When enabled, missing or stale data loads in the background and fresh data is reused. When disabled, the observer reads cached data and receives shared updates without initiating requests, including after invalidation. `ObserveOptions{}` is disabled; pass `Enabled: true` for an initially enabled observer. `users.Snapshot()` reads current state and `users.Updates()` delivers initial and latest state changes.
+
+When your application changes the condition, update the same observer explicitly:
+
+```go
+users.SetEnabled(loggedIn)
+```
+
+Enabling loads missing or stale data, sharing any active request. Go does not automatically watch changes to the original boolean variable. Disabling one observer does not prevent another enabled observer of the same key from loading, and disabled observers still receive those results. Existing `Subscribe` subscriptions remain enabled for invalidation refreshes and do not themselves initiate a load.
+
+Disabling or closing an observer does not cancel work already started. Explicit client calls to `Fetch`, `Query`, or `Refetch` can still request data; the switch only governs that observer's automatic loading. Call `Close` on observers to release their subscriptions; disabled subscriptions also keep cached data in use for `GCTime` retention.
+
 ## Control the shared result
 
 | Method | Behavior |
 | --- | --- |
-| `Invalidate(key)` | Marks data stale; subscribed queries refresh automatically. |
+| `Invalidate(key)` | Marks data stale; queries with enabled observers and loaders refresh automatically. |
 | `InvalidateMany(keys, options)` | Marks related keys stale, optionally deferring background refresh. |
 | `Refetch(ctx, key, fetch)` | Loads again even when data is fresh, sharing an active request. |
 | `Prefetch(ctx, key, fetch)` | Warms the same cache before a component needs it. |
@@ -112,7 +136,7 @@ keys := []string{"user:42", "users"}
 client.InvalidateMany(keys, query.InvalidateOptions{})
 ```
 
-The zero-value options use `RefetchObserved`: subscribed queries with retained loaders refresh in the background, while unobserved queries only become stale. To mark data stale and wait until the next `Fetch` or `Query` to start new work, use `RefetchNone` instead:
+The zero-value options use `RefetchObserved`: queries with enabled observers and available loaders refresh in the background, while unobserved or exclusively disabled queries only become stale. To mark data stale and defer new background work, use `RefetchNone` instead:
 
 ```go
 client.InvalidateMany(keys, query.InvalidateOptions{

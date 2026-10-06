@@ -41,13 +41,19 @@ type Options struct {
 	Clock func() time.Time
 }
 
+// ObserveOptions controls automatic loading for one observer without disabling other consumers.
+type ObserveOptions struct {
+	// Enabled allows initial loading and invalidation refreshes; false keeps observation passive.
+	Enabled bool
+}
+
 // RefetchMode controls whether invalidation starts background work for subscribed queries.
 type RefetchMode uint8
 
 const (
-	// RefetchObserved refreshes subscribed queries with retained loaders when no load is active.
+	// RefetchObserved refreshes queries with an enabled observer and loader when no load is active.
 	RefetchObserved RefetchMode = iota
-	// RefetchNone only marks queries stale, leaving the next Fetch or Query to request fresh data.
+	// RefetchNone marks queries stale without initiating a new background load.
 	RefetchNone
 )
 
