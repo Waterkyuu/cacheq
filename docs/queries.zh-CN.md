@@ -211,6 +211,21 @@ getUsers := func(ctx context.Context) ([]User, error) {
 
 `Close()` 查询对象只释放订阅，不取消共享请求。`client.Cancel` 或 `client.Close` 会取消请求，加载函数需要响应 context。`Options.Timeout` 约束整次加载，包括重试和等待重试的时间。
 
+## Bubble Tea：把订阅接入消息循环
+
+完整可运行代码放在 `examples/bubbletea`，需要 Go 1.26+，使用 Bubble Tea v2。示例有独立的 Go 模块，核心库仍支持 Go 1.22，且不引入 TUI 依赖。
+
+```sh
+cd examples/bubbletea
+go run .
+```
+
+[模型代码](../examples/bubbletea/model.go)在 `Init` 中启动一个 `tea.Cmd`，等待 `Updates()` 的下一条状态，再将它作为消息交给 `Update`。`Update` 更新界面状态并安排下一次等待；只有消息循环修改显示状态。慢消费者可能跳过中间通知，收到最新状态。
+
+按 `r` 使查询失效并后台刷新，旧数据仍然显示。每第三次加载会模拟失败，再按 `r` 可以恢复。按 `q` 或 `ctrl+c` 关闭订阅，释放等待中的命令。[入口代码](../examples/bubbletea/main.go)负责在正常退出或启动失败后关闭客户端，取消仍在进行的请求；只关闭查询对象不会取消共享加载。
+
+从示例目录运行 `go test -race ./... -count=1`，验证真实 Bubble Tea 消息循环中的刷新、失败、恢复及退出清理。
+
 ## 运行真实 HTTP 流程
 
 ```sh

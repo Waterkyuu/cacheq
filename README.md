@@ -33,74 +33,38 @@ go get github.com/Waterkyuu/cacheq
 
 Import `github.com/Waterkyuu/cacheq` as package `cacheq`. Requires Go 1.22 or later and has no external dependencies.
 
-## One client, different data types
+## Quick start
 
 ```go
-// User contains a user's display data.
-type User struct {
-	// Name contains the user's display name.
-	Name string
-}
-
-client := cacheq.NewClient(cacheq.Options{
-	StaleTime: time.Minute,
-	GCTime:    5 * time.Minute,
-})
+client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 defer client.Close()
 
-getUser := func(context.Context) (User, error) {
-	return User{Name: "Alice"}, nil
-}
-getUsers := func(context.Context) ([]User, error) {
-	return []User{{Name: "Alice"}}, nil
-}
-
-detail := cacheq.Query(client, "user:42", getUser) // QueryHandle[User]
-users := cacheq.Query(client, "users", getUsers)   // QueryHandle[[]User]
-defer detail.Close()
-defer users.Close()
-
-state := users.Snapshot()
-// state.Data is []User; state.Fetching reports an active request.
+query := cacheq.Query(client, "greeting", func(context.Context) (string, error) {
+	return "hello", nil
+})
+defer query.Close()
 ```
 
-Create the client at the application boundary and inject it into consumers. Same-key queries share data and in-flight work; different keys may contain different types. Sharing is in-process.
+`Query` loads in the background; queries with the same key share cached data and requests. Use `Snapshot()` for state, `Updates()` for notifications, or `Fetch` to wait for a result.
 
-`Query` returns a handle immediately. Missing data loads in the background, fresh data is reused, and stale data stays available during refresh. Receive later state through `Updates()`. Use `cacheq.Fetch(ctx, client, key, fetcher)` to await fresh data without a subscription.
+## Use cases
 
-## Load only when a condition permits
+| Scenario | Pair with | Purpose |
+| --- | --- | --- |
+| Bubble Tea / TUI | `Query` + `Updates()` + `tea.Cmd` | Deliver loading, refresh, and error state to the message loop |
+| CLI / background jobs | `Fetch` + `Options.Timeout` | Wait for results, reuse in-process data, and bound load time |
+| HTTP handlers | A shared `Client` + `Fetch(r.Context(), ...)` | Merge concurrent same-key requests and respond to cancellation |
 
-```go
-users := cacheq.Query(
-	client,
-	"users",
-	getUsers,
-	cacheq.QueryOptions{
-		Enabled: loggedIn,
-	},
-)
-defer users.Close()
+After a successful mutation, use `Invalidate` for related queries. HTTP cache keys must include result-affecting parameters and user or tenant scope. See the [query guide](docs/queries.en-US.md) and [invalidation guide](docs/invalidation.en-US.md) for API usage.
 
-// Update permission from the application's login-state change handler.
-if err := users.SetEnabled(true); err != nil {
-	return err
-}
+## Bubble Tea example
 
-// Manual refresh uses the bound fetcher and also works while disabled.
-updatedUsers, err := users.Refetch(ctx)
+[Full source and instructions](examples/bubbletea/) demonstrate query updates in a TUI, background refresh, retained data on failure, and exit cleanup. The example requires Go 1.26+.
+
+```sh
+cd examples/bubbletea
+go run .
 ```
-
-Omitting options enables loading; an explicit empty `QueryOptions{}` disables it. Each consumer controls its own automatic requests while still receiving updates produced by other consumers.
-
-## Invalidate related data after a mutation
-
-```go
-if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
-	return err
-}
-```
-
-`Invalidate` accepts one key, a `[]any` batch, or a `func(any) bool` predicate. Detail `User` and list `[]User` results are invalidated in the same client. Enabled consumers refresh by default; `Refetch: cacheq.RefetchNone` marks data stale without initiating work until a later use.
 
 ## Feature guides
 
@@ -113,7 +77,7 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
 | [Observability](docs/observability.en-US.md) | Cache hits, shared requests, load outcomes and duration, retries, and cleanup statistics |
 
-The guides explain every public API and include a complete runnable program. Treat cached values as immutable; copy slices and maps before modifying them. Different result types cannot reuse the same key.
+The full Bubble Tea program lives in `examples/bubbletea`; the guides cover API details. Treat cached values as immutable; copy slices and maps before modifying them. Different result types cannot reuse the same key.
 
 ## Verify
 

@@ -200,6 +200,21 @@ getUsers := func(ctx context.Context) ([]User, error) {
 
 Automatic `Query` work belongs to the client. Loads started by `Fetch` or manual `Refetch` belong to the starting caller's context. A waiting caller's cancellation ends only its wait. If the owner cancels, remaining callers may start a replacement request. Closing a handle releases its subscription without canceling shared work; `client.Cancel` and `client.Close` cancel requests. Loaders must honor their context. `Options.Timeout` bounds the complete load, including retries and backoff.
 
+## Bubble Tea: connect subscriptions to the message loop
+
+The complete runnable code lives in `examples/bubbletea`. It uses Bubble Tea v2 and requires Go 1.26+. Its independent Go module keeps TUI dependencies separate from the core library, which still supports Go 1.22.
+
+```sh
+cd examples/bubbletea
+go run .
+```
+
+The [model](../examples/bubbletea/model.go) starts a `tea.Cmd` in `Init` to wait for one notification from `Updates()`. It returns that snapshot as a message; `Update` applies it and schedules the next wait. Only the message loop mutates display state. Slow consumers may skip intermediate notifications and receive the latest snapshot.
+
+Press `r` to invalidate the query and refresh in the background while keeping previous data visible. Every third load simulates a failure; press `r` again to recover. Press `q` or `ctrl+c` to close the subscription and release its waiting command. The [entry point](../examples/bubbletea/main.go) closes the client after normal exit or startup failure, canceling remaining work; closing only a query handle does not cancel shared loads.
+
+From the example directory, run `go test -race ./... -count=1` to verify refresh, failure, recovery, and exit cleanup through the actual Bubble Tea message loop.
+
 ## Run real HTTP workflows
 
 ```sh

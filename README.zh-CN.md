@@ -33,74 +33,38 @@ go get github.com/Waterkyuu/cacheq
 
 导入路径为 `github.com/Waterkyuu/cacheq`，包名为 `cacheq`。需要 Go 1.22 或更新版本，没有外部依赖。
 
-## 一个客户端，多种数据类型
+## 快速开始
 
 ```go
-// User contains a user's display data.
-type User struct {
-	// Name contains the user's display name.
-	Name string
-}
-
-client := cacheq.NewClient(cacheq.Options{
-	StaleTime: time.Minute,
-	GCTime:    5 * time.Minute,
-})
+client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 defer client.Close()
 
-getUser := func(context.Context) (User, error) {
-	return User{Name: "Alice"}, nil
-}
-getUsers := func(context.Context) ([]User, error) {
-	return []User{{Name: "Alice"}}, nil
-}
-
-detail := cacheq.Query(client, "user:42", getUser) // QueryHandle[User]
-users := cacheq.Query(client, "users", getUsers)   // QueryHandle[[]User]
-defer detail.Close()
-defer users.Close()
-
-state := users.Snapshot()
-// state.Data 是 []User，state.Fetching 表示正在请求。
+query := cacheq.Query(client, "greeting", func(context.Context) (string, error) {
+	return "hello", nil
+})
+defer query.Close()
 ```
 
-客户端通常在应用入口创建，传给各个业务模块。同键查询共享数据和正在进行的请求；不同键可以有不同类型。共享只发生在本进程内。
+`Query` 后台加载数据，同键查询共享缓存与请求。用 `Snapshot()` 读取状态，用 `Updates()` 接收变化；需要等待结果时使用 `Fetch`。
 
-`Query` 立即返回查询对象。缺少数据时后台请求，新鲜缓存直接复用，旧数据保留并后台刷新。用 `Updates()` 接收后续状态；用 `cacheq.Fetch(ctx, client, key, fetcher)` 等待新鲜结果而不订阅。
+## 使用场景
 
-## 满足条件才请求
+| 场景 | 搭配方式 | 解决什么问题 |
+| --- | --- | --- |
+| Bubble Tea / TUI | `Query` + `Updates()` + `tea.Cmd` | 把加载、刷新和错误状态送入消息循环 |
+| CLI / 后台任务 | `Fetch` + `Options.Timeout` | 等待结果，同进程复用缓存并限制加载时间 |
+| HTTP 处理器 | 共享 `Client` + `Fetch(r.Context(), ...)` | 合并同键并发请求，响应请求取消 |
 
-```go
-users := cacheq.Query(
-	client,
-	"users",
-	getUsers,
-	cacheq.QueryOptions{
-		Enabled: loggedIn,
-	},
-)
-defer users.Close()
+更新操作成功后用 `Invalidate` 使相关查询失效。HTTP 缓存键要包含影响结果的参数、用户或租户范围。各 API 的具体用法见[查询文档](docs/queries.zh-CN.md)与[失效文档](docs/invalidation.zh-CN.md)。
 
-// 登录状态变化时，由应用更新条件。
-if err := users.SetEnabled(true); err != nil {
-	return err
-}
+## Bubble Tea 示例
 
-// 手动刷新使用已绑定的加载函数，禁用时也可以调用。
-updatedUsers, err := users.Refetch(ctx)
+[完整代码与说明](examples/bubbletea/)展示查询状态如何进入 TUI 消息循环，包括后台刷新、失败后保留数据和退出清理。示例需要 Go 1.26+。
+
+```sh
+cd examples/bubbletea
+go run .
 ```
-
-不传配置默认启用；显式空 `QueryOptions{}` 默认禁用。每个查询对象独立控制自动请求，仍会收到其他消费者产生的数据更新。
-
-## 修改后让相关缓存一起失效
-
-```go
-if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
-	return err
-}
-```
-
-`Invalidate` 接收单个键、`[]any` 键列表或 `func(any) bool` 条件函数。详情和列表分别是 `User` 与 `[]User`，仍能在同一个客户端里一起失效。默认刷新有启用查询对象的键；传 `Refetch: cacheq.RefetchNone` 只标记过期，下次使用再查。
 
 ## 功能文档
 
@@ -113,7 +77,7 @@ if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
 | [缓存失效](docs/invalidation.zh-CN.md) | 单键、批量、条件失效及刷新模式 |
 | [可观测性](docs/observability.zh-CN.md) | 缓存命中、请求合并、加载结果与耗时、重试和清理统计 |
 
-完整可运行程序、各 API 的用途和结果都在功能文档中。缓存值作为共享只读数据使用；修改切片或映射前先复制。不同类型不能复用同一个键。
+完整 Bubble Tea 程序在 `examples/bubbletea`，API 细节见功能文档。缓存值作为共享只读数据使用；修改切片或映射前先复制。不同类型不能复用同一个键。
 
 ## 验证
 
