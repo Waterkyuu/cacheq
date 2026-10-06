@@ -45,6 +45,9 @@ type Options struct {
 	// MaxEntries limits retained results and errors using least-recently-used eviction.
 	// Eviction preserves subscriptions, active loads, and their type bindings; non-positive values disable it.
 	MaxEntries int
+	// MaxAge bounds data availability since its last installation, including while stale or subscribed.
+	// Reads, invalidation, and ordinary failed refreshes do not renew it; non-positive values disable it.
+	MaxAge time.Duration
 	// Retry limits additional attempts after the initial load; zero disables retries.
 	Retry int
 	// RetryDelay supplies the delay before each additional attempt, numbered from one.

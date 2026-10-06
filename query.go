@@ -68,6 +68,9 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOpt
 	}
 	client.observers[key][observer] = struct{}{}
 	client.stopGCLocked(key)
+	if client.expireDataLocked(key) {
+		client.notifyLocked(key)
+	}
 	client.touchCapacityLocked(key)
 	needsLoad := enabled && client.snapshotLocked(key).Stale && client.pending[key] == nil
 	if needsLoad {
@@ -214,6 +217,9 @@ func Get[V any](client *Client, key any) Snapshot[V] {
 	if err := client.checkLocked(key, reflect.TypeFor[V]()); err != nil {
 		return Snapshot[V]{Status: Error, Stale: true, Err: err}
 	}
+	if client.expireDataLocked(key) {
+		client.notifyLocked(key)
+	}
 	client.touchCapacityLocked(key)
 	client.touchGCLocked(key)
 	return typedSnapshot[V](client.snapshotLocked(key))
@@ -231,7 +237,7 @@ func Set[V any](client *Client, key any, value V) error {
 	now := client.options.Clock()
 	client.entries[key] = entry{
 		typ: reflect.TypeFor[V](), value: value, hasData: true, updatedAt: now,
-		expiresAt: now.Add(client.options.StaleTime),
+		expiresAt: client.limitExpiry(now, now.Add(client.options.StaleTime)),
 	}
 	client.touchCapacityLocked(key)
 	client.touchGCLocked(key)
@@ -266,6 +272,9 @@ func (c *Client) fetch(
 		if err := c.checkLocked(key, typ); err != nil {
 			c.mu.Unlock()
 			return nil, err
+		}
+		if c.expireDataLocked(key) {
+			c.notifyLocked(key)
 		}
 		cached := c.entries[key]
 		fresh := cached.hasData && c.options.Clock().Before(cached.expiresAt)

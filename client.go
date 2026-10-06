@@ -302,9 +302,11 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight, load Loa
 	if c.pending[key] == pending {
 		delete(c.pending, key)
 		if !c.closed && ctx.Err() == nil {
+			c.expireDataLocked(key)
 			cached := c.entries[key]
 			if err == nil || c.options.Clock().Before(expiresAt) {
 				cached.value, cached.hasData, cached.updatedAt = value, true, c.options.Clock()
+				expiresAt = c.limitExpiry(cached.updatedAt, expiresAt)
 			}
 			if pending.invalidated {
 				expiresAt = time.Time{}
@@ -342,8 +344,9 @@ func (c *Client) run(ctx context.Context, load Loader[any]) (any, time.Time, err
 	}
 }
 
-// snapshotLocked derives freshness from the clock without scheduling a request.
+// snapshotLocked removes data beyond MaxAge and derives state without scheduling a request.
 func (c *Client) snapshotLocked(key any) Snapshot[any] {
+	c.expireDataLocked(key)
 	cached := c.entries[key]
 	state := Snapshot[any]{
 		Data: cached.value, HasData: cached.hasData, Err: cached.err,
