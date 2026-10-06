@@ -1,5 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface SearchRecord {
 	title: string;
@@ -8,10 +7,8 @@ interface SearchRecord {
 	content: string;
 }
 
-export default function SearchBar() {
-	const { i18n, siteConfig } = useDocusaurusContext();
-	const chinese = i18n.currentLocale === "zh-CN";
-	const indexURL = siteConfig.customFields?.searchIndexPath as string;
+export default function SearchBar({ language, indexURL }: { language: string; indexURL: string }) {
+	const chinese = language === "zh-CN";
 	const dialog = useRef<HTMLDialogElement>(null);
 	const input = useRef<HTMLInputElement>(null);
 	const index = useRef<SearchRecord[] | null>(null);
@@ -55,7 +52,7 @@ export default function SearchBar() {
 	const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
 	const matches = words.length
 		? records
-				.filter((record) => record.language === i18n.currentLocale)
+				.filter((record) => record.language === language)
 				.filter((record) =>
 					words.every((word) => (record.title + " " + record.content).toLowerCase().includes(word)),
 				)

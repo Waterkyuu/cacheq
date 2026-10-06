@@ -39,23 +39,24 @@ var articlePattern = regexp.MustCompile(`(?s)<article\b[^>]*>(.*?)</article>`)
 // titlePattern extracts the built page's human-readable browser title.
 var titlePattern = regexp.MustCompile(`(?s)<title\b[^>]*>(.*?)</title>`)
 
-// languagePattern reads the locale selected by Docusaurus's HTML document.
+// languagePattern reads the locale declared by the rendered HTML document.
 var languagePattern = regexp.MustCompile(`<html\b[^>]*\blang="([^"]+)"`)
 
-// headingPattern identifies real section anchors emitted by Docusaurus.
+// headingPattern identifies real section anchors emitted by the documentation renderer.
 var headingPattern = regexp.MustCompile(`(?s)<h[23]\b[^>]*\bid="([^"]+)"[^>]*>(.*?)</h[23]>`)
 
 // tagPattern removes generated presentation markup from searchable text.
 var tagPattern = regexp.MustCompile(`<[^>]*>`)
 
-// hiddenPattern removes script and style bodies before text extraction.
+// hiddenPattern excludes controls and invisible navigation labels from search snippets.
 var hiddenPattern = regexp.MustCompile(
-	`(?s)<(?:script|style|nav|button|footer)\b[^>]*>.*?</(?:script|style|nav|button|footer)>`,
+	`(?s)<(?:script|style|nav|button|footer)\b[^>]*>.*?</(?:script|style|nav|button|footer)>` +
+		`|<span\b[^>]*\bclass="sr-only"[^>]*>.*?</span>`,
 )
 
 // main fails the build when the website or source cannot produce a complete index.
 func main() {
-	build := flag.String("build", "build", "Docusaurus output directory")
+	build := flag.String("build", "build", "Static website output directory")
 	base := flag.String("base-path", "/cacheq", "Published repository URL prefix")
 	source := flag.String("source", "..", "Go library source directory")
 	sourceRef := os.Getenv("DOCS_REF")
@@ -154,6 +155,7 @@ func buildIndex(directory, base string) ([]entry, error) {
 
 // plainText retains Unicode and Go code while decoding escaped HTML entities.
 func plainText(content string) string {
+	// Starlight adds screen-reader anchor labels after headings; they must not replace useful snippets.
 	content = hiddenPattern.ReplaceAllString(content, " ")
 	// Inline tags must not split identifiers highlighted into separate spans.
 	content = regexp.MustCompile(`</?(?:span|code|a|strong|em)\b[^>]*>`).ReplaceAllString(content, "")

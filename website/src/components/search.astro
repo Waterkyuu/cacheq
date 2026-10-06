@@ -1,0 +1,6 @@
+---
+import SearchBar from "./search-bar";
+const { lang } = Astro.locals.starlightRoute;
+---
+
+<SearchBar language={lang} indexURL={`${import.meta.env.BASE_URL}search-index.json`} client:load />

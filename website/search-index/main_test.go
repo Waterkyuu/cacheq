@@ -10,7 +10,11 @@ import (
 // TestBuiltRoutesAndUnicode verifies nested locale URLs, real anchors, highlighted code, and sidebar exclusion.
 func TestBuiltRoutesAndUnicode(t *testing.T) {
 	directory := t.TempDir()
-	page := `<html lang="zh-CN"><head><title data-rh="true">缓存 | cacheq</title></head><body><nav>not searchable</nav><article><h1>缓存</h1><p>共享数据</p><h2 id="set">Set<span>` + "\u200b" + `</span></h2><pre><code><span>cacheq</span><span>.</span><span>Set</span>(client, &quot;用户&quot;, 1)</code></pre><h2 id="expiry">过期时间</h2><p>GCTime 自动清理</p><script>private script</script></article></body></html>`
+	page := `<html lang="zh-CN"><head><title data-rh="true">缓存 | cacheq</title></head>
+<body><nav>not searchable</nav><article><h1>缓存</h1><p>共享数据</p><h2 id="set">Set<span>` +
+		"\u200b" + `</span></h2><span class="sr-only" data-pagefind-ignore>Anchor navigation label</span>
+<pre><code><span>cacheq</span><span>.</span><span>Set</span>(client, &quot;用户&quot;, 1)</code></pre>
+<h2 id="expiry">过期时间</h2><p>GCTime 自动清理</p><script>private script</script></article></body></html>`
 	target := filepath.Join(directory, "cache", "index.html")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		t.Fatal(err)
@@ -30,7 +34,9 @@ func TestBuiltRoutesAndUnicode(t *testing.T) {
 		if !strings.HasPrefix(record.URL, "/cacheq/cache/") || record.Language != "zh-CN" {
 			t.Fatalf("wrong route or language: %+v", record)
 		}
-		if strings.Contains(record.Content, "not searchable") || strings.Contains(record.Content, "private script") {
+		if strings.Contains(record.Content, "not searchable") ||
+			strings.Contains(record.Content, "private script") ||
+			strings.Contains(record.Content, "Anchor navigation label") {
 			t.Fatalf("indexed non-document text: %s", record.Content)
 		}
 		if record.URL == "/cacheq/cache/#set" {
