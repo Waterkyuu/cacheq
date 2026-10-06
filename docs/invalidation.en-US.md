@@ -4,9 +4,11 @@
 
 Invalidation retains data but marks it stale. After updating a user, detail and list results can become stale together even though they return `User` and `[]User` respectively.
 
+`Invalidate` is the single entry point: pass one key for an exact match, a `[]any` list for explicit keys, or a `func(any) bool` predicate to select existing keys. Options are optional; when multiple options are supplied, the last one wins. Only `[]any` is treated as a batch, so convert other slice types explicitly. Nil targets and invalid keys return `ErrInvalidKey`; empty or nil `[]any` batches do nothing.
+
 Snippets use the shared client and business fetchers `getUser` and `getUsers` from the [query guide](queries.en-US.md), inside a business function returning `error`.
 
-## `Invalidate`: mark one key stale
+## Pass a key: mark one key stale
 
 ```go
 if err := client.Invalidate("user:42"); err != nil {
@@ -18,7 +20,7 @@ Data remains available, `Stale` becomes true, and handles are notified. An enabl
 
 Invalidation does not wait for refresh completion. Observe results through `Updates()`. Use handle `Refetch(ctx)` when a manual refresh must return its result.
 
-## `InvalidateMany`: invalidate related results together
+## Pass a key list: invalidate related results together
 
 Create queries with different result types:
 
@@ -33,10 +35,7 @@ After the business mutation succeeds:
 
 ```go
 // Call the application's user-update API successfully before invalidating.
-if err := client.InvalidateMany(
-	[]any{"user:42", "users"},
-	cacheq.InvalidateOptions{},
-); err != nil {
+if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
 	return err
 }
 ```
@@ -67,7 +66,7 @@ if err := client.Invalidate("user:42", cacheq.InvalidateOptions{
 Defer a group of related queries:
 
 ```go
-if err := client.InvalidateMany(
+if err := client.Invalidate(
 	[]any{"user:42", "users"},
 	cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
 ); err != nil {
@@ -77,22 +76,24 @@ if err := client.InvalidateMany(
 
 Even enabled consumers retain stale data without starting a request. A later `Fetch`, new `Query`, transition from disabled to enabled, or manual `Refetch` may refresh it. Existing enabled handles do not poll simply because time passes.
 
-## `InvalidateWhere`: select existing keys by a condition
+## Pass a predicate: select existing keys by a condition
 
 Import `strings` to select all user details and the list:
 
 ```go
-client.InvalidateWhere(func(key any) bool {
+if err := client.Invalidate(func(key any) bool {
 	name, ok := key.(string)
 	return ok && (name == "users" || strings.HasPrefix(name, "user:"))
 }, cacheq.InvalidateOptions{
 	Refetch: cacheq.RefetchNone,
-})
+}); err != nil {
+	return err
+}
 ```
 
 Only keys returning true become stale. This condition selects cached queries; `Enabled` instead controls permission to request data.
 
-The predicate receives a key and runs outside the client lock, so it may call `Get`, `Set`, and other client operations. It evaluates a snapshot of existing keys once each, with no ordering guarantee. Newly added keys are excluded; keys removed before invalidation are skipped. Nil predicates and closed clients do nothing.
+The predicate receives a key and runs outside the client lock, so it may call `Get`, `Set`, and other client operations. It evaluates a snapshot of existing keys once each, with no ordering guarantee. Newly added keys are excluded; keys removed before invalidation are skipped. Nil predicates return `ErrInvalidKey`; closed clients return `ErrClosed` without evaluating the predicate.
 
 When inspecting data within a predicate, use the correct static result type for that key. Not every key necessarily contains `User`.
 
@@ -107,10 +108,12 @@ type ResourceKey struct {
 	Tenant int
 }
 
-client.InvalidateWhere(func(key any) bool {
+if err := client.Invalidate(func(key any) bool {
 	resource, ok := key.(ResourceKey)
 	return ok && resource.Resource == "users" && resource.Tenant == 42
-}, cacheq.InvalidateOptions{})
+}); err != nil {
+	return err
+}
 ```
 
 String prefixes have no built-in semantics. Match prefixes yourself, or use comparable structs and inspect their fields. Structs containing slices or maps are not valid keys.

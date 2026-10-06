@@ -95,15 +95,12 @@ Omitting options enables loading; an explicit empty `QueryOptions{}` disables it
 ## Invalidate related data after a mutation
 
 ```go
-if err := client.InvalidateMany(
-	[]any{"user:42", "users"},
-	cacheq.InvalidateOptions{},
-); err != nil {
+if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
 	return err
 }
 ```
 
-Detail `User` and list `[]User` results are invalidated in the same client. Enabled consumers refresh by default; `Refetch: cacheq.RefetchNone` marks data stale without initiating work until a later use.
+`Invalidate` accepts one key, a `[]any` batch, or a `func(any) bool` predicate. Detail `User` and list `[]User` results are invalidated in the same client. Enabled consumers refresh by default; `Refetch: cacheq.RefetchNone` marks data stale without initiating work until a later use.
 
 ## Feature guides
 

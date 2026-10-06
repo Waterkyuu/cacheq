@@ -95,15 +95,12 @@ updatedUsers, err := users.Refetch(ctx)
 ## 修改后让相关缓存一起失效
 
 ```go
-if err := client.InvalidateMany(
-	[]any{"user:42", "users"},
-	cacheq.InvalidateOptions{},
-); err != nil {
+if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
 	return err
 }
 ```
 
-详情和列表分别是 `User` 与 `[]User`，仍能在同一个客户端里一起失效。默认刷新有启用查询对象的键；传 `Refetch: cacheq.RefetchNone` 只标记过期，下次使用再查。
+`Invalidate` 接收单个键、`[]any` 键列表或 `func(any) bool` 条件函数。详情和列表分别是 `User` 与 `[]User`，仍能在同一个客户端里一起失效。默认刷新有启用查询对象的键；传 `Refetch: cacheq.RefetchNone` 只标记过期，下次使用再查。
 
 ## 功能文档
 

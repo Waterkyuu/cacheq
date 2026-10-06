@@ -4,9 +4,11 @@
 
 “失效”表示保留旧数据，但告诉客户端它已经不能算新鲜数据。修改用户资料后，详情和列表可以一起失效，即使它们分别返回 `User` 和 `[]User`。
 
+`Invalidate` 是统一入口：传单个键精确指定，传 `[]any` 列表批量指定，传 `func(any) bool` 条件函数筛选已有键。配置可省略；传多个配置时最后一个生效。只有 `[]any` 被识别为批量列表，其他切片类型需要显式转换。nil 参数和非法键返回 `ErrInvalidKey`；空列表或 nil `[]any` 列表不做任何操作。
+
 以下使用[查询文档](queries.zh-CN.md)中的同一个 `client`，以及 `getUser`、`getUsers` 两个业务加载函数。片段放在返回 `error` 的业务函数里。
 
-## `Invalidate`：一个缓存过期
+## 传一个键：让一个缓存过期
 
 ```go
 if err := client.Invalidate("user:42"); err != nil {
@@ -18,7 +20,7 @@ if err := client.Invalidate("user:42"); err != nil {
 
 它不等待刷新完成。可以通过查询对象的 `Updates()` 接收结果。如果需要主动刷新并等待结果，使用 `detail.Refetch(ctx)`。
 
-## `InvalidateMany`：关联数据一起过期
+## 传键列表：让关联数据一起过期
 
 先建立返回不同类型的查询：
 
@@ -33,10 +35,7 @@ defer users.Close()
 
 ```go
 // Call the application's user-update API successfully before invalidating.
-if err := client.InvalidateMany(
-	[]any{"user:42", "users"},
-	cacheq.InvalidateOptions{},
-); err != nil {
+if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
 	return err
 }
 ```
@@ -67,7 +66,7 @@ if err := client.Invalidate("user:42", cacheq.InvalidateOptions{
 多个关联缓存延后请求：
 
 ```go
-if err := client.InvalidateMany(
+if err := client.Invalidate(
 	[]any{"user:42", "users"},
 	cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
 ); err != nil {
@@ -77,22 +76,24 @@ if err := client.InvalidateMany(
 
 这时即使有启用的查询对象，也保留数据并暂时不请求。之后的 `Fetch`、新建 `Query`、从禁用变为启用或手动 `Refetch` 可以加载过期数据。已有启用查询对象不会仅因为时间经过就重新发起查询。
 
-## `InvalidateWhere`：按条件挑出缓存
+## 传条件函数：按条件挑出缓存
 
 比如所有用户详情和用户列表需要更新。需要导入 `strings`。
 
 ```go
-client.InvalidateWhere(func(key any) bool {
+if err := client.Invalidate(func(key any) bool {
 	name, ok := key.(string)
 	return ok && (name == "users" || strings.HasPrefix(name, "user:"))
 }, cacheq.InvalidateOptions{
 	Refetch: cacheq.RefetchNone,
-})
+}); err != nil {
+	return err
+}
 ```
 
 只有返回 true 的键失效。这里的条件是在选择缓存；条件查询中的 `Enabled` 是在决定能否发请求，两者用途不同。
 
-条件函数收到键，运行在客户端锁外，可以安全调用 `Get`、`Set` 或其他客户端操作。它针对开始匹配时已有的键快照执行，每个键最多一次；新加入的键不参与，失效前已经删除的键跳过。顺序没有保证。nil 条件函数和关闭的客户端不执行匹配。
+条件函数收到键，运行在客户端锁外，可以安全调用 `Get`、`Set` 或其他客户端操作。它针对开始匹配时已有的键快照执行，每个键最多一次；新加入的键不参与，失效前已经删除的键跳过。顺序没有保证。nil 条件函数返回 `ErrInvalidKey`；关闭的客户端返回 `ErrClosed`，不执行匹配。
 
 如果在条件函数里读取数据，应使用该键正确的结果类型，例如 `cacheq.Get[User](client, key)`。所有键不一定都是 `User`，不能无条件按同一种类型读取。
 
@@ -107,10 +108,12 @@ type ResourceKey struct {
 	Tenant int
 }
 
-client.InvalidateWhere(func(key any) bool {
+if err := client.Invalidate(func(key any) bool {
 	resource, ok := key.(ResourceKey)
 	return ok && resource.Resource == "users" && resource.Tenant == 42
-}, cacheq.InvalidateOptions{})
+}); err != nil {
+	return err
+}
 ```
 
 字符串前缀没有内置的特殊含义。使用字符串时自己匹配前缀；使用结构体时匹配字段。键仍然必须可比较，包含切片或映射的结构体不能使用。
