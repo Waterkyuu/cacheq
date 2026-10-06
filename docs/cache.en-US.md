@@ -4,6 +4,8 @@
 
 All operations share one `*cacheq.Client`. Snippets belong inside business functions: `ctx` is the caller's context and `client` is created at the application boundary and injected. Import `cacheq "github.com/Waterkyuu/cacheq"`, plus the standard-library packages used by each snippet.
 
+For cache hits, shared requests, and cleanup counts, see [observability](observability.en-US.md).
+
 ## `NewClient` and `Options`
 
 ```go

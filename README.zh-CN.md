@@ -111,6 +111,7 @@ if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
 | [查询与条件请求](docs/queries.zh-CN.md) | `Query`、状态、更新通知、条件开关、刷新、`Fetch` 和 HTTP 加载函数 |
 | [缓存与生命周期](docs/cache.zh-CN.md) | 所有缓存读写、配置、自动删除、取消、删除、关闭及错误处理 |
 | [缓存失效](docs/invalidation.zh-CN.md) | 单键、批量、条件失效及刷新模式 |
+| [可观测性](docs/observability.zh-CN.md) | 缓存命中、请求合并、加载结果与耗时、重试和清理统计 |
 
 完整可运行程序、各 API 的用途和结果都在功能文档中。缓存值作为共享只读数据使用；修改切片或映射前先复制。不同类型不能复用同一个键。
 

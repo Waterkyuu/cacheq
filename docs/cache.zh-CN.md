@@ -4,6 +4,8 @@
 
 所有功能都使用同一个 `*cacheq.Client`。下面的片段放在业务函数中，`ctx` 是调用者的 `context.Context`，`client` 是应用入口创建并注入的客户端。需要导入 `cacheq "github.com/Waterkyuu/cacheq"`，以及各片段用到的 `context`、`time`、`errors` 或 `fmt`。
 
+缓存命中、请求合并和清理次数见[可观测性文档](observability.zh-CN.md)。
+
 ## `NewClient` 与 `Options`：配置共享缓存
 
 ```go

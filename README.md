@@ -111,6 +111,7 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | [Queries and conditions](docs/queries.en-US.md) | `Query`, snapshots, updates, enablement, refresh, `Fetch`, and HTTP loaders |
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
 | [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
+| [Observability](docs/observability.en-US.md) | Cache hits, shared requests, load outcomes and duration, retries, and cleanup statistics |
 
 The guides explain every public API and include a complete runnable program. Treat cached values as immutable; copy slices and maps before modifying them. Different result types cannot reuse the same key.
 
