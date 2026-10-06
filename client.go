@@ -180,13 +180,42 @@ func (c *Client[K, V]) Invalidate(key K) {
 	if c.closed {
 		return
 	}
+	c.invalidateLocked(key, RefetchObserved)
+}
+
+// InvalidateMany marks each distinct key stale while retaining its data and notifying subscribers.
+// Zero-value options refresh subscribed queries with retained loaders; RefetchNone defers new work.
+// Active loads are neither canceled nor duplicated, and their results remain stale on completion.
+// An empty key list or a closed client has no effect.
+func (c *Client[K, V]) InvalidateMany(keys []K, options InvalidateOptions) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	seen := make(map[K]struct{}, len(keys))
+	for _, key := range keys {
+		// Repeating a key would invalidate the refresh just started for its
+		// first occurrence, leaving an otherwise current result stale.
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		c.invalidateLocked(key, options.Refetch)
+	}
+}
+
+// invalidateLocked applies one key's invalidation and refresh policy while the client lock is held.
+func (c *Client[K, V]) invalidateLocked(key K, refetch RefetchMode) {
 	cached := c.entries[key]
 	cached.expiresAt = time.Time{}
 	c.entries[key] = cached
 	if pending := c.pending[key]; pending != nil {
 		pending.invalidated = true
-	} else if !c.closed && len(c.observers[key]) > 0 && cached.load != nil {
-		c.startLocked(c.ctx, key, cached.load)
+	} else if refetch == RefetchObserved {
+		if len(c.observers[key]) > 0 && cached.load != nil {
+			c.startLocked(c.ctx, key, cached.load)
+		}
 	}
 	c.touchGCLocked(key)
 	c.notifyLocked(key)

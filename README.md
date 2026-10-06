@@ -23,7 +23,7 @@
 - Bounded retries with exponential backoff, custom delay, and request timeout.
 - Shared data and state subscriptions for multiple components.
 - Immediate stale data with background refresh through `Query`.
-- Manual invalidation, forced refresh, prefetch, local updates, and cancellation.
+- Single-key and batch invalidation with optional background refresh, forced refresh, prefetch, local updates, and cancellation.
 - Optional automatic deletion of unused cached data, independent of freshness.
 
 ## Install
@@ -94,6 +94,7 @@ Subscriptions deliver the initial and latest states. Slow readers can skip inter
 | Method | Behavior |
 | --- | --- |
 | `Invalidate(key)` | Marks data stale; subscribed queries refresh automatically. |
+| `InvalidateMany(keys, options)` | Marks related keys stale, optionally deferring background refresh. |
 | `Refetch(ctx, key, fetch)` | Loads again even when data is fresh, sharing an active request. |
 | `Prefetch(ctx, key, fetch)` | Warms the same cache before a component needs it. |
 | `Set(key, value)` | Installs local or optimistic data and prevents an older response from overwriting it. |
@@ -101,6 +102,25 @@ Subscriptions deliver the initial and latest states. Slow readers can skip inter
 | `Remove(key)` | Removes data and prevents an old load from restoring it. |
 | `Clear()` | Clears all results and cancels current requests. |
 | `Close()` | Stops work, closes subscriptions, and rejects new requests. |
+
+## Invalidate related queries
+
+After a successful update, invalidate the related keys in the same client together:
+
+```go
+keys := []string{"user:42", "users"}
+client.InvalidateMany(keys, query.InvalidateOptions{})
+```
+
+The zero-value options use `RefetchObserved`: subscribed queries with retained loaders refresh in the background, while unobserved queries only become stale. To mark data stale and wait until the next `Fetch` or `Query` to start new work, use `RefetchNone` instead:
+
+```go
+client.InvalidateMany(keys, query.InvalidateOptions{
+    Refetch: query.RefetchNone,
+})
+```
+
+Invalidation retains existing data and notifies subscribers. It does not cancel or duplicate active loads; results from loads invalidated in flight remain stale when they complete. Duplicate keys are processed once, and an empty batch has no effect. Use a one-element slice to defer refresh for a single key. The existing `Invalidate(key)` behavior is unchanged.
 
 ## Freshness, retries, and cancellation
 

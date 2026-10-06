@@ -41,6 +41,22 @@ type Options struct {
 	Clock func() time.Time
 }
 
+// RefetchMode controls whether invalidation starts background work for subscribed queries.
+type RefetchMode uint8
+
+const (
+	// RefetchObserved refreshes subscribed queries with retained loaders when no load is active.
+	RefetchObserved RefetchMode = iota
+	// RefetchNone only marks queries stale, leaving the next Fetch or Query to request fresh data.
+	RefetchNone
+)
+
+// InvalidateOptions configures refresh behavior when a group of related queries becomes stale.
+type InvalidateOptions struct {
+	// Refetch selects background refresh behavior; the zero value uses RefetchObserved.
+	Refetch RefetchMode
+}
+
 // Snapshot exposes a query's data, freshness, request activity, and latest error.
 // Data is shared and must be treated as immutable by all readers.
 type Snapshot[V any] struct {
