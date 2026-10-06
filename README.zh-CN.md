@@ -107,6 +107,8 @@ if err := client.InvalidateMany(
 
 ## 功能文档
 
+在线阅读[中英文文档站](https://waterkyuu.github.io/cacheq/)。
+
 | 文档 | 说明 |
 | --- | --- |
 | [查询与条件请求](docs/queries.zh-CN.md) | `Query`、状态、更新通知、条件开关、刷新、`Fetch` 和 HTTP 加载函数 |

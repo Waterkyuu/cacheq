@@ -107,6 +107,8 @@ Detail `User` and list `[]User` results are invalidated in the same client. Enab
 
 ## Feature guides
 
+Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English or Chinese.
+
 | Guide | Coverage |
 | --- | --- |
 | [Queries and conditions](docs/queries.en-US.md) | `Query`, snapshots, updates, enablement, refresh, `Fetch`, and HTTP loaders |
