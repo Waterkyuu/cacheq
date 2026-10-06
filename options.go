@@ -27,6 +27,9 @@ const (
 type Options struct {
 	// StaleTime controls freshness for Fetch and Query; zero makes completed data immediately stale.
 	StaleTime time.Duration
+	// GCTime removes cached state after this duration without reads, writes, loads, or subscriptions.
+	// Zero or a negative duration disables automatic deletion; freshness is controlled by StaleTime.
+	GCTime time.Duration
 	// Retry limits additional attempts after the initial load; zero disables retries.
 	Retry int
 	// RetryDelay supplies the delay before each additional attempt, numbered from one.
@@ -34,7 +37,7 @@ type Options struct {
 	RetryDelay func(attempt int) time.Duration
 	// Timeout bounds the entire load, including retries; zero uses the caller's deadline.
 	Timeout time.Duration
-	// Clock supplies freshness checks; nil uses time.Now.
+	// Clock supplies freshness and retention checks; nil uses time.Now.
 	Clock func() time.Time
 }
 

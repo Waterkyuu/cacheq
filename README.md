@@ -24,6 +24,7 @@
 - Shared data and state subscriptions for multiple components.
 - Immediate stale data with background refresh through `Query`.
 - Manual invalidation, forced refresh, prefetch, local updates, and cancellation.
+- Optional automatic deletion of unused cached data, independent of freshness.
 
 ## Install
 
@@ -111,4 +112,18 @@ The first waiting caller controls its load through its context. Canceling anothe
 
 `FetchWithExpiry` accepts a loader returning `(value, expiresAt, error)`. This keeps the absolute freshness of data restored from disk instead of granting it a new `StaleTime`. A zero expiration disables fresh reuse. Returning fallback data, a future expiration, and an error delays new requests until that deadline. Disk persistence and HTTP transport remain application-owned.
 
-Inject `Options.Clock` for deterministic freshness checks. The client provides no browser focus integration or automatic garbage collection; remove unused keys explicitly and close the client at the end of its lifetime.
+## Delete unused cached data
+
+```go
+client := query.NewClient[string, string](query.Options{
+    StaleTime: time.Minute,
+    GCTime:    5 * time.Minute,
+})
+defer client.Close()
+```
+
+`StaleTime` controls when data needs refreshing; `GCTime` controls when unused cached state is deleted. Reading a key with `Fetch`, `Query`, or `Snapshot`, or updating it, restarts its retention window. Subscribed keys and active loads are protected from deletion. A full retention window starts once the last subscription is released and no load remains, or once an unobserved load finishes. Cleanup removes the data, error, and retained loader without making a request.
+
+`GCTime` defaults to zero, which disables automatic deletion; negative values also disable it. `Remove`, `Clear`, and `Close` release the corresponding cleanup timers. No capacity limit or LRU eviction is applied.
+
+Inject `Options.Clock` for deterministic freshness and retention checks. The client provides no browser focus integration; close it at the end of its lifetime.

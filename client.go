@@ -19,6 +19,10 @@ type Client[K comparable, V any] struct {
 	pending map[K]*flight[V]
 	// observers receives the latest state for each subscribed key.
 	observers map[K]map[chan Snapshot[V]]struct{}
+	// gcTasks owns at most one scheduled cleanup for each inactive cached key.
+	gcTasks map[K]*gcTask
+	// gcAfterFunc schedules cleanup and returns a stop function; tests can replace the timer source.
+	gcAfterFunc func(time.Duration, func()) func()
 	// options supplies freshness and request policies.
 	options Options
 	// ctx owns background loads until Close is called.
@@ -76,7 +80,8 @@ func NewClient[K comparable, V any](options Options) *Client[K, V] {
 	return &Client[K, V]{
 		entries: make(map[K]entry[V]), pending: make(map[K]*flight[V]),
 		observers: make(map[K]map[chan Snapshot[V]]struct{}),
-		options:   options, ctx: ctx, cancel: cancel,
+		gcTasks:   make(map[K]*gcTask), gcAfterFunc: scheduleGC,
+		options: options, ctx: ctx, cancel: cancel,
 	}
 }
 
@@ -100,6 +105,7 @@ func (c *Client[K, V]) FetchWithExpiry(ctx context.Context, key K, load Loader[V
 			return zero, ErrClosed
 		}
 		if cached, ok := c.entries[key]; ok && c.options.Clock().Before(cached.expiresAt) {
+			c.touchGCLocked(key)
 			c.mu.Unlock()
 			return cached.value, cached.err
 		}
@@ -132,6 +138,7 @@ func (c *Client[K, V]) Query(key K, fetch Fetcher[V]) Snapshot[V] {
 	if !c.closed && c.snapshotLocked(key).Stale && c.pending[key] == nil {
 		c.startLocked(c.ctx, key, c.loader(fetch))
 	}
+	c.touchGCLocked(key)
 	return c.snapshotLocked(key)
 }
 
@@ -139,6 +146,7 @@ func (c *Client[K, V]) Query(key K, fetch Fetcher[V]) Snapshot[V] {
 func (c *Client[K, V]) Snapshot(key K) Snapshot[V] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.touchGCLocked(key)
 	return c.snapshotLocked(key)
 }
 
@@ -159,6 +167,7 @@ func (c *Client[K, V]) Refetch(ctx context.Context, key K, fetch Fetcher[V]) (V,
 	cached := c.entries[key]
 	cached.expiresAt = time.Time{}
 	c.entries[key] = cached
+	c.touchGCLocked(key)
 	c.notifyLocked(key)
 	c.mu.Unlock()
 	return c.Fetch(ctx, key, fetch)
@@ -179,6 +188,7 @@ func (c *Client[K, V]) Invalidate(key K) {
 	} else if !c.closed && len(c.observers[key]) > 0 && cached.load != nil {
 		c.startLocked(c.ctx, key, cached.load)
 	}
+	c.touchGCLocked(key)
 	c.notifyLocked(key)
 }
 
@@ -195,6 +205,7 @@ func (c *Client[K, V]) Set(key K, value V) {
 		value: value, hasData: true, updatedAt: now,
 		expiresAt: now.Add(c.options.StaleTime), load: c.entries[key].load,
 	}
+	c.touchGCLocked(key)
 	c.notifyLocked(key)
 }
 
@@ -211,6 +222,7 @@ func (c *Client[K, V]) Subscribe(key K) (<-chan Snapshot[V], func()) {
 			c.observers[key] = make(map[chan Snapshot[V]]struct{})
 		}
 		c.observers[key][updates] = struct{}{}
+		c.stopGCLocked(key)
 	}
 	c.mu.Unlock()
 	var once sync.Once
@@ -224,6 +236,7 @@ func (c *Client[K, V]) Subscribe(key K) (<-chan Snapshot[V], func()) {
 					delete(c.observers, key)
 				}
 				close(updates)
+				c.touchGCLocked(key)
 			}
 		})
 	}
@@ -234,6 +247,7 @@ func (c *Client[K, V]) Cancel(key K) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cancelLocked(key)
+	c.touchGCLocked(key)
 	c.notifyLocked(key)
 }
 
@@ -243,6 +257,7 @@ func (c *Client[K, V]) Remove(key K) {
 	defer c.mu.Unlock()
 	c.cancelLocked(key)
 	delete(c.entries, key)
+	c.stopGCLocked(key)
 	c.notifyLocked(key)
 }
 
@@ -254,6 +269,7 @@ func (c *Client[K, V]) Clear() {
 		c.cancelLocked(key)
 	}
 	clear(c.entries)
+	c.clearGCLocked()
 	for key := range c.observers {
 		c.notifyLocked(key)
 	}
@@ -278,6 +294,7 @@ func (c *Client[K, V]) Close() {
 	}
 	clear(c.observers)
 	clear(c.entries)
+	c.clearGCLocked()
 }
 
 // loader converts a fetcher into an absolute-expiration loader without introducing transport ownership.
@@ -293,6 +310,7 @@ func (c *Client[K, V]) loader(fetch Fetcher[V]) Loader[V] {
 
 // startLocked publishes pending state before starting one asynchronous load.
 func (c *Client[K, V]) startLocked(ctx context.Context, key K, load Loader[V]) *flight[V] {
+	c.stopGCLocked(key)
 	owner := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	if c.options.Timeout > 0 {
@@ -331,6 +349,7 @@ func (c *Client[K, V]) execute(ctx context.Context, key K, pending *flight[V], l
 			cached.err, cached.expiresAt, cached.load = err, expiresAt, load
 			c.entries[key] = cached
 		}
+		c.touchGCLocked(key)
 	}
 	pending.value, pending.err = value, err
 	c.notifyLocked(key)
