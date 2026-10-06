@@ -68,7 +68,8 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOpt
 	}
 	client.observers[key][observer] = struct{}{}
 	client.stopGCLocked(key)
-	if enabled && client.snapshotLocked(key).Stale && client.pending[key] == nil {
+	needsLoad := enabled && client.snapshotLocked(key).Stale && client.pending[key] == nil
+	if needsLoad {
 		client.startLocked(client.ctx, key, observer.load)
 	}
 	observer.publish(client.snapshotLocked(key))
@@ -100,7 +101,8 @@ func (h *QueryHandle[V]) SetEnabled(enabled bool) error {
 		return nil
 	}
 	h.observer.enabled = enabled
-	if enabled && c.snapshotLocked(h.key).Stale && c.pending[h.key] == nil {
+	needsLoad := enabled && c.snapshotLocked(h.key).Stale && c.pending[h.key] == nil
+	if needsLoad {
 		c.startLocked(c.ctx, h.key, h.observer.load)
 	}
 	return nil
@@ -113,7 +115,14 @@ func (h *QueryHandle[V]) Refetch(ctx context.Context) (V, error) {
 		var zero V
 		return zero, h.err
 	}
-	value, err := h.client.fetch(ctx, h.key, reflect.TypeFor[V](), h.observer.load, true, h.observer)
+	value, err := h.client.fetch(
+		ctx,
+		h.key,
+		reflect.TypeFor[V](),
+		h.observer.load,
+		true,
+		h.observer,
+	)
 	return typedValue[V](value), err
 }
 
@@ -153,7 +162,14 @@ func (h *QueryHandle[V]) activeLocked() error {
 // Fetch waits for fresh data without owning a long-lived subscription.
 // The result type is inferred from fetch, allowing one client to serve unrelated data types.
 func Fetch[V any](ctx context.Context, client *Client, key any, fetch Fetcher[V]) (V, error) {
-	value, err := client.fetch(ctx, key, reflect.TypeFor[V](), eraseLoader(client, fetch), false, nil)
+	value, err := client.fetch(
+		ctx,
+		key,
+		reflect.TypeFor[V](),
+		eraseLoader(client, fetch),
+		false,
+		nil,
+	)
 	return typedValue[V](value), err
 }
 
@@ -167,13 +183,25 @@ func FetchWithExpiry[V any](ctx context.Context, client *Client, key any, load L
 			return value, expiry, err
 		}
 	}
-	value, err := client.fetch(ctx, key, reflect.TypeFor[V](), erased, false, nil)
+	value, err := client.fetch(
+		ctx,
+		key,
+		reflect.TypeFor[V](),
+		erased,
+		false,
+		nil,
+	)
 	return typedValue[V](value), err
 }
 
 // Prefetch warms a typed key without returning its data; unlike browser prefetch APIs it returns errors.
 func Prefetch[V any](ctx context.Context, client *Client, key any, fetch Fetcher[V]) error {
-	_, err := Fetch(ctx, client, key, fetch)
+	_, err := Fetch(
+		ctx,
+		client,
+		key,
+		fetch,
+	)
 	return err
 }
 
@@ -237,7 +265,8 @@ func (c *Client) fetch(
 			return nil, err
 		}
 		cached := c.entries[key]
-		if !force && cached.hasData && c.options.Clock().Before(cached.expiresAt) {
+		fresh := cached.hasData && c.options.Clock().Before(cached.expiresAt)
+		if !force && fresh {
 			c.touchGCLocked(key)
 			c.mu.Unlock()
 			return cached.value, cached.err

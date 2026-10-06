@@ -12,7 +12,16 @@ import (
 
 // TestCacheExpiration refreshes at the exact expiration boundary while isolating keys.
 func TestCacheExpiration(t *testing.T) {
-	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	now := time.Date(
+		2026,
+		10,
+		6,
+		0,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
 	cache := NewClient(Options{Clock: func() time.Time { return now }})
 	calls := 0
 	load := func(context.Context) (int, time.Time, error) {
@@ -20,7 +29,12 @@ func TestCacheExpiration(t *testing.T) {
 		return calls, now.Add(time.Hour), nil
 	}
 	for _, key := range []string{"a", "a", "b"} {
-		if _, err := FetchWithExpiry(context.Background(), cache, key, load); err != nil {
+		if _, err := FetchWithExpiry(
+			context.Background(),
+			cache,
+			key,
+			load,
+		); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -28,14 +42,28 @@ func TestCacheExpiration(t *testing.T) {
 		t.Fatalf("loads = %d, want one per key", calls)
 	}
 	now = now.Add(time.Hour)
-	if got, err := FetchWithExpiry(context.Background(), cache, "a", load); got != 3 || err != nil {
+	if got, err := FetchWithExpiry(
+		context.Background(),
+		cache,
+		"a",
+		load,
+	); got != 3 || err != nil {
 		t.Fatalf("expired result = %d, %v", got, err)
 	}
 }
 
 // TestCacheRetryExpiration reuses an explicitly cached failure and retries when its delay expires.
 func TestCacheRetryExpiration(t *testing.T) {
-	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	now := time.Date(
+		2026,
+		10,
+		6,
+		0,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
 	cache := NewClient(Options{Clock: func() time.Time { return now }})
 	failure := errors.New("unavailable")
 	calls := 0
@@ -44,7 +72,9 @@ func TestCacheRetryExpiration(t *testing.T) {
 		return "offline", now.Add(time.Minute), failure
 	}
 	for range 2 {
-		if value, err := FetchWithExpiry(context.Background(), cache,
+		if value, err := FetchWithExpiry(
+			context.Background(),
+			cache,
 			"a",
 			load,
 		); value != "offline" ||
@@ -56,7 +86,12 @@ func TestCacheRetryExpiration(t *testing.T) {
 		t.Fatalf("failure loaded %d times before retry expiration", calls)
 	}
 	now = now.Add(time.Minute)
-	_, _ = FetchWithExpiry(context.Background(), cache, "a", load)
+	_, _ = FetchWithExpiry(
+		context.Background(),
+		cache,
+		"a",
+		load,
+	)
 	if calls != 2 {
 		t.Fatalf("failure was not retried: loads = %d", calls)
 	}
@@ -71,8 +106,18 @@ func TestCacheZeroExpiration(t *testing.T) {
 		return calls, time.Time{}, nil
 	}
 	for want := 1; want <= 2; want++ {
-		if value, err := FetchWithExpiry(context.Background(), cache, "a", load); value != want || err != nil {
-			t.Fatalf("uncached value = %d, %v; want %d", value, err, want)
+		if value, err := FetchWithExpiry(
+			context.Background(),
+			cache,
+			"a",
+			load,
+		); value != want || err != nil {
+			t.Fatalf(
+				"uncached value = %d, %v; want %d",
+				value,
+				err,
+				want,
+			)
 		}
 	}
 }
@@ -99,7 +144,12 @@ func TestCacheConcurrentLoads(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if value, err := FetchWithExpiry(context.Background(), cache, "a", load); value != "shared" || err != nil {
+			if value, err := FetchWithExpiry(
+				context.Background(),
+				cache,
+				"a",
+				load,
+			); value != "shared" || err != nil {
 				t.Errorf("shared result = %q, %v", value, err)
 			}
 		}()
@@ -107,9 +157,14 @@ func TestCacheConcurrentLoads(t *testing.T) {
 	<-started
 	other := make(chan string, 1)
 	go func() {
-		value, _ := FetchWithExpiry(context.Background(), cache, "b", func(context.Context) (string, time.Time, error) {
-			return "independent", time.Now().Add(time.Hour), nil
-		})
+		value, _ := FetchWithExpiry(
+			context.Background(),
+			cache,
+			"b",
+			func(context.Context) (string, time.Time, error) {
+				return "independent", time.Now().Add(time.Hour), nil
+			},
+		)
 		other <- value
 	}()
 	select {
@@ -139,14 +194,24 @@ func TestCacheWaiterCancellation(t *testing.T) {
 		return "loaded", time.Now().Add(time.Hour), nil
 	}
 	go func() {
-		_, err := FetchWithExpiry(context.Background(), cache, "a", load)
+		_, err := FetchWithExpiry(
+			context.Background(),
+			cache,
+			"a",
+			load,
+		)
 		finished <- err
 	}()
 	<-started
 	ctx, cancel := context.WithCancel(context.Background())
 	waiter := make(chan error, 1)
 	go func() {
-		_, err := FetchWithExpiry(ctx, cache, "a", load)
+		_, err := FetchWithExpiry(
+			ctx,
+			cache,
+			"a",
+			load,
+		)
 		waiter <- err
 	}()
 	cancel()
@@ -157,7 +222,12 @@ func TestCacheWaiterCancellation(t *testing.T) {
 	if err := <-finished; err != nil {
 		t.Fatal(err)
 	}
-	if value, err := FetchWithExpiry(context.Background(), cache, "a", load); value != "loaded" || err != nil {
+	if value, err := FetchWithExpiry(
+		context.Background(),
+		cache,
+		"a",
+		load,
+	); value != "loaded" || err != nil {
 		t.Fatalf("waiter discarded loaded value: %q, %v", value, err)
 	}
 }
@@ -170,17 +240,24 @@ func TestCacheLoaderCancellation(t *testing.T) {
 	started := make(chan struct{})
 	first := make(chan error, 1)
 	go func() {
-		_, err := FetchWithExpiry(ctx, cache, "a", func(ctx context.Context) (string, time.Time, error) {
-			close(started)
-			<-ctx.Done()
-			return "canceled", time.Now().Add(time.Hour), nil
-		})
+		_, err := FetchWithExpiry(
+			ctx,
+			cache,
+			"a",
+			func(ctx context.Context) (string, time.Time, error) {
+				close(started)
+				<-ctx.Done()
+				return "canceled", time.Now().Add(time.Hour), nil
+			},
+		)
 		first <- err
 	}()
 	<-started
 	second := make(chan error, 1)
 	go func() {
-		value, err := FetchWithExpiry(context.Background(), cache,
+		value, err := FetchWithExpiry(
+			context.Background(),
+			cache,
 			"a",
 			func(context.Context) (string, time.Time, error) {
 				return "retried", time.Now().Add(time.Hour), nil
@@ -198,7 +275,12 @@ func TestCacheLoaderCancellation(t *testing.T) {
 	if err := <-second; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := FetchWithExpiry[string](ctx, cache, "a", nil); !errors.Is(err, context.Canceled) {
+	if _, err := FetchWithExpiry[string](
+		ctx,
+		cache,
+		"a",
+		nil,
+	); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled caller used a cached result: %v", err)
 	}
 }
@@ -211,15 +293,25 @@ func TestClientRetries(t *testing.T) {
 		})
 		calls := 0
 		failure := errors.New("unavailable")
-		value, err := Fetch(context.Background(), client, "a", func(context.Context) (string, error) {
-			calls++
-			if succeed && calls == 3 {
-				return "recovered", nil
-			}
-			return "", failure
-		})
+		value, err := Fetch(
+			context.Background(),
+			client,
+			"a",
+			func(context.Context) (string, error) {
+				calls++
+				if succeed && calls == 3 {
+					return "recovered", nil
+				}
+				return "", failure
+			},
+		)
 		if calls != 3 || succeed && (err != nil || value != "recovered") || !succeed && !errors.Is(err, failure) {
-			t.Fatalf("retry result = %q, %v; calls = %d", value, err, calls)
+			t.Fatalf(
+				"retry result = %q, %v; calls = %d",
+				value,
+				err,
+				calls,
+			)
 		}
 		client.Close()
 	}
@@ -237,7 +329,12 @@ func TestRetryCancellation(t *testing.T) {
 		},
 	})
 	defer client.Close()
-	_, err := Fetch(ctx, client, "a", func(context.Context) (string, error) { return "", errors.New("offline") })
+	_, err := Fetch(
+		ctx,
+		client,
+		"a",
+		func(context.Context) (string, error) { return "", errors.New("offline") },
+	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("retry cancellation = %v", err)
 	}
@@ -247,10 +344,15 @@ func TestRetryCancellation(t *testing.T) {
 func TestClientTimeout(t *testing.T) {
 	client := NewClient(Options{Timeout: time.Millisecond, Retry: 3})
 	defer client.Close()
-	_, err := Fetch(context.Background(), client, "a", func(ctx context.Context) (string, error) {
-		<-ctx.Done()
-		return "", ctx.Err()
-	})
+	_, err := Fetch(
+		context.Background(),
+		client,
+		"a",
+		func(ctx context.Context) (string, error) {
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+	)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("query timeout = %v", err)
 	}
@@ -268,7 +370,12 @@ func TestDefaultRetryBackoff(t *testing.T) {
 	}
 	for i, delay := range want {
 		if got := retryDelay(i + 1); got != delay {
-			t.Fatalf("retry %d delay = %v, want %v", i+1, got, delay)
+			t.Fatalf(
+				"retry %d delay = %v, want %v",
+				i+1,
+				got,
+				delay,
+			)
 		}
 	}
 	if got := retryDelay(100); got != 30*time.Second {
@@ -327,7 +434,16 @@ func (s *manualGCScheduler) count() int {
 func newGCClient(t *testing.T, retention time.Duration) (*Client, *manualGCScheduler) {
 	t.Helper()
 	scheduler := &manualGCScheduler{timers: make([]*manualGCTimer, 0)}
-	scheduler.now.Store(time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC).UnixNano())
+	scheduler.now.Store(time.Date(
+		2026,
+		10,
+		6,
+		0,
+		0,
+		0,
+		0,
+		time.UTC,
+	).UnixNano())
 	client := NewClient(Options{
 		StaleTime: time.Hour,
 		GCTime:    retention,
@@ -354,7 +470,12 @@ func TestGCRetentionBoundary(t *testing.T) {
 			}
 			state := Get[string](client, "a")
 			if want := elapsed < time.Minute; state.HasData != want {
-				t.Fatalf("state after %v = %+v; want data = %v", elapsed, state, want)
+				t.Fatalf(
+					"state after %v = %+v; want data = %v",
+					elapsed,
+					state,
+					want,
+				)
 			}
 			if state.HasData && state.Stale {
 				t.Fatal("retention changed the freshness window")
@@ -390,7 +511,12 @@ func TestGCUseRestartsRetention(t *testing.T) {
 			scheduler.now.Add(int64(30 * time.Second))
 			switch action {
 			case "fetch":
-				if _, err := Fetch[string](context.Background(), client, "a", nil); err != nil {
+				if _, err := Fetch[string](
+					context.Background(),
+					client,
+					"a",
+					nil,
+				); err != nil {
 					t.Fatal(err)
 				}
 			case "query":
@@ -492,7 +618,12 @@ func TestGCLoads(t *testing.T) {
 			}
 			finished := make(chan error, 1)
 			go func() {
-				_, err := Fetch(context.Background(), client, "a", fetch)
+				_, err := Fetch(
+					context.Background(),
+					client,
+					"a",
+					fetch,
+				)
 				finished <- err
 			}()
 			<-started
@@ -540,9 +671,14 @@ func TestGCLoads(t *testing.T) {
 // TestGCInitialLoad schedules cleanup for newly loaded data even when no previous entry exists.
 func TestGCInitialLoad(t *testing.T) {
 	client, scheduler := newGCClient(t, time.Minute)
-	if _, err := Fetch(context.Background(), client, "a", func(context.Context) (string, error) {
-		return "loaded", nil
-	}); err != nil {
+	if _, err := Fetch(
+		context.Background(),
+		client,
+		"a",
+		func(context.Context) (string, error) {
+			return "loaded", nil
+		},
+	); err != nil {
 		t.Fatal(err)
 	}
 	scheduler.now.Add(int64(time.Minute))
@@ -550,9 +686,14 @@ func TestGCInitialLoad(t *testing.T) {
 	if state := Get[string](client, "a"); state.HasData {
 		t.Fatalf("initial load remained cached: %+v", state)
 	}
-	value, err := Fetch(context.Background(), client, "a", func(context.Context) (string, error) {
-		return "reloaded", nil
-	})
+	value, err := Fetch(
+		context.Background(),
+		client,
+		"a",
+		func(context.Context) (string, error) {
+			return "reloaded", nil
+		},
+	)
 	if value != "reloaded" || err != nil {
 		t.Fatalf("fetch after cleanup = %q, %v", value, err)
 	}
@@ -562,9 +703,14 @@ func TestGCInitialLoad(t *testing.T) {
 func TestGCInitialFailure(t *testing.T) {
 	client, scheduler := newGCClient(t, time.Minute)
 	failure := errors.New("offline")
-	_, err := Fetch(context.Background(), client, "a", func(context.Context) (string, error) {
-		return "", failure
-	})
+	_, err := Fetch(
+		context.Background(),
+		client,
+		"a",
+		func(context.Context) (string, error) {
+			return "", failure
+		},
+	)
 	if !errors.Is(err, failure) {
 		t.Fatalf("initial failure = %v", err)
 	}
@@ -636,15 +782,34 @@ func Example_sharedCache() {
 		calls++
 		return "shared", nil
 	}
-	first, _ := Fetch(context.Background(), client, "models", fetch)
-	second, _ := Fetch(context.Background(), client, "models", fetch)
+	first, _ := Fetch(
+		context.Background(),
+		client,
+		"models",
+		fetch,
+	)
+	second, _ := Fetch(
+		context.Background(),
+		client,
+		"models",
+		fetch,
+	)
 	fmt.Println(first, second, calls)
 	// Output: shared shared 1
 }
 
 // Example_cacheFreshness checks expiration without starting a request.
 func Example_cacheFreshness() {
-	now := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	now := time.Date(
+		2026,
+		10,
+		6,
+		0,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
 	client := NewClient(Options{
 		StaleTime: time.Hour, Clock: func() time.Time { return now },
 	})

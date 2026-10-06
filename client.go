@@ -269,7 +269,12 @@ func (c *Client) startLocked(ctx context.Context, key any, load Loader[any]) *fl
 	pending := &flight{done: make(chan struct{}), cancel: cancel, owner: owner}
 	c.pending[key] = pending
 	c.notifyLocked(key)
-	go c.execute(ctx, key, pending, load)
+	go c.execute(
+		ctx,
+		key,
+		pending,
+		load,
+	)
 	return pending
 }
 
@@ -309,8 +314,9 @@ func (c *Client) run(ctx context.Context, load Loader[any]) (any, time.Time, err
 			return nil, time.Time{}, ctx.Err()
 		}
 		value, expiresAt, err := load(ctx)
-		if err == nil || attempt >= c.options.Retry || ctx.Err() != nil ||
-			errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		stopped := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+		shouldRetry := err != nil && attempt < c.options.Retry && !stopped
+		if !shouldRetry {
 			return value, expiresAt, err
 		}
 		timer := time.NewTimer(c.options.RetryDelay(attempt + 1))
@@ -375,8 +381,15 @@ func (c *Client) checkLocked(key any, typ reflect.Type) error {
 		return fmt.Errorf("%w: %T", ErrInvalidKey, key)
 	}
 	cached := c.entries[key]
-	if typ != nil && cached.typ != nil && cached.typ != typ {
-		return fmt.Errorf("%w: key %v contains %v, requested %v", ErrTypeMismatch, key, cached.typ, typ)
+	typeMismatch := typ != nil && cached.typ != nil && cached.typ != typ
+	if typeMismatch {
+		return fmt.Errorf(
+			"%w: key %v contains %v, requested %v",
+			ErrTypeMismatch,
+			key,
+			cached.typ,
+			typ,
+		)
 	}
 	return nil
 }

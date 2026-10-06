@@ -48,10 +48,15 @@ func TestQueryDisabled(t *testing.T) {
 				client.Invalidate("users")
 			}
 			var calls atomic.Int32
-			observer := Query(client, "users", func(context.Context) (int, error) {
-				calls.Add(1)
-				return 8, nil
-			}, QueryOptions{Enabled: false})
+			observer := Query(
+				client,
+				"users",
+				func(context.Context) (int, error) {
+					calls.Add(1)
+					return 8, nil
+				},
+				QueryOptions{Enabled: false},
+			)
 			t.Cleanup(observer.Close)
 			state := <-observer.Updates()
 			if state.Fetching || calls.Load() != 0 || state.HasData != (cache != "missing") {
@@ -77,9 +82,14 @@ func TestQueryDisabled(t *testing.T) {
 func TestQueryEnableTransitions(t *testing.T) {
 	client := newInvalidationClient(t)
 	var calls atomic.Int32
-	observer := Query(client, "users", func(context.Context) (int, error) {
-		return int(calls.Add(1)), nil
-	}, QueryOptions{Enabled: false})
+	observer := Query(
+		client,
+		"users",
+		func(context.Context) (int, error) {
+			return int(calls.Add(1)), nil
+		},
+		QueryOptions{Enabled: false},
+	)
 	t.Cleanup(observer.Close)
 	observer.SetEnabled(true)
 	state := awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
@@ -112,10 +122,15 @@ func TestQueryFreshData(t *testing.T) {
 	client := newInvalidationClient(t)
 	Set(client, "users", 7)
 	var calls atomic.Int32
-	observer := Query(client, "users", func(context.Context) (int, error) {
-		calls.Add(1)
-		return 8, nil
-	}, QueryOptions{Enabled: true})
+	observer := Query(
+		client,
+		"users",
+		func(context.Context) (int, error) {
+			calls.Add(1)
+			return 8, nil
+		},
+		QueryOptions{Enabled: true},
+	)
 	t.Cleanup(observer.Close)
 	if state := observer.Snapshot(); state.Data != 7 || state.Fetching || calls.Load() != 0 {
 		t.Fatalf("fresh observation = %+v", state)
@@ -131,10 +146,15 @@ func TestQueryFreshData(t *testing.T) {
 func TestQuerySharedEnablement(t *testing.T) {
 	client := newInvalidationClient(t)
 	var disabledCalls, activeCalls atomic.Int32
-	disabled := Query(client, "users", func(context.Context) (int, error) {
-		disabledCalls.Add(1)
-		return 99, nil
-	}, QueryOptions{Enabled: false})
+	disabled := Query(
+		client,
+		"users",
+		func(context.Context) (int, error) {
+			disabledCalls.Add(1)
+			return 99, nil
+		},
+		QueryOptions{Enabled: false},
+	)
 	t.Cleanup(disabled.Close)
 	started, release := make(chan struct{}), make(chan struct{})
 	fetch := func(ctx context.Context) (int, error) {
@@ -149,10 +169,20 @@ func TestQuerySharedEnablement(t *testing.T) {
 		}
 		return int(call), nil
 	}
-	first := Query(client, "users", fetch, QueryOptions{Enabled: true})
+	first := Query(
+		client,
+		"users",
+		fetch,
+		QueryOptions{Enabled: true},
+	)
 	t.Cleanup(first.Close)
 	<-started
-	second := Query(client, "users", fetch, QueryOptions{Enabled: true})
+	second := Query(
+		client,
+		"users",
+		fetch,
+		QueryOptions{Enabled: true},
+	)
 	t.Cleanup(second.Close)
 	close(release)
 	for _, observer := range []*QueryHandle[int]{disabled, first, second} {
@@ -184,11 +214,21 @@ func TestQueryManualRequests(t *testing.T) {
 			client := newInvalidationClient(t)
 			var calls atomic.Int32
 			fetch := func(context.Context) (int, error) { return int(calls.Add(1)), nil }
-			observer := Query(client, "users", fetch, QueryOptions{Enabled: false})
+			observer := Query(
+				client,
+				"users",
+				fetch,
+				QueryOptions{Enabled: false},
+			)
 			t.Cleanup(observer.Close)
 			switch action {
 			case "fetch":
-				if _, err := Fetch(context.Background(), client, "users", fetch); err != nil {
+				if _, err := Fetch(
+					context.Background(),
+					client,
+					"users",
+					fetch,
+				); err != nil {
 					t.Fatal(err)
 				}
 			case "query":
@@ -213,18 +253,23 @@ func TestQueryDisableDuringLoad(t *testing.T) {
 	client := newInvalidationClient(t)
 	var calls atomic.Int32
 	started, release := make(chan struct{}), make(chan struct{})
-	observer := Query(client, "users", func(ctx context.Context) (int, error) {
-		call := calls.Add(1)
-		if call == 1 {
-			close(started)
-			select {
-			case <-ctx.Done():
-				return 0, ctx.Err()
-			case <-release:
+	observer := Query(
+		client,
+		"users",
+		func(ctx context.Context) (int, error) {
+			call := calls.Add(1)
+			if call == 1 {
+				close(started)
+				select {
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				case <-release:
+				}
 			}
-		}
-		return int(call), nil
-	}, QueryOptions{Enabled: true})
+			return int(call), nil
+		},
+		QueryOptions{Enabled: true},
+	)
 	t.Cleanup(observer.Close)
 	<-started
 	observer.SetEnabled(false)
@@ -248,10 +293,15 @@ func TestQueryFailure(t *testing.T) {
 	client.Invalidate("users")
 	failure := errors.New("offline")
 	var calls atomic.Int32
-	observer := Query(client, "users", func(context.Context) (int, error) {
-		calls.Add(1)
-		return 0, failure
-	}, QueryOptions{Enabled: true})
+	observer := Query(
+		client,
+		"users",
+		func(context.Context) (int, error) {
+			calls.Add(1)
+			return 0, failure
+		},
+		QueryOptions{Enabled: true},
+	)
 	t.Cleanup(observer.Close)
 	state := awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Err != nil && !s.Fetching })
 	if state.Data != 7 || !state.HasData || !state.Stale || !errors.Is(state.Err, failure) {
@@ -269,10 +319,15 @@ func TestQueryClose(t *testing.T) {
 	for _, closeClient := range []bool{false, true} {
 		client := newInvalidationClient(t)
 		var calls atomic.Int32
-		observer := Query(client, "users", func(context.Context) (int, error) {
-			calls.Add(1)
-			return 1, nil
-		}, QueryOptions{Enabled: false})
+		observer := Query(
+			client,
+			"users",
+			func(context.Context) (int, error) {
+				calls.Add(1)
+				return 1, nil
+			},
+			QueryOptions{Enabled: false},
+		)
 		<-observer.Updates()
 		if closeClient {
 			client.Close()
@@ -286,7 +341,12 @@ func TestQueryClose(t *testing.T) {
 			t.Fatal("a closed observer restarted work or retained its channel")
 		}
 		if closeClient {
-			closed := Query[int](client, "users", nil, QueryOptions{Enabled: true})
+			closed := Query[int](
+				client,
+				"users",
+				nil,
+				QueryOptions{Enabled: true},
+			)
 			state := <-closed.Updates()
 			if !errors.Is(state.Err, ErrClosed) || state.Fetching {
 				t.Fatalf("observation after client closure = %+v", state)
@@ -328,15 +388,20 @@ func TestQueryDisabledRetention(t *testing.T) {
 func TestQueryCloseDuringLoad(t *testing.T) {
 	client := newInvalidationClient(t)
 	started, release := make(chan struct{}), make(chan struct{})
-	observer := Query(client, "users", func(ctx context.Context) (int, error) {
-		close(started)
-		select {
-		case <-ctx.Done():
-			return 0, ctx.Err()
-		case <-release:
-			return 7, nil
-		}
-	}, QueryOptions{Enabled: true})
+	observer := Query(
+		client,
+		"users",
+		func(ctx context.Context) (int, error) {
+			close(started)
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			case <-release:
+				return 7, nil
+			}
+		},
+		QueryOptions{Enabled: true},
+	)
 	t.Cleanup(observer.Close)
 	<-started
 	passive := Query(
@@ -360,12 +425,17 @@ func TestQueryClientCancellation(t *testing.T) {
 	client := newInvalidationClient(t)
 	started := make(chan struct{})
 	finished := make(chan error, 1)
-	observer := Query(client, "users", func(ctx context.Context) (int, error) {
-		close(started)
-		<-ctx.Done()
-		finished <- ctx.Err()
-		return 0, ctx.Err()
-	}, QueryOptions{Enabled: true})
+	observer := Query(
+		client,
+		"users",
+		func(ctx context.Context) (int, error) {
+			close(started)
+			<-ctx.Done()
+			finished <- ctx.Err()
+			return 0, ctx.Err()
+		},
+		QueryOptions{Enabled: true},
+	)
 	t.Cleanup(observer.Close)
 	<-started
 	client.Close()
@@ -447,10 +517,15 @@ func TestTypeMismatch(t *testing.T) {
 	if _, err := wrong.Refetch(context.Background()); !errors.Is(err, ErrTypeMismatch) {
 		t.Fatalf("refetch = %v", err)
 	}
-	if _, err := Fetch(context.Background(), c, "user", func(context.Context) (int, error) {
-		calls.Add(1)
-		return 0, nil
-	}); !errors.Is(err, ErrTypeMismatch) {
+	if _, err := Fetch(
+		context.Background(),
+		c,
+		"user",
+		func(context.Context) (int, error) {
+			calls.Add(1)
+			return 0, nil
+		},
+	); !errors.Is(err, ErrTypeMismatch) {
 		t.Fatalf("fetch mismatch = %v", err)
 	}
 	wrong.Close()
@@ -477,9 +552,14 @@ func TestPendingTypeMismatch(t *testing.T) {
 	if err := Set(c, "user", 42); !errors.Is(err, ErrTypeMismatch) {
 		t.Fatalf("pending set = %v", err)
 	}
-	if _, err := Fetch(context.Background(), c, "user", func(context.Context) (int, error) {
-		return 42, nil
-	}); !errors.Is(err, ErrTypeMismatch) {
+	if _, err := Fetch(
+		context.Background(),
+		c,
+		"user",
+		func(context.Context) (int, error) {
+			return 42, nil
+		},
+	); !errors.Is(err, ErrTypeMismatch) {
 		t.Fatalf("pending fetch = %v", err)
 	}
 	close(release)
@@ -615,7 +695,12 @@ func TestInvalidKeys(t *testing.T) {
 // TestQueryLifecycle closes channels once, retains the latest state, and rejects requests after release.
 func TestQueryLifecycle(t *testing.T) {
 	c := newInvalidationClient(t)
-	handle := Query(c, "user", func(context.Context) (int, error) { return 0, nil }, QueryOptions{Enabled: false})
+	handle := Query(
+		c,
+		"user",
+		func(context.Context) (int, error) { return 0, nil },
+		QueryOptions{Enabled: false},
+	)
 	<-handle.Updates()
 	Set(c, "user", 1)
 	Set(c, "user", 2)
@@ -635,7 +720,12 @@ func TestQueryLifecycle(t *testing.T) {
 	}
 	c.Close()
 	c.Close()
-	if _, err := Fetch[int](context.Background(), c, "user", nil); !errors.Is(err, ErrClosed) {
+	if _, err := Fetch[int](
+		context.Background(),
+		c,
+		"user",
+		nil,
+	); !errors.Is(err, ErrClosed) {
 		t.Fatalf("closed fetch = %v", err)
 	}
 	if err := Set(c, "user", 3); !errors.Is(err, ErrClosed) {
@@ -646,10 +736,20 @@ func TestQueryLifecycle(t *testing.T) {
 // TestNoFetcher reports missing loaders without creating a cache type binding.
 func TestNoFetcher(t *testing.T) {
 	c := newInvalidationClient(t)
-	if _, err := Fetch[int](context.Background(), c, "user", nil); !errors.Is(err, ErrNoFetcher) {
+	if _, err := Fetch[int](
+		context.Background(),
+		c,
+		"user",
+		nil,
+	); !errors.Is(err, ErrNoFetcher) {
 		t.Fatalf("nil fetch = %v", err)
 	}
-	handle := Query[int](c, "user", nil, QueryOptions{Enabled: false})
+	handle := Query[int](
+		c,
+		"user",
+		nil,
+		QueryOptions{Enabled: false},
+	)
 	if !errors.Is(handle.Snapshot().Err, ErrNoFetcher) {
 		t.Fatal("nil query loader accepted")
 	}
@@ -682,11 +782,16 @@ func TestSetAndRemovePreventLateWrites(t *testing.T) {
 			c := newInvalidationClient(t)
 			started, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 			go func() {
-				_, err := Fetch(context.Background(), c, "user", func(context.Context) (string, error) {
-					close(started)
-					<-release
-					return "obsolete", nil
-				})
+				_, err := Fetch(
+					context.Background(),
+					c,
+					"user",
+					func(context.Context) (string, error) {
+						close(started)
+						<-release
+						return "obsolete", nil
+					},
+				)
 				finished <- err
 			}()
 			<-started
@@ -725,10 +830,15 @@ func TestInvalidateDeferred(t *testing.T) {
 	if !Get[[]string](c, "users").Stale {
 		t.Fatal("second type was not invalidated")
 	}
-	if value, err := Fetch(context.Background(), c, "user", func(context.Context) (string, error) {
-		calls.Add(1)
-		return "new", nil
-	}); value != "new" || err != nil || calls.Load() != 1 {
+	if value, err := Fetch(
+		context.Background(),
+		c,
+		"user",
+		func(context.Context) (string, error) {
+			calls.Add(1)
+			return "new", nil
+		},
+	); value != "new" || err != nil || calls.Load() != 1 {
 		t.Fatalf("next fetch = %q, %v", value, err)
 	}
 	c.Invalidate("user", InvalidateOptions{Refetch: RefetchNone})
@@ -863,16 +973,26 @@ func TestPrefetchAndCancel(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if value, err := Fetch[string](context.Background(), c, "warm", nil); value != "ready" || err != nil {
+	if value, err := Fetch[string](
+		context.Background(),
+		c,
+		"warm",
+		nil,
+	); value != "ready" || err != nil {
 		t.Fatalf("prefetched value = %q, %v", value, err)
 	}
 	started, finished := make(chan struct{}), make(chan error, 1)
 	go func() {
-		_, err := Fetch(context.Background(), c, "active", func(ctx context.Context) (int, error) {
-			close(started)
-			<-ctx.Done()
-			return 0, ctx.Err()
-		})
+		_, err := Fetch(
+			context.Background(),
+			c,
+			"active",
+			func(ctx context.Context) (int, error) {
+				close(started)
+				<-ctx.Done()
+				return 0, ctx.Err()
+			},
+		)
 		finished <- err
 	}()
 	<-started

@@ -130,7 +130,12 @@ func (a *userAPI) update(t *testing.T, value user) {
 func readJSON[V any](transport *http.Client, url string) query.Fetcher[V] {
 	return func(ctx context.Context) (V, error) {
 		var value V
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		request, err := http.NewRequestWithContext(
+			ctx,
+			http.MethodGet,
+			url,
+			nil,
+		)
 		if err != nil {
 			return value, fmt.Errorf("create request: %w", err)
 		}
@@ -229,7 +234,12 @@ func TestDeferredPredicateInvalidation(t *testing.T) {
 	if query.Get[settings](client, "settings").Stale {
 		t.Fatal("predicate invalidated unrelated type")
 	}
-	updated, err := query.Fetch(context.Background(), client, "user:42", detailFetch)
+	updated, err := query.Fetch(
+		context.Background(),
+		client,
+		"user:42",
+		detailFetch,
+	)
 	if err != nil || updated.Name != "Bob" {
 		t.Fatalf("next fetch = %+v, %v", updated, err)
 	}
@@ -251,7 +261,12 @@ func TestConditionalConsumers(t *testing.T) {
 	client := query.NewClient(query.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
 	fetch := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
-	disabled := query.Query(client, "user:42", fetch, query.QueryOptions{Enabled: false})
+	disabled := query.Query(
+		client,
+		"user:42",
+		fetch,
+		query.QueryOptions{Enabled: false},
+	)
 	t.Cleanup(disabled.Close)
 	if disabled.Snapshot().Fetching || disabled.Snapshot().HasData || api.count("/users/42") != 0 {
 		t.Fatal("disabled query issued HTTP work")
@@ -361,7 +376,12 @@ func TestHTTPCancellation(t *testing.T) {
 			t.Cleanup(client.Close)
 			finished := make(chan error, 1)
 			go func() {
-				_, err := query.Fetch(context.Background(), client, "user", readJSON[user](server.Client(), server.URL))
+				_, err := query.Fetch(
+					context.Background(),
+					client,
+					"user",
+					readJSON[user](server.Client(), server.URL),
+				)
 				finished <- err
 			}()
 			<-started
@@ -407,12 +427,22 @@ func TestPublicCacheOperations(t *testing.T) {
 	now := time.Unix(0, 0)
 	client := query.NewClient(query.Options{StaleTime: time.Hour, Clock: func() time.Time { return now }})
 	t.Cleanup(client.Close)
-	if err := query.Prefetch(context.Background(), client, "users", func(context.Context) ([]user, error) {
-		return []user{{Name: "Alice"}}, nil
-	}); err != nil {
+	if err := query.Prefetch(
+		context.Background(),
+		client,
+		"users",
+		func(context.Context) ([]user, error) {
+			return []user{{Name: "Alice"}}, nil
+		},
+	); err != nil {
 		t.Fatal(err)
 	}
-	value, err := query.Fetch[[]user](context.Background(), client, "users", nil)
+	value, err := query.Fetch[[]user](
+		context.Background(),
+		client,
+		"users",
+		nil,
+	)
 	if err != nil || value[0].Name != "Alice" {
 		t.Fatalf("prefetch cache = %+v, %v", value, err)
 	}
@@ -421,14 +451,24 @@ func TestPublicCacheOperations(t *testing.T) {
 		calls++
 		return settings{Theme: "dark"}, now.Add(time.Minute), nil
 	}
-	if _, err := query.FetchWithExpiry(context.Background(), client, "settings", load); err != nil {
+	if _, err := query.FetchWithExpiry(
+		context.Background(),
+		client,
+		"settings",
+		load,
+	); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
 	if !query.Get[settings](client, "settings").Stale {
 		t.Fatal("absolute expiry boundary not respected")
 	}
-	if _, err := query.FetchWithExpiry(context.Background(), client, "settings", load); err != nil || calls != 2 {
+	if _, err := query.FetchWithExpiry(
+		context.Background(),
+		client,
+		"settings",
+		load,
+	); err != nil || calls != 2 {
 		t.Fatalf("expired load = %v, calls=%d", err, calls)
 	}
 	client.Remove("settings")
