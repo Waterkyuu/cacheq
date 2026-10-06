@@ -9,7 +9,7 @@ tasks:
     silent: true
     cmds:
       - |
-        echo "go-query"
+        echo "cacheq"
         echo ""
         echo "Usage:"
         echo "  task help              Show command usage"
