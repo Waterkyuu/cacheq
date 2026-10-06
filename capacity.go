@@ -17,6 +17,7 @@ func (c *Client) touchCapacityLocked(key any) {
 	}
 	for c.recency.Len() > c.options.MaxEntries {
 		oldest := c.recency.Front().Value
+		c.stats.LRUEvictions++
 		// Retain the type binding while a handle or load still owns this key.
 		// Eviction clears only cached state and never cancels shared work or starts a refresh.
 		c.discardLocked(oldest)

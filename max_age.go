@@ -27,6 +27,7 @@ func (c *Client) expireDataLocked(key any) bool {
 	// Checking the installation time prevents retries or repeated reads from extending old data's life.
 	cached.value, cached.hasData, cached.expiresAt = nil, false, time.Time{}
 	c.entries[key] = cached
+	c.stats.AgeExpirations++
 	if cached.err == nil {
 		c.forgetCapacityLocked(key)
 	}

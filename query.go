@@ -72,9 +72,8 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOpt
 		client.notifyLocked(key)
 	}
 	client.touchCapacityLocked(key)
-	needsLoad := enabled && client.snapshotLocked(key).Stale && client.pending[key] == nil
-	if needsLoad {
-		client.startLocked(client.ctx, key, observer.load)
+	if enabled {
+		client.loadObservedLocked(key, observer.load)
 	}
 	observer.publish(client.snapshotLocked(key))
 	return handle
@@ -105,9 +104,8 @@ func (h *QueryHandle[V]) SetEnabled(enabled bool) error {
 		return nil
 	}
 	h.observer.enabled = enabled
-	needsLoad := enabled && c.snapshotLocked(h.key).Stale && c.pending[h.key] == nil
-	if needsLoad {
-		c.startLocked(c.ctx, h.key, h.observer.load)
+	if enabled {
+		c.loadObservedLocked(h.key, h.observer.load)
 	}
 	return nil
 }
@@ -254,6 +252,8 @@ func (c *Client) fetch(
 	force bool,
 	observer *subscription,
 ) (any, error) {
+	useCache := !force
+	var countedLookup, countedMerge bool
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -278,6 +278,10 @@ func (c *Client) fetch(
 		}
 		cached := c.entries[key]
 		fresh := cached.hasData && c.options.Clock().Before(cached.expiresAt)
+		if useCache && !countedLookup {
+			c.recordLookupLocked(fresh)
+			countedLookup = true
+		}
 		if !force && fresh {
 			c.touchCapacityLocked(key)
 			c.touchGCLocked(key)
@@ -302,6 +306,10 @@ func (c *Client) fetch(
 		pending := c.pending[key]
 		if pending == nil {
 			pending = c.startLocked(ctx, key, load)
+		} else if !countedMerge {
+			// Owner cancellation can repeat this loop, but one caller still represents one shared request.
+			c.stats.MergedRequests++
+			countedMerge = true
 		}
 		c.mu.Unlock()
 		select {
@@ -318,6 +326,20 @@ func (c *Client) fetch(
 			return pending.value, pending.err
 		}
 	}
+}
+
+// loadObservedLocked records an enabled consumer's cache decision and starts or joins a stale load.
+func (c *Client) loadObservedLocked(key any, load Loader[any]) {
+	state := c.snapshotLocked(key)
+	c.recordLookupLocked(!state.Stale)
+	if !state.Stale {
+		return
+	}
+	if c.pending[key] != nil {
+		c.stats.MergedRequests++
+		return
+	}
+	c.startLocked(c.ctx, key, load)
 }
 
 // eraseLoader retains static typing at the API boundary while sharing a single heterogeneous cache.

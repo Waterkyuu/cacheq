@@ -16,6 +16,10 @@ import (
 type Client struct {
 	// mu protects state transitions; loaders always run outside the lock.
 	mu sync.Mutex
+	// stats accumulates this client's cache decisions, load outcomes, and cleanup activity under mu.
+	stats Stats
+	// loadNow measures elapsed load time independently of the freshness clock; tests may replace it.
+	loadNow func() time.Time
 	// entries contains completed query state, including expired data for background refresh.
 	entries map[any]entry
 	// recency orders retained results and errors from least to most recently used.
@@ -58,6 +62,8 @@ type entry struct {
 
 // flight shares one loader's completion with all waiting callers.
 type flight struct {
+	// startedAt marks the beginning of shared work, including scheduling and retry waits.
+	startedAt time.Time
 	// done closes after value and err have been published.
 	done chan struct{}
 	// cancel stops this load without canceling unrelated query keys.
@@ -90,6 +96,7 @@ func NewClient(options Options) *Client {
 		observers:      make(map[any]map[*subscription]struct{}),
 		gcTasks:        make(map[any]*gcTask), gcAfterFunc: scheduleGC,
 		options: options, ctx: ctx, cancel: cancel,
+		loadNow: time.Now,
 	}
 }
 
@@ -278,8 +285,9 @@ func (c *Client) startLocked(ctx context.Context, key any, load Loader[any]) *fl
 		previousCancel := cancel
 		cancel = func() { timeoutCancel(); previousCancel() }
 	}
-	pending := &flight{done: make(chan struct{}), cancel: cancel, owner: owner}
+	pending := &flight{done: make(chan struct{}), cancel: cancel, owner: owner, startedAt: c.loadNow()}
 	c.pending[key] = pending
+	c.stats.Loads++
 	c.notifyLocked(key)
 	go c.execute(
 		ctx,
@@ -299,6 +307,15 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight, load Loa
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.stats.TotalLoadDuration += c.loadNow().Sub(pending.startedAt)
+	switch {
+	case err == nil:
+		c.stats.LoadSuccesses++
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		c.stats.LoadCancellations++
+	default:
+		c.stats.LoadFailures++
+	}
 	if c.pending[key] == pending {
 		delete(c.pending, key)
 		if !c.closed && ctx.Err() == nil {
@@ -327,6 +344,11 @@ func (c *Client) run(ctx context.Context, load Loader[any]) (any, time.Time, err
 	for attempt := 0; ; attempt++ {
 		if ctx.Err() != nil {
 			return nil, time.Time{}, ctx.Err()
+		}
+		if attempt > 0 {
+			c.mu.Lock()
+			c.stats.Retries++
+			c.mu.Unlock()
 		}
 		value, expiresAt, err := load(ctx)
 		stopped := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)

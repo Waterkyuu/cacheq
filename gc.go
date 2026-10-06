@@ -62,6 +62,7 @@ func (c *Client) collectGC(key any, task *gcTask) {
 	}
 	delete(c.gcTasks, key)
 	if len(c.observers[key]) == 0 && c.pending[key] == nil {
+		c.stats.GCCollections++
 		c.discardLocked(key)
 	}
 }
