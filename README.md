@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="./assets/go-query.png" alt="go-query" width="144" />
+  <img src="./assets/cacheq.png" alt="cacheq" width="144" />
 
-  <h1>go-query</h1>
+  <h1>cacheq</h1>
 
   <p><strong>English</strong> | <a href="./README.zh-CN.md">简体中文</a></p>
 
@@ -28,10 +28,10 @@
 ## Install
 
 ```sh
-go get github.com/Waterkyuu/go-query
+go get github.com/Waterkyuu/cacheq
 ```
 
-Import `github.com/Waterkyuu/go-query` as package `query`. Requires Go 1.22 or later and has no external dependencies.
+Import `github.com/Waterkyuu/cacheq` as package `cacheq`. Requires Go 1.22 or later and has no external dependencies.
 
 ## One client, different data types
 
@@ -42,7 +42,7 @@ type User struct {
 	Name string
 }
 
-client := query.NewClient(query.Options{
+client := cacheq.NewClient(cacheq.Options{
 	StaleTime: time.Minute,
 	GCTime:    5 * time.Minute,
 })
@@ -55,8 +55,8 @@ getUsers := func(context.Context) ([]User, error) {
 	return []User{{Name: "Alice"}}, nil
 }
 
-detail := query.Query(client, "user:42", getUser) // QueryHandle[User]
-users := query.Query(client, "users", getUsers)   // QueryHandle[[]User]
+detail := cacheq.Query(client, "user:42", getUser) // QueryHandle[User]
+users := cacheq.Query(client, "users", getUsers)   // QueryHandle[[]User]
 defer detail.Close()
 defer users.Close()
 
@@ -66,16 +66,16 @@ state := users.Snapshot()
 
 Create the client at the application boundary and inject it into consumers. Same-key queries share data and in-flight work; different keys may contain different types. Sharing is in-process.
 
-`Query` returns a handle immediately. Missing data loads in the background, fresh data is reused, and stale data stays available during refresh. Receive later state through `Updates()`. Use `query.Fetch(ctx, client, key, fetcher)` to await fresh data without a subscription.
+`Query` returns a handle immediately. Missing data loads in the background, fresh data is reused, and stale data stays available during refresh. Receive later state through `Updates()`. Use `cacheq.Fetch(ctx, client, key, fetcher)` to await fresh data without a subscription.
 
 ## Load only when a condition permits
 
 ```go
-users := query.Query(
+users := cacheq.Query(
 	client,
 	"users",
 	getUsers,
-	query.QueryOptions{
+	cacheq.QueryOptions{
 		Enabled: loggedIn,
 	},
 )
@@ -97,13 +97,13 @@ Omitting options enables loading; an explicit empty `QueryOptions{}` disables it
 ```go
 if err := client.InvalidateMany(
 	[]any{"user:42", "users"},
-	query.InvalidateOptions{},
+	cacheq.InvalidateOptions{},
 ); err != nil {
 	return err
 }
 ```
 
-Detail `User` and list `[]User` results are invalidated in the same client. Enabled consumers refresh by default; `Refetch: query.RefetchNone` marks data stale without initiating work until a later use.
+Detail `User` and list `[]User` results are invalidated in the same client. Enabled consumers refresh by default; `Refetch: cacheq.RefetchNone` marks data stale without initiating work until a later use.
 
 ## Feature guides
 

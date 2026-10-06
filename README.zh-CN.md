@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="./assets/go-query.png" alt="go-query" width="144" />
+  <img src="./assets/cacheq.png" alt="cacheq" width="144" />
 
-  <h1>go-query</h1>
+  <h1>cacheq</h1>
 
   <p><a href="./README.md">English</a> | <strong>简体中文</strong></p>
 
@@ -28,10 +28,10 @@
 ## 安装
 
 ```sh
-go get github.com/Waterkyuu/go-query
+go get github.com/Waterkyuu/cacheq
 ```
 
-导入路径为 `github.com/Waterkyuu/go-query`，包名为 `query`。需要 Go 1.22 或更新版本，没有外部依赖。
+导入路径为 `github.com/Waterkyuu/cacheq`，包名为 `cacheq`。需要 Go 1.22 或更新版本，没有外部依赖。
 
 ## 一个客户端，多种数据类型
 
@@ -42,7 +42,7 @@ type User struct {
 	Name string
 }
 
-client := query.NewClient(query.Options{
+client := cacheq.NewClient(cacheq.Options{
 	StaleTime: time.Minute,
 	GCTime:    5 * time.Minute,
 })
@@ -55,8 +55,8 @@ getUsers := func(context.Context) ([]User, error) {
 	return []User{{Name: "Alice"}}, nil
 }
 
-detail := query.Query(client, "user:42", getUser) // QueryHandle[User]
-users := query.Query(client, "users", getUsers)   // QueryHandle[[]User]
+detail := cacheq.Query(client, "user:42", getUser) // QueryHandle[User]
+users := cacheq.Query(client, "users", getUsers)   // QueryHandle[[]User]
 defer detail.Close()
 defer users.Close()
 
@@ -66,16 +66,16 @@ state := users.Snapshot()
 
 客户端通常在应用入口创建，传给各个业务模块。同键查询共享数据和正在进行的请求；不同键可以有不同类型。共享只发生在本进程内。
 
-`Query` 立即返回查询对象。缺少数据时后台请求，新鲜缓存直接复用，旧数据保留并后台刷新。用 `Updates()` 接收后续状态；用 `query.Fetch(ctx, client, key, fetcher)` 等待新鲜结果而不订阅。
+`Query` 立即返回查询对象。缺少数据时后台请求，新鲜缓存直接复用，旧数据保留并后台刷新。用 `Updates()` 接收后续状态；用 `cacheq.Fetch(ctx, client, key, fetcher)` 等待新鲜结果而不订阅。
 
 ## 满足条件才请求
 
 ```go
-users := query.Query(
+users := cacheq.Query(
 	client,
 	"users",
 	getUsers,
-	query.QueryOptions{
+	cacheq.QueryOptions{
 		Enabled: loggedIn,
 	},
 )
@@ -97,13 +97,13 @@ updatedUsers, err := users.Refetch(ctx)
 ```go
 if err := client.InvalidateMany(
 	[]any{"user:42", "users"},
-	query.InvalidateOptions{},
+	cacheq.InvalidateOptions{},
 ); err != nil {
 	return err
 }
 ```
 
-详情和列表分别是 `User` 与 `[]User`，仍能在同一个客户端里一起失效。默认刷新有启用查询对象的键；传 `Refetch: query.RefetchNone` 只标记过期，下次使用再查。
+详情和列表分别是 `User` 与 `[]User`，仍能在同一个客户端里一起失效。默认刷新有启用查询对象的键；传 `Refetch: cacheq.RefetchNone` 只标记过期，下次使用再查。
 
 ## 功能文档
 
