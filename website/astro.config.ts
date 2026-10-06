@@ -54,6 +54,11 @@ export default defineConfig({
 					label: "Observability",
 					translations: { "zh-CN": "可观测性" },
 				},
+				{
+					slug: "docs/mcp",
+					label: "MCP resource caching",
+					translations: { "zh-CN": "MCP 资源缓存" },
+				},
 			],
 			social: [{ icon: "github", label: "GitHub", href: "https://github.com/Waterkyuu/cacheq" }],
 			customCss: ["./src/css/custom.css"],

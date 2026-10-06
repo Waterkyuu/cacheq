@@ -47,6 +47,14 @@ const guides = [
 			: "Measure cache hits, shared requests, loads, and cleanup.",
 		api: "Stats",
 	},
+	{
+		slug: "mcp",
+		title: chinese ? "MCP 资源缓存" : "MCP resource caching",
+		description: chinese
+			? "共享资源读取，保留有效期，接收变化通知。"
+			: "Share resource reads, preserve TTL, and notify on changes.",
+		api: "FetchWithExpiry · Invalidate · Stats",
+	},
 ];
 ---
 

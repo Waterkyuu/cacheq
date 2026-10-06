@@ -60,6 +60,16 @@ export const chapters: Chapter[] = [
 				"通过 cacheq 的客户端统计衡量 Go 缓存收益，查看命中、请求合并、加载结果与耗时、重试和缓存清理次数。",
 		},
 	},
+	{
+		id: "mcp",
+		zh: "MCP 资源缓存",
+		en: "MCP resource caching",
+		description: {
+			en: "Integrate cacheq with an MCP server in Go: share resource reads across connections, preserve TTL, isolate private data, and invalidate cached values after mutations.",
+			"zh-CN":
+				"在 Go MCP 服务端接入 cacheq，跨连接共享资源读取，保留原始 TTL，隔离私有数据，并在修改后使缓存失效、通知客户端重新读取。",
+		},
+	},
 ];
 
 // Adapt repository documentation without creating another maintained copy.
