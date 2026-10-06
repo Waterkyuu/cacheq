@@ -74,6 +74,9 @@ h3 {
 .sl-markdown-content .expressive-code {
 	margin-block: 1.5rem;
 }
+.expressive-code .frame {
+	box-shadow: none;
+}
 [data-has-hero] .content-panel {
 	border: 0;
 }
@@ -158,6 +161,11 @@ h3 {
 .install-snippet .frame {
 	border: 0;
 	box-shadow: none;
+}
+/* The capsule has extra vertical padding compared with ordinary code frames. */
+.install-snippet .copy {
+	inset-block-start: 50%;
+	transform: translateY(-50%);
 }
 .install-snippet pre {
 	background: var(--color-surface-soft) !important;
