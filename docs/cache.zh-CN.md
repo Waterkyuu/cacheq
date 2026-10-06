@@ -8,9 +8,11 @@
 
 ```go
 client := cacheq.NewClient(cacheq.Options{
-	StaleTime: time.Minute,
-	GCTime:    5 * time.Minute,
-	Retry:     2,
+	StaleTime:  time.Minute,
+	GCTime:     5 * time.Minute,
+	MaxEntries: 1000,
+	MaxAge:     10 * time.Minute,
+	Retry:      2,
 	RetryDelay: func(attempt int) time.Duration {
 		return time.Duration(attempt) * 100 * time.Millisecond
 	},
@@ -25,6 +27,8 @@ defer client.Close()
 | --- | --- | --- |
 | `StaleTime` | 普通查询结果能直接复用多长时间 | 0，结果立即变旧 |
 | `GCTime` | 不再被使用的缓存保留多长时间 | 0，不自动删除；负数也禁用 |
+| `MaxEntries` | 缓存结果和错误的条目上限，按 LRU 淘汰 | 0，不限制；负数也禁用 |
+| `MaxAge` | 数据从最后一次写入起最多可用多久 | 0，不限制；负数也禁用 |
 | `Retry` | 初次失败后最多追加多少次尝试 | 0，不重试 |
 | `RetryDelay` | 第几次重试前等待多久，第一次编号为 1 | 从 1 秒开始指数增长，上限 30 秒 |
 | `Timeout` | 整次加载的时间上限，包括重试与等待 | 0，不额外设置超时，仍响应调用者 context |
@@ -56,7 +60,7 @@ if err := cacheq.Set(client, "feature-flags", map[string]bool{"search": true}); 
 }
 ```
 
-类型由传入值推断。写入后数据的新鲜期按 `StaleTime` 计算，并通知这个键的查询对象。旧请求会被取消并脱离缓存，不能用迟到的结果覆盖本地数据。类型冲突先检查，拒绝写入不会取消原本合法的请求。
+类型由传入值推断。写入后数据的新鲜期按 `StaleTime` 计算，启用 `MaxAge` 时不会超过可用时间上限，并通知这个键的查询对象。旧请求会被取消并脱离缓存，不能用迟到的结果覆盖本地数据。类型冲突先检查，拒绝写入不会取消原本合法的请求。
 
 缓存值是共享的只读数据。修改切片、映射或指针指向的数据前，先复制，再 `Set`；直接修改共享数据不会发送通知，也可能引起数据竞争。
 
@@ -103,7 +107,7 @@ _ = value
 
 `Loader[V]` 表示 `func(context.Context) (V, time.Time, error)`。第二项是绝对截止时间，而非从这次读取开始重新计时。零截止时间或已过期时间使结果立即变旧。
 
-通常错误不会安装新数据。如果加载函数同时返回未来的截止时间和错误，则明确缓存兜底值及该错误，截止前直接返回它们；即使兜底值是零值也有 `HasData: true`。刷新失败不会删除之前成功的数据。
+通常错误不会安装新数据。如果加载函数同时返回未来的截止时间和错误，则明确缓存兜底值及该错误，截止前直接返回它们；即使兜底值是零值也有 `HasData: true`。启用 `MaxAge` 时，该截止时间可能被缩短。刷新失败保留之前成功的数据，但不会保留超过 `MaxAge` 的值。
 
 ## `GCTime`：自动删除闲置缓存
 
@@ -116,9 +120,89 @@ client := cacheq.NewClient(cacheq.Options{
 
 新鲜期和保留期是两回事：一分钟后数据变旧，仍可在后台刷新时显示；只有没有查询对象、没有请求、持续五分钟没有读写时才会删除。
 
-读写重新计时。查询对象存在时暂停删除，包括禁用的查询对象；请求运行时也暂停。最后一个查询对象关闭或请求结束后恢复计时。`Remove`、`Clear`、`Close` 会释放对应定时器。没有 LRU 或容量上限。
+读写重新计时。查询对象存在时暂停删除，包括禁用的查询对象；请求运行时也暂停。最后一个查询对象关闭或请求结束后恢复计时。`Remove`、`Clear`、`Close` 会释放对应定时器。容量淘汰和数据最长可用时间是独立策略，见下文。
 
 `Clock` 可以替换比较用的时钟，但不替换真实定时器调度器。库内的 GC 边界测试同时替换时钟和内部调度器，避免业务测试依赖真实等待。
+
+## `MaxEntries`：按 LRU 限制缓存条目数
+
+```go
+client := cacheq.NewClient(cacheq.Options{
+	StaleTime:  time.Minute,
+	MaxEntries: 1000,
+})
+defer client.Close()
+```
+
+最多保留 1000 个已完成结果或缓存错误。写入新结果超过上限时，淘汰最久没有被使用的条目。读取、写入、创建查询和失效操作都会更新使用顺序；关闭查询对象不会。零值或负数不限制容量。
+
+淘汰会清除数据和错误、停止该键的 GC 定时器，并向订阅对象通知无数据状态。它不会取消正在运行的请求，也不会自动重新请求。已有查询对象仍能 `Refetch`；只要订阅或请求仍拥有这个键，就保留结果类型约束。没有这两种所有者时，淘汰也会释放类型绑定。最后一个所有者退出后，会释放空的类型元数据，即使没有启用定时 GC。
+
+上限统计缓存结果，不统计字节数、订阅数、并发请求数及其类型元数据。单个很大的结果仍可能占用较多内存。
+
+## `MaxAge`：限制数据最长可用时间
+
+```go
+client := cacheq.NewClient(cacheq.Options{
+	StaleTime: time.Minute,
+	GCTime:    5 * time.Minute,
+	MaxAge:    10 * time.Minute,
+})
+defer client.Close()
+```
+
+从成功加载或 `Set` 写入数据时开始计时。上面的配置表示新鲜 1 分钟，变旧后最多再可用 9 分钟。到第 10 分钟不再返回该值：`HasData` 为 false，`Data` 为该类型的零值，即使仍在刷新或查询对象处于禁用状态。最近一次错误和仍有所有者的类型约束保留；达到年龄上限不会取消正在运行的请求。闲置元数据仍受 GC 和容量清理策略控制。
+
+读取、失效和普通刷新失败都不会重新计时。成功加载新结果、写入本地值，或通过 `FetchWithExpiry` 显式安装兜底值，才会开始新的可用时间窗口。加载函数给出的截止时间更早时保持原值；新鲜期超过年龄上限时缩短到年龄上限。
+
+年龄在缓存操作和发布状态时检查。仅时间经过不会发送通知或启动请求。读取发现超龄数据时，会通知已有查询对象；新建启用的 `Query` 或调用 `Fetch` 可以加载替代值。之前拿到的快照是普通值，不会被追溯修改。零值或负数 `MaxAge` 禁用此策略。
+
+## 可运行的容量与年龄示例
+
+把程序复制到已引入 cacheq 的应用中。示例注入时钟，不需要等待或发起请求就能验证年龄边界。
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	cacheq "github.com/Waterkyuu/cacheq"
+)
+
+// main demonstrates LRU eviction and maximum data age with a deterministic clock.
+func main() {
+	now := time.Unix(0, 0)
+	client := cacheq.NewClient(cacheq.Options{
+		StaleTime:  time.Minute,
+		MaxEntries: 2,
+		MaxAge:     10 * time.Minute,
+		Clock:      func() time.Time { return now },
+	})
+	defer client.Close()
+	if err := cacheq.Set(client, "a", "first"); err != nil {
+		panic(err)
+	}
+	if err := cacheq.Set(client, "b", "second"); err != nil {
+		panic(err)
+	}
+	_ = cacheq.Get[string](client, "a")
+	if err := cacheq.Set(client, "c", "third"); err != nil {
+		panic(err)
+	}
+	fmt.Println("retained:", cacheq.Get[string](client, "a").HasData,
+		cacheq.Get[string](client, "b").HasData, cacheq.Get[string](client, "c").HasData)
+	now = now.Add(10 * time.Minute)
+	fmt.Println("over age:", cacheq.Get[string](client, "a").HasData,
+		cacheq.Get[string](client, "c").HasData)
+}
+```
+
+```text
+retained: true false true
+over age: false false
+```
 
 ## `Cancel`：结束这个键正在进行的请求
 
@@ -185,8 +269,8 @@ if errors.Is(state.Err, cacheq.ErrTypeMismatch) {
 ## 验证这些功能
 
 ```sh
-go test -race ./e2e -run 'Test(HTTPCancellation|HTTPRetriesAndRetainedData|PublicCacheOperations)' -count=1
-go test -race . -run 'TestGC' -count=1
+go test -race ./e2e -run 'Test(HTTPCapacityEviction|HTTPMaxAge|HTTPCancellation|HTTPRetriesAndRetainedData|PublicCacheOperations)' -count=1
+go test -race . -run 'Test(Capacity|MaxAge|GC)' -count=1
 ```
 
-[e2e](../e2e/query_lifecycle_test.go) 从库外部验证 HTTP 取消、重试、缓存操作和生命周期；[缓存测试](../cache_test.go) 验证自动删除和精确时间边界。
+[e2e](../e2e/query_lifecycle_test.go) 从库外部验证 HTTP 取消、重试、缓存操作和生命周期；[容量 e2e](../e2e/cache_capacity_test.go) 验证 LRU 淘汰和重新请求，[年龄 e2e](../e2e/cache_age_test.go) 验证刷新失败、订阅及年龄边界上的共享 HTTP 请求；[缓存测试](../cache_test.go) 验证自动删除和精确时间边界。

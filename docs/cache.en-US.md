@@ -8,9 +8,11 @@ All operations share one `*cacheq.Client`. Snippets belong inside business funct
 
 ```go
 client := cacheq.NewClient(cacheq.Options{
-	StaleTime: time.Minute,
-	GCTime:    5 * time.Minute,
-	Retry:     2,
+	StaleTime:  time.Minute,
+	GCTime:     5 * time.Minute,
+	MaxEntries: 1000,
+	MaxAge:     10 * time.Minute,
+	Retry:      2,
 	RetryDelay: func(attempt int) time.Duration {
 		return time.Duration(attempt) * 100 * time.Millisecond
 	},
@@ -25,6 +27,8 @@ One application-owned client can store strings, details, lists, and configuratio
 | --- | --- | --- |
 | `StaleTime` | Ordinary result freshness | 0: immediately stale |
 | `GCTime` | Retention of unused state | 0: disabled; negative also disables |
+| `MaxEntries` | Maximum retained results and errors, using LRU eviction | 0: unlimited; negative also disables |
+| `MaxAge` | Maximum data availability since its last installation | 0: unlimited; negative also disables |
 | `Retry` | Additional attempts after initial failure | 0 |
 | `RetryDelay` | Delay before additional attempt, numbered from 1 | Exponential from 1 second, capped at 30 seconds |
 | `Timeout` | Bounds the entire load, including retries and backoff | 0: no additional timeout; caller cancellation still applies |
@@ -54,7 +58,7 @@ if err := cacheq.Set(client, "feature-flags", map[string]bool{"search": true}); 
 }
 ```
 
-The value supplies the static type. Data becomes fresh according to `StaleTime` and compatible handles are notified. Older requests are canceled and detached so late results cannot overwrite the write. Conflicting types are rejected before cancellation, leaving valid work intact.
+The value supplies the static type. Data becomes fresh according to `StaleTime`, capped by `MaxAge` when enabled, and compatible handles are notified. Older requests are canceled and detached so late results cannot overwrite the write. Conflicting types are rejected before cancellation, leaving valid work intact.
 
 Cached values are shared and immutable to readers. Copy slices, maps, and pointed-to values before modifying and installing them. Direct mutation neither publishes updates nor prevents data races.
 
@@ -99,7 +103,7 @@ _ = value
 
 `Loader[V]` is `func(context.Context) (V, time.Time, error)`. Its deadline preserves the age of restored data instead of restarting its freshness window. Zero or elapsed deadlines make data immediately stale.
 
-Ordinary failures do not install new data. Returning both an error and a future deadline explicitly caches the fallback value and that error until the deadline, with `HasData: true` even for a zero value. Refresh errors retain earlier successful data.
+Ordinary failures do not install new data. Returning both an error and a future deadline explicitly caches the fallback value and that error until the deadline, with `HasData: true` even for a zero value. When `MaxAge` is enabled, it can shorten this deadline. Refresh errors retain earlier successful data only while it remains within `MaxAge`.
 
 ## `GCTime`: remove inactive data automatically
 
@@ -112,9 +116,89 @@ client := cacheq.NewClient(cacheq.Options{
 
 Freshness and retention are separate: data becomes stale after a minute but can still be displayed during refresh. Deletion requires no handles, no active load, and five minutes without use.
 
-Reads and writes restart retention. Any handle, including a disabled handle, suspends cleanup; loads also suspend it. Cleanup resumes after the last handle closes or a load finishes. `Remove`, `Clear`, and `Close` stop corresponding timers. There is no LRU eviction or capacity limit.
+Reads and writes restart retention. Any handle, including a disabled handle, suspends cleanup; loads also suspend it. Cleanup resumes after the last handle closes or a load finishes. `Remove`, `Clear`, and `Close` stop corresponding timers. Capacity eviction and maximum data age are separate policies below.
 
 `Clock` replaces comparison time, not real timer scheduling. Internal GC tests inject both comparison time and scheduling to test boundaries deterministically.
+
+## `MaxEntries`: limit retained results with LRU eviction
+
+```go
+client := cacheq.NewClient(cacheq.Options{
+	StaleTime:  time.Minute,
+	MaxEntries: 1000,
+})
+defer client.Close()
+```
+
+At most 1000 completed results or cached errors are retained. A new result beyond that limit evicts the least recently used one. Reads, writes, query construction, and invalidation update recency; closing a handle does not. Zero or negative limits preserve unlimited capacity.
+
+Eviction clears data and errors, stops the key's GC timer, and notifies subscribed handles with an empty snapshot. It does not cancel active loads or automatically request data again. Handles can still `Refetch`; their static result type remains protected while handles or loads own the key. Without either owner, eviction also releases the key's type binding. Empty type metadata is released after its last owner leaves, even when timed GC is disabled.
+
+The limit counts retained results, not bytes, subscriptions, active requests, or their type metadata. A single large value can still consume substantial memory.
+
+## `MaxAge`: stop serving over-age data
+
+```go
+client := cacheq.NewClient(cacheq.Options{
+	StaleTime: time.Minute,
+	GCTime:    5 * time.Minute,
+	MaxAge:    10 * time.Minute,
+})
+defer client.Close()
+```
+
+Age starts when a successful load or `Set` installs data. In this example it is fresh for one minute, then may remain available while stale for another nine minutes. At ten minutes it is no longer returned: `HasData` becomes false and `Data` is the result type's zero value, including during refresh or for disabled handles. The last error and active type bindings remain; age expiration does not cancel an active load. Inactive metadata remains subject to GC and capacity cleanup.
+
+Reads, invalidation, and ordinary failed refreshes do not renew this deadline. Installing a new successful result, a local value, or an explicit fallback from `FetchWithExpiry` starts a new age window. Loader deadlines earlier than the age limit are preserved; later freshness deadlines are shortened to it.
+
+Age is checked on cache operations and state publication. Merely passing time does not send an update or start a request. A read that discovers expired data notifies existing handles; enabled `Query` construction or `Fetch` can load a replacement. Previously returned snapshots are ordinary values and do not change retroactively. Zero or negative `MaxAge` disables this policy.
+
+## Runnable capacity and age example
+
+Copy this program into an application importing cacheq. The injected clock demonstrates the deadline without sleeping or starting requests.
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	cacheq "github.com/Waterkyuu/cacheq"
+)
+
+// main demonstrates LRU eviction and maximum data age with a deterministic clock.
+func main() {
+	now := time.Unix(0, 0)
+	client := cacheq.NewClient(cacheq.Options{
+		StaleTime:  time.Minute,
+		MaxEntries: 2,
+		MaxAge:     10 * time.Minute,
+		Clock:      func() time.Time { return now },
+	})
+	defer client.Close()
+	if err := cacheq.Set(client, "a", "first"); err != nil {
+		panic(err)
+	}
+	if err := cacheq.Set(client, "b", "second"); err != nil {
+		panic(err)
+	}
+	_ = cacheq.Get[string](client, "a")
+	if err := cacheq.Set(client, "c", "third"); err != nil {
+		panic(err)
+	}
+	fmt.Println("retained:", cacheq.Get[string](client, "a").HasData,
+		cacheq.Get[string](client, "b").HasData, cacheq.Get[string](client, "c").HasData)
+	now = now.Add(10 * time.Minute)
+	fmt.Println("over age:", cacheq.Get[string](client, "a").HasData,
+		cacheq.Get[string](client, "c").HasData)
+}
+```
+
+```text
+retained: true false true
+over age: false false
+```
 
 ## `Cancel`: stop a key's active load
 
@@ -181,8 +265,8 @@ Static and dynamic types differ: a `Query[any]` key is bound to `any`. Use `Set[
 ## Verification
 
 ```sh
-go test -race ./e2e -run 'Test(HTTPCancellation|HTTPRetriesAndRetainedData|PublicCacheOperations)' -count=1
-go test -race . -run 'TestGC' -count=1
+go test -race ./e2e -run 'Test(HTTPCapacityEviction|HTTPMaxAge|HTTPCancellation|HTTPRetriesAndRetainedData|PublicCacheOperations)' -count=1
+go test -race . -run 'Test(Capacity|MaxAge|GC)' -count=1
 ```
 
-[External e2e tests](../e2e/query_lifecycle_test.go) cover actual HTTP cancellation, retries, and public cache lifecycle. [Cache tests](../cache_test.go) verify automatic deletion and exact time boundaries.
+[External e2e tests](../e2e/query_lifecycle_test.go) cover actual HTTP cancellation, retries, and public cache lifecycle. [Capacity e2e](../e2e/cache_capacity_test.go) verifies LRU eviction and replacement requests; [age e2e](../e2e/cache_age_test.go) verifies failed refreshes, subscriptions, and shared HTTP work at the deadline. [Cache tests](../cache_test.go) verify automatic deletion and exact time boundaries.
