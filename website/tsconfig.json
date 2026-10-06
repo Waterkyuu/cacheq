@@ -1,0 +1,11 @@
+{
+	"extends": "@docusaurus/tsconfig",
+	"compilerOptions": {
+		"allowImportingTsExtensions": true,
+		"noEmit": true,
+		"strict": true,
+		"types": ["node", "@docusaurus/module-type-aliases", "@docusaurus/theme-classic"]
+	},
+	"include": ["**/*.ts", "**/*.tsx", "**/*.mts"],
+	"exclude": ["node_modules", "build", ".docusaurus"]
+}
