@@ -24,18 +24,24 @@ export function prepareMarkdown(
 	branch: string,
 ) {
 	const label = chapter[locale === "en" ? "en" : "zh"];
+	const suffix = locale === "en" ? "en-US" : "zh-CN";
+	const title = source.match(/^# (.+)$/m)?.[1] ?? label;
 	const header = [
 		"---",
-		`id: ${chapter.id}`,
-		`sidebar_label: ${JSON.stringify(label)}`,
-		`sidebar_position: ${position}`,
-		...(chapter.id === "getting-started" ? ["slug: /"] : []),
+		`title: ${JSON.stringify(title)}`,
+		`sidebar: { label: ${JSON.stringify(label)}, order: ${position} }`,
+		`editUrl: https://github.com/Waterkyuu/cacheq/edit/${branch}/docs/${chapter.id}.${suffix}.md`,
 		"---",
 		"",
 	];
 	const body = source
+		.replace(/^# .+\n*/, "")
 		.replace(/^\[(?:English|简体中文)\].*$/gm, "")
-		.replace(/\]\(([^)]+)\.(?:en-US|zh-CN)\.md(#[^)]*)?\)/g, "]($1.md$2)")
+		.replace(/\]\(([^)]+)\.(?:en-US|zh-CN)\.md(#[^)]*)?\)/g, (_, name, anchor) => {
+			const prefix = locale === "en" ? "/cacheq/docs/" : "/cacheq/zh-CN/docs/";
+			const route = name === "getting-started" ? "" : `${name}/`;
+			return `](${prefix}${route}${anchor ?? ""})`;
+		})
 		.replace(
 			/\]\(\.\.\/([^)]*\.go)\)/g,
 			`](https://github.com/Waterkyuu/cacheq/blob/${branch}/$1)`,
@@ -46,17 +52,11 @@ export function prepareMarkdown(
 // Regenerate only the ignored directories owned by this build step.
 export async function prepareDocs(root: string) {
 	const branch = process.env.DOCS_REF || "waterkyuu/feat/docs-site";
-	// Remove the generated translation directory used before English became the default.
-	await rm(path.join(root, "i18n/en/docusaurus-plugin-content-docs/current"), {
-		recursive: true,
-		force: true,
-	});
+	const generated = path.join(root, "src/content/docs");
+	await rm(generated, { recursive: true, force: true });
 	for (const locale of ["en", "zh-CN"]) {
-		const destination =
-			locale === "en"
-				? path.join(root, "generated-docs")
-				: path.join(root, "i18n/zh-CN/docusaurus-plugin-content-docs/current");
-		await rm(destination, { recursive: true, force: true });
+		const localeRoot = locale === "en" ? generated : path.join(generated, "zh-CN");
+		const destination = path.join(localeRoot, "docs");
 		await mkdir(destination, { recursive: true });
 		for (const [position, chapter] of chapters.entries()) {
 			const suffix = locale === "en" ? "en-US" : "zh-CN";
@@ -65,10 +65,27 @@ export async function prepareDocs(root: string) {
 				"utf8",
 			);
 			await writeFile(
-				path.join(destination, `${chapter.id}.md`),
+				path.join(destination, chapter.id === "getting-started" ? "index.md" : `${chapter.id}.md`),
 				prepareMarkdown(source, chapter, locale, position + 1, branch),
 			);
 		}
+		const component =
+			locale === "en" ? "../../components/home.astro" : "../../../components/home.astro";
+		await writeFile(
+			path.join(localeRoot, "index.mdx"),
+			[
+				"---",
+				"title: cacheq",
+				"template: splash",
+				"editUrl: false",
+				"---",
+				"",
+				`import Home from '${component}';`,
+				"",
+				`<Home chinese={${locale === "zh-CN"}} />`,
+				"",
+			].join("\n"),
+		);
 	}
 }
 

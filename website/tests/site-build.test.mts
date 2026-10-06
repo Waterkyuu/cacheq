@@ -53,7 +53,11 @@ test("every published page has server-rendered content and working internal link
 	assert.match(chinese, /<html\b[^>]*lang="zh-CN"/);
 	assert.ok(chinese.includes("Go 查询，简单一点。"));
 	const files = await htmlFiles(build);
-	assert.ok(files.length >= 8, "Both languages must be built");
+	assert.equal(
+		files.filter((file) => file.endsWith("index.html")).length,
+		10,
+		"Each language must publish one homepage and four guides without fallback duplicates",
+	);
 	for (const file of files) {
 		const html = await readFile(file, "utf8");
 		if (!html.includes("<article")) continue;
