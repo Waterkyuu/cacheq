@@ -511,16 +511,6 @@ h3,
 		scroll-behavior: auto;
 	}
 }
-/* Code stays readable in the same neutral palette as the documentation. */
-.token {
-	color: #090909 !important;
-}
-.token.comment {
-	color: #a3a3a3 !important;
-}
-.token.keyword {
-	font-weight: 500;
-}
 html[data-theme="dark"] {
 	--color-primary: #fff;
 	--color-ink: #fff;
@@ -601,13 +591,10 @@ html[data-theme="dark"] .home-button {
 html[data-theme="dark"] .home-button:hover {
 	background: #e5e5e5;
 }
-html[data-theme="dark"] .token,
+/* Keep Prism token colors independent of the page palette in both reading modes. */
 html[data-theme="dark"] .markdown code,
 html[data-theme="dark"] .install-snippet pre code {
 	color: #fff !important;
-}
-html[data-theme="dark"] .token.comment {
-	color: #737373 !important;
 }
 html[data-theme="dark"] .home-inline-link:hover {
 	color: #fff;
