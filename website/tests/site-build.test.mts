@@ -46,6 +46,12 @@ async function assertDestination(destination: string, currentFile: string) {
 }
 
 test("every published page has server-rendered content and working internal links", async () => {
+	const english = await readFile(path.join(build, "index.html"), "utf8");
+	assert.match(english, /<html\b[^>]*lang="en"/);
+	assert.ok(english.includes("Go queries, made simple."));
+	const chinese = await readFile(path.join(build, "zh-CN/index.html"), "utf8");
+	assert.match(chinese, /<html\b[^>]*lang="zh-CN"/);
+	assert.ok(chinese.includes("Go 查询，简单一点。"));
 	const files = await htmlFiles(build);
 	assert.ok(files.length >= 8, "Both languages must be built");
 	for (const file of files) {
@@ -65,9 +71,16 @@ test("Go search results resolve to published sections and public source declarat
 	);
 	const documents = index.filter((record) => record.url.startsWith("/cacheq/"));
 	assert.ok(
-		documents.some((record) => record.language === "en" && record.url.startsWith("/cacheq/en/")),
+		documents.some((record) => record.language === "en" && record.url.startsWith("/cacheq/docs/")),
 	);
-	assert.ok(documents.some((record) => record.language === "zh-CN" && record.url.includes("#")));
+	assert.ok(
+		documents.some(
+			(record) =>
+				record.language === "zh-CN" &&
+				record.url.startsWith("/cacheq/zh-CN/docs/") &&
+				record.url.includes("#"),
+		),
+	);
 	assert.ok(index.some((record) => record.title === "Client.InvalidateWhere"));
 	assert.ok(index.some((record) => record.title === "Query"));
 	for (const record of documents)

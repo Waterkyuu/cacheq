@@ -18,8 +18,8 @@ const config: Config = {
 	onBrokenLinks: "throw",
 	markdown: { format: "md", hooks: { onBrokenMarkdownLinks: "throw" } },
 	i18n: {
-		defaultLocale: "zh-CN",
-		locales: ["zh-CN", "en"],
+		defaultLocale: "en",
+		locales: ["en", "zh-CN"],
 		localeConfigs: {
 			"zh-CN": { label: "简体中文", htmlLang: "zh-CN" },
 			en: { label: "English", htmlLang: "en" },

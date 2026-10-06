@@ -11,7 +11,7 @@ pnpm --dir website install --frozen-lockfile
 pnpm --dir website start
 ```
 
-默认启动中文站点。预览英文时运行 `pnpm --dir website start --locale en`。搜索索引在生产构建后生成，验证搜索请使用构建产物预览。
+默认启动英文站点。预览中文时运行 `pnpm --dir website start --locale zh-CN`。搜索索引在生产构建后生成，验证搜索请使用构建产物预览。
 
 ## 检查与预览构建产物
 
@@ -31,7 +31,7 @@ pnpm --dir website serve
 
 直接编辑 `docs` 下按功能命名的中英文文档。`website/scripts/prepare-docs.mts` 为 Docusaurus 生成被 Git 忽略的输入文档，保留代码块并转换源码链接。生成的文档、依赖目录、搜索 JSON 和网页产物不提交到 Git。
 
-默认语言为中文，英文首页路径为 `/cacheq/en/`，功能文档路径为 `/cacheq/en/docs/`。Go 使用构建后的真实路径和标题 ID 生成文档搜索结果，并索引根目录 Go 包的公开类型、函数、方法、常量和错误。API 搜索结果跳转到对应源码声明。
+默认语言为英文，英文首页路径为 `/cacheq/`，功能文档路径为 `/cacheq/docs/`。中文首页为 `/cacheq/zh-CN/`，功能文档为 `/cacheq/zh-CN/docs/`。Go 使用构建后的真实路径和标题 ID 生成文档搜索结果，并索引根目录 Go 包的公开类型、函数、方法、常量和错误。API 搜索结果跳转到对应源码声明。
 
 ## 部署到 GitHub Pages
 
@@ -56,7 +56,7 @@ pnpm --dir website install --frozen-lockfile
 pnpm --dir website start
 ```
 
-Docusaurus serves the default Chinese site. To preview English, run `pnpm --dir website start --locale en`. The search index is produced by the production build; use the built preview to test search.
+Docusaurus serves the default English site. To preview Chinese, run `pnpm --dir website start --locale zh-CN`. The search index is produced by the production build; use the built preview to test search.
 
 ## Check and preview the published build
 
@@ -76,7 +76,7 @@ pnpm --dir website serve
 
 Edit the named English and Chinese feature guides in `docs`. `website/scripts/prepare-docs.mts` creates ignored Docusaurus inputs, preserving code blocks and adapting source links. The generated documents, installed dependencies, search JSON, and rendered HTML are not committed.
 
-The default locale is Chinese; English lives under `/cacheq/en/`, with guides under `/cacheq/en/docs/`. Go uses rendered page paths and heading IDs for documentation search, and indexes exported types, functions, methods, constants, and errors from the root Go package. API results open the exact source declaration.
+The default locale is English, with the homepage at `/cacheq/` and guides under `/cacheq/docs/`. Chinese lives under `/cacheq/zh-CN/`, with guides under `/cacheq/zh-CN/docs/`. Go uses rendered page paths and heading IDs for documentation search, and indexes exported types, functions, methods, constants, and errors from the root Go package. API results open the exact source declaration.
 
 ## GitHub Pages deployment
 

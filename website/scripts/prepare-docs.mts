@@ -46,11 +46,16 @@ export function prepareMarkdown(
 // Regenerate only the ignored directories owned by this build step.
 export async function prepareDocs(root: string) {
 	const branch = process.env.DOCS_REF || "waterkyuu/feat/docs-site";
-	for (const locale of ["zh-CN", "en"]) {
+	// Remove the generated translation directory used before English became the default.
+	await rm(path.join(root, "i18n/en/docusaurus-plugin-content-docs/current"), {
+		recursive: true,
+		force: true,
+	});
+	for (const locale of ["en", "zh-CN"]) {
 		const destination =
-			locale === "zh-CN"
+			locale === "en"
 				? path.join(root, "generated-docs")
-				: path.join(root, "i18n/en/docusaurus-plugin-content-docs/current");
+				: path.join(root, "i18n/zh-CN/docusaurus-plugin-content-docs/current");
 		await rm(destination, { recursive: true, force: true });
 		await mkdir(destination, { recursive: true });
 		for (const [position, chapter] of chapters.entries()) {
