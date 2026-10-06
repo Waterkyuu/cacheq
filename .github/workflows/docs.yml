@@ -1,4 +1,4 @@
-name: Documentation
+name: Docs CI
 
 on:
   push:
@@ -7,14 +7,18 @@ on:
       - 'docs/**'
       - 'website/**'
       - '*.go'
+      - 'go.mod'
       - '.github/workflows/docs.yml'
+      - '.github/workflows/website.yml'
   pull_request:
     branches: [main]
     paths:
       - 'docs/**'
       - 'website/**'
       - '*.go'
+      - 'go.mod'
       - '.github/workflows/docs.yml'
+      - '.github/workflows/website.yml'
   workflow_dispatch:
 
 concurrency:
@@ -26,36 +30,13 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    env:
-      DOCS_REF: ${{ github.head_ref || github.ref_name }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: website/package.json
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: pnpm
-          cache-dependency-path: website/pnpm-lock.yaml
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: false
-      - run: pnpm --dir website install --frozen-lockfile
-      - run: pnpm --dir website lint
-      - run: pnpm --dir website fmt:check
-      - run: pnpm --dir website typecheck
-      - run: pnpm --dir website test
-      - run: pnpm --dir website build
-      - run: pnpm --dir website test:build
-      - uses: actions/upload-pages-artifact@v4
-        if: github.event_name != 'pull_request'
-        with:
-          path: website/build
+    name: Docs build
+    uses: ./.github/workflows/website.yml
+    with:
+      upload-pages-artifact: ${{ github.event_name != 'pull_request' }}
 
   deploy:
+    name: Publish docs
     if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
