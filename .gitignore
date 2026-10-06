@@ -6,6 +6,8 @@ coverage.out
 # Documentation build artifacts and local dependencies
 website/node_modules/
 website/.docusaurus/
+website/.astro/
 website/build/
 website/generated-docs/
+website/src/content/docs/
 website/i18n/
