@@ -111,3 +111,7 @@ meaning, contract, or reason for existing instead of translating its syntax.
   timing, or global mutable state.
 - Inject external dependencies so they can be replaced with small test doubles.
 
+
+## Document
+
+Upon completing a feature, create example documents (`example.en-US.md` and `example.zh-CN.md`) in the `docs` folder.
