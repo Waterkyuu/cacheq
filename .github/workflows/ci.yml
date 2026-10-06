@@ -103,6 +103,10 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
           cache: false
+      - name: Enable Mach-O UUIDs for Go 1.22 on macOS
+        if: runner.os == 'macOS' && matrix.go == '1.22.x'
+        # New macOS loaders require LC_UUID; Go 1.22 only emits it with -B.
+        run: echo 'GOFLAGS=-ldflags=-B=gobuildid' >> "$GITHUB_ENV"
       - name: Run tests
         run: go test -race ./... -count=1 -coverprofile=coverage.out
       - run: go tool cover -func=coverage.out
