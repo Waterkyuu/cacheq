@@ -2,6 +2,7 @@ package cacheq_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -10,6 +11,78 @@ import (
 
 	cacheq "github.com/Waterkyuu/cacheq"
 )
+
+const (
+	// benchmarkReadsPerBatch fixes the number of same-key reads in each benefit comparison.
+	benchmarkReadsPerBatch = 100
+	// benchmarkPayloadBytes fixes the amount of deterministic backend work at 64 KiB per load.
+	benchmarkPayloadBytes = 64 * 1024
+)
+
+// BenchmarkCacheBenefit compares equal read batches without caching, from an empty cache, and from a warm cache.
+// All modes use the same SHA-256 loader; cold-cache resets and warm-cache preparation are excluded from timing.
+func BenchmarkCacheBenefit(b *testing.B) {
+	payload := make([]byte, benchmarkPayloadBytes)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+	want := sha256.Sum256(payload)
+	for _, mode := range []string{"NoCache", "FirstLoad", "CacheHit"} {
+		b.Run(mode, func(b *testing.B) {
+			client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+			defer client.Close()
+			var calls atomic.Uint64
+			load := func(ctx context.Context) ([sha256.Size]byte, error) {
+				if err := ctx.Err(); err != nil {
+					return [sha256.Size]byte{}, err
+				}
+				calls.Add(1)
+				return sha256.Sum256(payload), nil
+			}
+			ctx := context.Background()
+			read := load
+			if mode != "NoCache" {
+				read = func(ctx context.Context) ([sha256.Size]byte, error) {
+					return cacheq.Fetch(ctx, client, "benefit", load)
+				}
+			}
+			if mode == "CacheHit" {
+				if value, err := read(ctx); err != nil || value != want {
+					b.Fatalf("warm cache preparation failed: %v", err)
+				}
+				calls.Store(0)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if mode == "FirstLoad" {
+					// Each batch starts empty, so calibration cannot turn the cold case into a warm-cache test.
+					b.StopTimer()
+					client.Clear()
+					b.StartTimer()
+				}
+				for range benchmarkReadsPerBatch {
+					if value, err := read(ctx); err != nil || value != want {
+						b.Fatalf("%s returned an incorrect result: %v", mode, err)
+					}
+				}
+			}
+			b.StopTimer()
+			var expected uint64
+			switch mode {
+			case "NoCache":
+				expected = uint64(b.N) * benchmarkReadsPerBatch
+			case "FirstLoad":
+				expected = uint64(b.N)
+			}
+			if calls.Load() != expected {
+				b.Fatalf("%s executed %d loads, want %d", mode, calls.Load(), expected)
+			}
+			b.ReportMetric(float64(calls.Load())/float64(b.N), "loads/batch")
+			b.ReportMetric(benchmarkReadsPerBatch, "reads/batch")
+		})
+	}
+}
 
 // BenchmarkCacheHit measures public cache reads and a minimal map-and-mutex reference.
 func BenchmarkCacheHit(b *testing.B) {
