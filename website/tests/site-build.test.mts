@@ -55,8 +55,8 @@ test("every published page has server-rendered content and working internal link
 	const files = await htmlFiles(build);
 	assert.equal(
 		files.filter((file) => file.endsWith("index.html")).length,
-		16,
-		"Each language must publish one homepage and seven guides without fallback duplicates",
+		18,
+		"Each language must publish one homepage and eight guides without fallback duplicates",
 	);
 	for (const file of files) {
 		const html = await readFile(file, "utf8");
@@ -77,6 +77,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			"",
 			"docs/",
 			"docs/queries/",
+			"docs/query-options/",
 			"docs/cache/",
 			"docs/invalidation/",
 			"docs/observability/",
@@ -114,7 +115,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			}
 		}
 	}
-	assert.equal(descriptions.size, 16);
+	assert.equal(descriptions.size, 18);
 	assert.ok((await readFile(path.join(build, "cacheq.png"))).length > 0);
 });
 

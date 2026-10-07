@@ -44,6 +44,11 @@ export default defineConfig({
 					translations: { "zh-CN": "查询与条件请求" },
 				},
 				{
+					slug: "docs/query-options",
+					label: "Query options",
+					translations: { "zh-CN": "查询配置" },
+				},
+				{
 					slug: "docs/cache",
 					label: "Cache & lifecycle",
 					translations: { "zh-CN": "缓存与生命周期" },
