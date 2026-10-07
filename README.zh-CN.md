@@ -136,10 +136,10 @@ go run .
 
 ## 可复现的 benchmark
 
-对同一份数据读取 100 次，比较**无缓存、首次加载和缓存命中**，见 [benchmark 文档](docs/benchmarks.zh-CN.md)。主表展示总耗时和实际加载次数，内部开销与并发诊断单独说明。
+明确模拟 **4、16、64 个并发请求**，分别访问同一个 key 和不同 key，见 [benchmark 文档](docs/benchmarks.zh-CN.md)。对比无缓存、首次加载和缓存命中的整批总耗时与实际加载次数，CPU 并行度固定，与请求数量分开控制。
 
 ```sh
-go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -count=3 -cpu=4
 ```
 
 ## 功能文档
