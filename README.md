@@ -90,6 +90,16 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 
 Complete integrations live in `examples`; the guides cover API details. Treat cached values as immutable; copy slices and maps before modifying them. Different result types cannot reuse the same key.
 
+## Versioning and upgrades
+
+cacheq follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). During `v0`, patch releases preserve compatibility; minor releases may introduce breaking changes with migration notes. From `v1`, breaking public API changes require a new major version. The core library currently supports Go 1.22 and later; example modules may require newer Go versions.
+
+See the [version policy](docs/versioning.en-US.md) for the public API boundary, deprecation policy, Go support, and upgrade guidance. Published version tags are never moved or reused.
+
+## License
+
+cacheq is licensed under the [MIT License](LICENSE).
+
 ## Verify
 
 ```sh

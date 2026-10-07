@@ -31,10 +31,23 @@ sh .github/scripts/release_test.sh
 
 ## Versions and retries
 
-Use a new stable `v0.x.y` or `v1.x.y` version. A `v2` release requires updating
-the Go module path first. The workflow does not publish on ordinary commits.
+Choose the version using the [version policy](../docs/versioning.en-US.md):
+
+- During `v0`, use a patch for compatible fixes and a minor version for new
+  features, deprecations, or breaking changes.
+- From `v1`, use a patch for compatible fixes, a minor for compatible additions
+  or deprecations, and a major for breaking changes. Deprecations must remain
+  available for at least one minor release before removal in a later major.
+- Raising the core library's minimum Go version requires a `v0` minor or, from
+  `v1`, a major release. Update `go.mod`, CI, and the documented requirement.
+- Breaking releases must include affected APIs or behavior and migration steps
+  in the release notes. Check these before publishing, including generated notes.
+
+Use a new non-prerelease `v0.x.y` or `v1.x.y` version. A `v2` release requires
+updating the Go module and import paths and release validation first. The
+workflow does not publish on ordinary commits.
 
 An existing tag for another commit is rejected. If publication stops after
 pushing the tag, rerun the workflow at the same commit and version. It reuses
-that tag; an existing Release and its notes are preserved. Never move a
-published Go module tag to a different commit.
+that tag; an existing Release and its notes are preserved. Never move, delete,
+or reuse a published Go module tag; publish corrections under a new version.
