@@ -55,7 +55,7 @@ func TestQueryDisabled(t *testing.T) {
 					calls.Add(1)
 					return 8, nil
 				},
-				QueryOptions{Enabled: new(bool)},
+				QueryOptions{Disable: true},
 			)
 			t.Cleanup(observer.Close)
 			state := <-observer.Updates()
@@ -88,7 +88,7 @@ func TestQueryEnableTransitions(t *testing.T) {
 		func(context.Context) (int, error) {
 			return int(calls.Add(1)), nil
 		},
-		QueryOptions{Enabled: new(bool)},
+		QueryOptions{Disable: true},
 	)
 	t.Cleanup(observer.Close)
 	observer.SetEnabled(true)
@@ -153,7 +153,7 @@ func TestQuerySharedEnablement(t *testing.T) {
 			disabledCalls.Add(1)
 			return 99, nil
 		},
-		QueryOptions{Enabled: new(bool)},
+		QueryOptions{Disable: true},
 	)
 	t.Cleanup(disabled.Close)
 	started, release := make(chan struct{}), make(chan struct{})
@@ -218,7 +218,7 @@ func TestQueryManualRequests(t *testing.T) {
 				client,
 				"users",
 				fetch,
-				QueryOptions{Enabled: new(bool)},
+				QueryOptions{Disable: true},
 			)
 			t.Cleanup(observer.Close)
 			switch action {
@@ -326,7 +326,7 @@ func TestQueryClose(t *testing.T) {
 				calls.Add(1)
 				return 1, nil
 			},
-			QueryOptions{Enabled: new(bool)},
+			QueryOptions{Disable: true},
 		)
 		<-observer.Updates()
 		if closeClient {
@@ -368,7 +368,7 @@ func TestQueryDisabledRetention(t *testing.T) {
 		client,
 		"users",
 		func(context.Context) (string, error) { return "unused", nil },
-		QueryOptions{Enabled: new(bool)},
+		QueryOptions{Disable: true},
 	)
 	t.Cleanup(observer.Close)
 	scheduler.now.Add(int64(time.Hour))
@@ -408,7 +408,7 @@ func TestQueryCloseDuringLoad(t *testing.T) {
 		client,
 		"users",
 		func(context.Context) (int, error) { return 0, nil },
-		QueryOptions{Enabled: new(bool)},
+		QueryOptions{Disable: true},
 	)
 	updates, unsubscribe := passive.Updates(), passive.Close
 	t.Cleanup(unsubscribe)
@@ -699,7 +699,7 @@ func TestQueryLifecycle(t *testing.T) {
 		c,
 		"user",
 		func(context.Context) (int, error) { return 0, nil },
-		QueryOptions{Enabled: new(bool)},
+		QueryOptions{Disable: true},
 	)
 	<-handle.Updates()
 	Set(c, "user", 1)
@@ -748,7 +748,7 @@ func TestNoFetcher(t *testing.T) {
 		c,
 		"user",
 		nil,
-		QueryOptions{Enabled: new(bool)},
+		QueryOptions{Disable: true},
 	)
 	if !errors.Is(handle.Snapshot().Err, ErrNoFetcher) {
 		t.Fatal("nil query loader accepted")

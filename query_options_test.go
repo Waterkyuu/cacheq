@@ -11,7 +11,6 @@ import (
 
 // TestQueryOptionsDefaultEnabled keeps automatic loading on unless the final options explicitly disable it.
 func TestQueryOptionsDefaultEnabled(t *testing.T) {
-	enabled, disabled := true, false
 	freshness, timeout, retries := time.Minute, time.Hour, 1
 	for _, tc := range []struct {
 		// name identifies the omitted or explicit enablement setting.
@@ -28,11 +27,11 @@ func TestQueryOptionsDefaultEnabled(t *testing.T) {
 		{name: "timeout only", options: []QueryOptions{{Timeout: &timeout}}, automatic: true},
 		{name: "retry predicate only", options: []QueryOptions{{RetryIf: func(error) bool { return false }}}, automatic: true},
 		{name: "retry delay only", options: []QueryOptions{{RetryDelay: func(int) time.Duration { return 0 }}}, automatic: true},
-		{name: "enabled", options: []QueryOptions{{Enabled: &enabled}}, automatic: true},
-		{name: "disabled", options: []QueryOptions{{Enabled: &disabled}}},
-		{name: "disabled with freshness", options: []QueryOptions{{Enabled: &disabled, StaleTime: &freshness}}},
-		{name: "last omitted flag", options: []QueryOptions{{Enabled: &disabled}, {StaleTime: &freshness}}, automatic: true},
-		{name: "last disabled flag", options: []QueryOptions{{StaleTime: &freshness}, {Enabled: &disabled}}},
+		{name: "enabled", options: []QueryOptions{{Disable: false}}, automatic: true},
+		{name: "disabled", options: []QueryOptions{{Disable: true}}},
+		{name: "disabled with freshness", options: []QueryOptions{{Disable: true, StaleTime: &freshness}}},
+		{name: "last omitted flag", options: []QueryOptions{{Disable: true}, {StaleTime: &freshness}}, automatic: true},
+		{name: "last disabled flag", options: []QueryOptions{{StaleTime: &freshness}, {Disable: true}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newInvalidationClient(t)
@@ -58,16 +57,16 @@ func TestQueryOptionsDefaultEnabled(t *testing.T) {
 	}
 }
 
-// TestQueryOptionsEnabledCopied changes permission only through SetEnabled after construction.
-func TestQueryOptionsEnabledCopied(t *testing.T) {
+// TestQueryOptionsDisableCopied changes permission only through SetEnabled after construction.
+func TestQueryOptionsDisableCopied(t *testing.T) {
 	c := newInvalidationClient(t)
-	enabled := false
+	options := QueryOptions{Disable: true}
 	var calls atomic.Int32
 	handle := Query(c, "users", func(context.Context) (int, error) {
 		return int(calls.Add(1)), nil
-	}, QueryOptions{Enabled: &enabled})
+	}, options)
 	t.Cleanup(handle.Close)
-	enabled = true
+	options.Disable = false
 	if err := c.Invalidate("users"); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +77,7 @@ func TestQueryOptionsEnabledCopied(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
-	enabled = false
+	options.Disable = true
 	if err := c.Invalidate("users"); err != nil {
 		t.Fatal(err)
 	}
@@ -97,8 +96,8 @@ func TestQueryOptionsFreshness(t *testing.T) {
 		return 8, nil
 	}
 	zero, hour := time.Duration(0), time.Hour
-	fast := Query(c, "users", fetch, QueryOptions{Enabled: new(bool), StaleTime: &zero})
-	slow := Query(c, "users", fetch, QueryOptions{Enabled: new(bool), StaleTime: &hour})
+	fast := Query(c, "users", fetch, QueryOptions{Disable: true, StaleTime: &zero})
+	slow := Query(c, "users", fetch, QueryOptions{Disable: true, StaleTime: &hour})
 	t.Cleanup(fast.Close)
 	t.Cleanup(slow.Close)
 	for _, tc := range []struct {
@@ -289,7 +288,7 @@ func TestQueryOptionsRetries(t *testing.T) {
 					_, err = FetchWithOptions(context.Background(), c, "users", fetch, tc.options)
 				} else {
 					handle := Query(c, "users", fetch, QueryOptions{
-						Enabled:    new(bool),
+						Disable:    true,
 						Retry:      tc.options.Retry,
 						RetryIf:    tc.options.RetryIf,
 						RetryDelay: tc.options.RetryDelay,
@@ -319,7 +318,7 @@ func TestQueryOptionsCopied(t *testing.T) {
 		}
 		return 7, nil
 	}, QueryOptions{
-		Enabled: new(bool), StaleTime: &hour, Retry: &retries, RetryDelay: func(int) time.Duration { return 0 },
+		Disable: true, StaleTime: &hour, Retry: &retries, RetryDelay: func(int) time.Duration { return 0 },
 	})
 	t.Cleanup(handle.Close)
 	hour, retries = 0, 0
@@ -367,7 +366,7 @@ func TestQueryOptionsTimeout(t *testing.T) {
 						FetchOptions{Timeout: tc.timeout},
 					)
 				} else {
-					handle := Query(c, "users", fetch, QueryOptions{Enabled: new(bool), Timeout: tc.timeout})
+					handle := Query(c, "users", fetch, QueryOptions{Disable: true, Timeout: tc.timeout})
 					t.Cleanup(handle.Close)
 					deadline, err = handle.Refetch(context.Background())
 				}

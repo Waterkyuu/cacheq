@@ -46,7 +46,7 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOpt
 	policy := client.options
 	for _, option := range options {
 		// A freshness-only override must not disable loading just because enablement was omitted.
-		enabled = option.Enabled == nil || *option.Enabled
+		enabled = !option.Disable
 		policy = resolvePolicy(client.options, option.fetchOptions())
 	}
 	handle := &QueryHandle[V]{client: client, key: key, updates: make(chan Snapshot[V], 1)}

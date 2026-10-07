@@ -102,13 +102,13 @@ func resolvePolicy(options Options, policy FetchOptions) Options {
 }
 
 // QueryOptions controls one handle's automatic loading, freshness, retry policy, and timeout.
-// Query defaults to enabled when Enabled is nil, including when other options are supplied.
+// Query defaults to automatic loading unless Disable is true, including when other options are supplied.
 // Nil policy fields inherit Client defaults.
 // Pointer values are copied; callbacks run outside the Client lock and must synchronize captured mutable state.
 type QueryOptions struct {
-	// Enabled permits automatic loading when nil or pointing to true; a false value keeps the handle passive.
+	// Disable prevents automatic loading when true; its zero value permits loading.
 	// The value is copied during construction; later permission changes use SetEnabled.
-	Enabled *bool
+	Disable bool
 	// StaleTime overrides this handle's freshness for ordinary shared data; nil inherits Client defaults.
 	// Explicit deadlines from FetchWithExpiry remain authoritative.
 	StaleTime *time.Duration
