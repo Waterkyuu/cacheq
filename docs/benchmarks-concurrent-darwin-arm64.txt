@@ -1,0 +1,66 @@
+Date: 2026-10-08 (Asia/Shanghai)
+Go: go1.27.1
+Source: query_benchmark_test.go in the commit introducing this sample
+Request goroutines per batch: 4, 16, 64; GOMAXPROCS fixed at 4
+Command: go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms -count=3 -cpu=4
+
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Requests=4/SameKey/NoCache-4         	    3162	     63984 ns/op	         4.000 loads/batch	         0 merged/batch	         4.000 requests/batch	     997 B/op	       8 allocs/op
+BenchmarkConcurrentFetch/Requests=4/SameKey/NoCache-4         	    3316	     63228 ns/op	         4.000 loads/batch	         0 merged/batch	         4.000 requests/batch	     976 B/op	       8 allocs/op
+BenchmarkConcurrentFetch/Requests=4/SameKey/NoCache-4         	    4609	     52441 ns/op	         4.000 loads/batch	         0 merged/batch	         4.000 requests/batch	     977 B/op	       8 allocs/op
+BenchmarkConcurrentFetch/Requests=4/SameKey/FirstLoad-4       	    6790	     36347 ns/op	         1.000 loads/batch	         2.913 merged/batch	         4.000 requests/batch	    1607 B/op	      25 allocs/op
+BenchmarkConcurrentFetch/Requests=4/SameKey/FirstLoad-4       	    6680	     35913 ns/op	         1.000 loads/batch	         2.938 merged/batch	         4.000 requests/batch	    1611 B/op	      25 allocs/op
+BenchmarkConcurrentFetch/Requests=4/SameKey/FirstLoad-4       	    6543	     36724 ns/op	         1.000 loads/batch	         2.926 merged/batch	         4.000 requests/batch	    1607 B/op	      25 allocs/op
+BenchmarkConcurrentFetch/Requests=4/SameKey/CacheHit-4        	   44688	      5225 ns/op	         0 loads/batch	         0 merged/batch	         4.000 requests/batch	    1076 B/op	      16 allocs/op
+BenchmarkConcurrentFetch/Requests=4/SameKey/CacheHit-4        	   44914	      5304 ns/op	         0 loads/batch	         0 merged/batch	         4.000 requests/batch	    1076 B/op	      16 allocs/op
+BenchmarkConcurrentFetch/Requests=4/SameKey/CacheHit-4        	   45663	      5219 ns/op	         0 loads/batch	         0 merged/batch	         4.000 requests/batch	    1076 B/op	      16 allocs/op
+BenchmarkConcurrentFetch/Requests=4/DifferentKeys/NoCache-4   	    4778	     50141 ns/op	         4.000 loads/batch	         0 merged/batch	         4.000 requests/batch	     979 B/op	       8 allocs/op
+BenchmarkConcurrentFetch/Requests=4/DifferentKeys/NoCache-4   	    4815	     48438 ns/op	         4.000 loads/batch	         0 merged/batch	         4.000 requests/batch	     979 B/op	       8 allocs/op
+BenchmarkConcurrentFetch/Requests=4/DifferentKeys/NoCache-4   	    4800	     50202 ns/op	         4.000 loads/batch	         0 merged/batch	         4.000 requests/batch	     979 B/op	       8 allocs/op
+BenchmarkConcurrentFetch/Requests=4/DifferentKeys/FirstLoad-4 	    4281	     51502 ns/op	         4.000 loads/batch	         0 merged/batch	         4.000 requests/batch	    3126 B/op	      44 allocs/op
+BenchmarkConcurrentFetch/Requests=4/DifferentKeys/FirstLoad-4 	    4753	     51396 ns/op	         4.000 loads/batch	         0 merged/batch	         4.000 requests/batch	    3127 B/op	      44 allocs/op
+BenchmarkConcurrentFetch/Requests=4/DifferentKeys/FirstLoad-4 	    4723	     49172 ns/op	         4.000 loads/batch	         0 merged/batch	         4.000 requests/batch	    3123 B/op	      44 allocs/op
+BenchmarkConcurrentFetch/Requests=4/DifferentKeys/CacheHit-4  	   46478	      5150 ns/op	         0 loads/batch	         0 merged/batch	         4.000 requests/batch	    1076 B/op	      16 allocs/op
+BenchmarkConcurrentFetch/Requests=4/DifferentKeys/CacheHit-4  	   44887	      5169 ns/op	         0 loads/batch	         0 merged/batch	         4.000 requests/batch	    1076 B/op	      16 allocs/op
+BenchmarkConcurrentFetch/Requests=4/DifferentKeys/CacheHit-4  	   46711	      4835 ns/op	         0 loads/batch	         0 merged/batch	         4.000 requests/batch	    1076 B/op	      16 allocs/op
+BenchmarkConcurrentFetch/Requests=16/SameKey/NoCache-4        	    2070	    126256 ns/op	        16.00 loads/batch	         0 merged/batch	        16.00 requests/batch	    3479 B/op	      20 allocs/op
+BenchmarkConcurrentFetch/Requests=16/SameKey/NoCache-4        	    1908	    120421 ns/op	        16.00 loads/batch	         0 merged/batch	        16.00 requests/batch	    3477 B/op	      20 allocs/op
+BenchmarkConcurrentFetch/Requests=16/SameKey/NoCache-4        	    1880	    122612 ns/op	        16.00 loads/batch	         0 merged/batch	        16.00 requests/batch	    3478 B/op	      20 allocs/op
+BenchmarkConcurrentFetch/Requests=16/SameKey/FirstLoad-4      	    5966	     41871 ns/op	         1.000 loads/batch	        14.99 merged/batch	        16.00 requests/batch	    4427 B/op	      74 allocs/op
+BenchmarkConcurrentFetch/Requests=16/SameKey/FirstLoad-4      	    5558	     41561 ns/op	         1.000 loads/batch	        14.97 merged/batch	        16.00 requests/batch	    4431 B/op	      74 allocs/op
+BenchmarkConcurrentFetch/Requests=16/SameKey/FirstLoad-4      	    5490	     42428 ns/op	         1.000 loads/batch	        14.96 merged/batch	        16.00 requests/batch	    4429 B/op	      74 allocs/op
+BenchmarkConcurrentFetch/Requests=16/SameKey/CacheHit-4       	   15105	     15398 ns/op	         0 loads/batch	         0 merged/batch	        16.00 requests/batch	    3880 B/op	      52 allocs/op
+BenchmarkConcurrentFetch/Requests=16/SameKey/CacheHit-4       	   16120	     15203 ns/op	         0 loads/batch	         0 merged/batch	        16.00 requests/batch	    3879 B/op	      52 allocs/op
+BenchmarkConcurrentFetch/Requests=16/SameKey/CacheHit-4       	   15992	     15015 ns/op	         0 loads/batch	         0 merged/batch	        16.00 requests/batch	    3879 B/op	      52 allocs/op
+BenchmarkConcurrentFetch/Requests=16/DifferentKeys/NoCache-4  	    1922	    125499 ns/op	        16.00 loads/batch	         0 merged/batch	        16.00 requests/batch	    3477 B/op	      20 allocs/op
+BenchmarkConcurrentFetch/Requests=16/DifferentKeys/NoCache-4  	    1929	    125226 ns/op	        16.00 loads/batch	         0 merged/batch	        16.00 requests/batch	    3481 B/op	      20 allocs/op
+BenchmarkConcurrentFetch/Requests=16/DifferentKeys/NoCache-4  	    1921	    126019 ns/op	        16.00 loads/batch	         0 merged/batch	        16.00 requests/batch	    3480 B/op	      20 allocs/op
+BenchmarkConcurrentFetch/Requests=16/DifferentKeys/FirstLoad-4         	    1819	    134136 ns/op	        16.00 loads/batch	         0 merged/batch	        16.00 requests/batch	   11907 B/op	     164 allocs/op
+BenchmarkConcurrentFetch/Requests=16/DifferentKeys/FirstLoad-4         	    1801	    140941 ns/op	        16.00 loads/batch	         0 merged/batch	        16.00 requests/batch	   11896 B/op	     164 allocs/op
+BenchmarkConcurrentFetch/Requests=16/DifferentKeys/FirstLoad-4         	    1795	    135443 ns/op	        16.00 loads/batch	         0 merged/batch	        16.00 requests/batch	   11906 B/op	     164 allocs/op
+BenchmarkConcurrentFetch/Requests=16/DifferentKeys/CacheHit-4          	   15685	     15054 ns/op	         0 loads/batch	         0 merged/batch	        16.00 requests/batch	    3878 B/op	      52 allocs/op
+BenchmarkConcurrentFetch/Requests=16/DifferentKeys/CacheHit-4          	   15519	     15482 ns/op	         0 loads/batch	         0 merged/batch	        16.00 requests/batch	    3878 B/op	      52 allocs/op
+BenchmarkConcurrentFetch/Requests=16/DifferentKeys/CacheHit-4          	   15304	     15413 ns/op	         0 loads/batch	         0 merged/batch	        16.00 requests/batch	    3878 B/op	      52 allocs/op
+BenchmarkConcurrentFetch/Requests=64/SameKey/NoCache-4                 	     558	    435229 ns/op	        64.00 loads/batch	         0 merged/batch	        64.00 requests/batch	   13615 B/op	      68 allocs/op
+BenchmarkConcurrentFetch/Requests=64/SameKey/NoCache-4                 	     553	    427261 ns/op	        64.00 loads/batch	         0 merged/batch	        64.00 requests/batch	   13621 B/op	      68 allocs/op
+BenchmarkConcurrentFetch/Requests=64/SameKey/NoCache-4                 	     562	    429018 ns/op	        64.00 loads/batch	         0 merged/batch	        64.00 requests/batch	   13629 B/op	      68 allocs/op
+BenchmarkConcurrentFetch/Requests=64/SameKey/FirstLoad-4               	    3390	     71170 ns/op	         1.000 loads/batch	        59.37 merged/batch	        64.00 requests/batch	   15829 B/op	     262 allocs/op
+BenchmarkConcurrentFetch/Requests=64/SameKey/FirstLoad-4               	    3396	     71312 ns/op	         1.000 loads/batch	        58.99 merged/batch	        64.00 requests/batch	   15820 B/op	     262 allocs/op
+BenchmarkConcurrentFetch/Requests=64/SameKey/FirstLoad-4               	    3382	     70466 ns/op	         1.000 loads/batch	        59.61 merged/batch	        64.00 requests/batch	   15810 B/op	     262 allocs/op
+BenchmarkConcurrentFetch/Requests=64/SameKey/CacheHit-4                	    4804	     49209 ns/op	         0 loads/batch	         0 merged/batch	        64.00 requests/batch	   15216 B/op	     196 allocs/op
+BenchmarkConcurrentFetch/Requests=64/SameKey/CacheHit-4                	    4890	     49267 ns/op	         0 loads/batch	         0 merged/batch	        64.00 requests/batch	   15220 B/op	     196 allocs/op
+BenchmarkConcurrentFetch/Requests=64/SameKey/CacheHit-4                	    4970	     49107 ns/op	         0 loads/batch	         0 merged/batch	        64.00 requests/batch	   15218 B/op	     196 allocs/op
+BenchmarkConcurrentFetch/Requests=64/DifferentKeys/NoCache-4           	     558	    518453 ns/op	        64.00 loads/batch	         0 merged/batch	        64.00 requests/batch	   13624 B/op	      68 allocs/op
+BenchmarkConcurrentFetch/Requests=64/DifferentKeys/NoCache-4           	     511	    439117 ns/op	        64.00 loads/batch	         0 merged/batch	        64.00 requests/batch	   13591 B/op	      68 allocs/op
+BenchmarkConcurrentFetch/Requests=64/DifferentKeys/NoCache-4           	     547	    437257 ns/op	        64.00 loads/batch	         0 merged/batch	        64.00 requests/batch	   13641 B/op	      68 allocs/op
+BenchmarkConcurrentFetch/Requests=64/DifferentKeys/FirstLoad-4         	     500	    474604 ns/op	        64.00 loads/batch	         0 merged/batch	        64.00 requests/batch	   47358 B/op	     645 allocs/op
+BenchmarkConcurrentFetch/Requests=64/DifferentKeys/FirstLoad-4         	     516	    507962 ns/op	        64.00 loads/batch	         0 merged/batch	        64.00 requests/batch	   47299 B/op	     644 allocs/op
+BenchmarkConcurrentFetch/Requests=64/DifferentKeys/FirstLoad-4         	     500	    465544 ns/op	        64.00 loads/batch	         0 merged/batch	        64.00 requests/batch	   47293 B/op	     644 allocs/op
+BenchmarkConcurrentFetch/Requests=64/DifferentKeys/CacheHit-4          	    4749	     50678 ns/op	         0 loads/batch	         0 merged/batch	        64.00 requests/batch	   15210 B/op	     196 allocs/op
+BenchmarkConcurrentFetch/Requests=64/DifferentKeys/CacheHit-4          	    4731	     59269 ns/op	         0 loads/batch	         0 merged/batch	        64.00 requests/batch	   15213 B/op	     196 allocs/op
+BenchmarkConcurrentFetch/Requests=64/DifferentKeys/CacheHit-4          	    4236	     51287 ns/op	         0 loads/batch	         0 merged/batch	        64.00 requests/batch	   15215 B/op	     196 allocs/op
+PASS
+ok  	github.com/Waterkyuu/cacheq	18.342s
