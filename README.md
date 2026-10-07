@@ -139,10 +139,10 @@ go run .
 
 ## Reproducible benchmarks
 
-Compare **no cache, first load, and cache hits** for 100 reads of the same data in the [benchmark guide](docs/benchmarks.en-US.md). The main table reports total time and actual loader calls; internal cost and concurrency diagnostics are documented separately.
+Simulate **4, 16, and 64 concurrent requests** for the same key or different keys in the [benchmark guide](docs/benchmarks.en-US.md). Compare no cache, first loads, and cache hits by total batch time and actual loader calls. CPU parallelism stays fixed, independently of the request count.
 
 ```sh
-go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -count=3 -cpu=4
 ```
 
 ## Feature guides
