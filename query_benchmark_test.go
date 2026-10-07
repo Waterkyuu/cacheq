@@ -17,6 +17,8 @@ const (
 	benchmarkReadsPerBatch = 100
 	// benchmarkPayloadBytes fixes the amount of deterministic backend work at 64 KiB per load.
 	benchmarkPayloadBytes = 64 * 1024
+	// benchmarkConcurrentRequests keeps total work identical when comparing different caller counts.
+	benchmarkConcurrentRequests = 64
 )
 
 // BenchmarkCacheBenefit compares equal read batches without caching, from an empty cache, and from a warm cache.
@@ -84,18 +86,18 @@ func BenchmarkCacheBenefit(b *testing.B) {
 	}
 }
 
-// BenchmarkConcurrentFetch compares equal concurrent request batches with explicit goroutine counts.
-// CPU parallelism is selected separately with -cpu; it never determines the number of requests.
+// BenchmarkConcurrentFetch compares one caller with multiple callers handling the same 64 requests.
+// CPU parallelism is selected separately with -cpu; caller counts never change the total workload.
 func BenchmarkConcurrentFetch(b *testing.B) {
-	for _, requests := range []int{4, 16, 64} {
-		b.Run(fmt.Sprintf("Requests=%d", requests), func(b *testing.B) {
+	for _, workers := range []int{1, 4, 16, 64} {
+		b.Run(fmt.Sprintf("Workers=%d", workers), func(b *testing.B) {
 			for _, scope := range []string{"SameKey", "DifferentKeys"} {
 				b.Run(scope, func(b *testing.B) {
 					for _, mode := range []string{"NoCache", "FirstLoad", "CacheHit"} {
 						b.Run(mode, func(b *testing.B) {
 							benchmarkConcurrentFetch(
 								b,
-								requests,
+								workers,
 								scope == "SameKey",
 								mode,
 							)
@@ -107,10 +109,10 @@ func BenchmarkConcurrentFetch(b *testing.B) {
 	}
 }
 
-// benchmarkConcurrentFetch starts one goroutine per request behind a shared readiness barrier.
+// benchmarkConcurrentFetch divides a fixed request batch among the selected number of goroutines.
 // Every result and measured loader count is checked; cold resets and warm-up are excluded from timing.
-func benchmarkConcurrentFetch(b *testing.B, requests int, sameKey bool, mode string) {
-	keyCount := requests
+func benchmarkConcurrentFetch(b *testing.B, workers int, sameKey bool, mode string) {
+	keyCount := benchmarkConcurrentRequests
 	if sameKey {
 		keyCount = 1
 	}
@@ -156,49 +158,56 @@ func benchmarkConcurrentFetch(b *testing.B, requests int, sameKey bool, mode str
 			b.StartTimer()
 		}
 		start := make(chan struct{})
-		failures := make([]error, requests)
+		results := make([][sha256.Size]byte, benchmarkConcurrentRequests)
+		failures := make([]error, benchmarkConcurrentRequests)
 		var ready, finished sync.WaitGroup
-		ready.Add(requests)
-		finished.Add(requests)
-		for request := range requests {
+		ready.Add(workers)
+		finished.Add(workers)
+		for worker := range workers {
 			go func() {
 				defer finished.Done()
-				keyIndex := request
-				if sameKey {
-					keyIndex = 0
-				}
 				ready.Done()
 				<-start
 
-				// Each worker issues one read, representing one simultaneous application request.
-				var value [sha256.Size]byte
-				var err error
-				if mode == "NoCache" {
-					value, err = loaders[keyIndex](ctx)
-				} else {
-					value, err = cacheq.Fetch(ctx, client, keys[keyIndex], loaders[keyIndex])
-				}
-				if err != nil {
-					failures[request] = err
-					return
-				}
-				if value != want[keyIndex] {
-					failures[request] = fmt.Errorf("request %d returned data for the wrong key", request)
+				// Strided ownership assigns every request once and gives callers disjoint result slots.
+				for request := worker; request < benchmarkConcurrentRequests; request += workers {
+					keyIndex := request
+					if sameKey {
+						keyIndex = 0
+					}
+					if mode == "NoCache" {
+						results[request], failures[request] = loaders[keyIndex](ctx)
+					} else {
+						results[request], failures[request] = cacheq.Fetch(
+							ctx,
+							client,
+							keys[keyIndex],
+							loaders[keyIndex],
+						)
+					}
 				}
 			}()
 		}
-		// Release only after all request goroutines exist, avoiding a sequential launch-and-wait workload.
+		// Start all callers together; one caller still processes all 64 requests sequentially.
 		ready.Wait()
 		close(start)
 		finished.Wait()
-		for _, err := range failures {
+		for request, err := range failures {
 			if err != nil {
 				b.Fatal(err)
+			}
+			keyIndex := request
+			if sameKey {
+				keyIndex = 0
+			}
+			// Checking all result slots also rejects accidentally skipped requests.
+			if results[request] != want[keyIndex] {
+				b.Fatalf("request %d returned data for the wrong key or was not executed", request)
 			}
 		}
 	}
 	b.StopTimer()
-	expected := uint64(b.N) * uint64(requests)
+	expected := uint64(b.N) * benchmarkConcurrentRequests
 	switch mode {
 	case "FirstLoad":
 		expected = uint64(b.N) * uint64(keyCount)
@@ -209,6 +218,7 @@ func benchmarkConcurrentFetch(b *testing.B, requests int, sameKey bool, mode str
 		b.Fatalf("%s executed %d loads, want %d", mode, calls.Load(), expected)
 	}
 	b.ReportMetric(float64(calls.Load())/float64(b.N), "loads/batch")
-	b.ReportMetric(float64(requests), "requests/batch")
+	b.ReportMetric(benchmarkConcurrentRequests, "requests/batch")
+	b.ReportMetric(float64(workers), "goroutines/batch")
 	b.ReportMetric(float64(client.Stats().MergedRequests)/float64(b.N), "merged/batch")
 }

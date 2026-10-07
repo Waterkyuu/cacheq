@@ -40,63 +40,79 @@ go test -race -run '^$' -bench '^BenchmarkCacheBenefit$' -benchtime=1x
 
 ## 独立并发请求测试
 
-`BenchmarkConcurrentFetch` 专门模拟并发应用请求访问 cacheq。每个场景明确启动 **4、16 或 64 个请求 goroutine**，CPU 并行度另行固定为 GOMAXPROCS=4，不用它决定请求数量。
+固定每批 **64 次请求**，比较 **1、4、16、64 个调用者 goroutine**，分别在 **GOMAXPROCS=1 和 4** 下测量。1 个 goroutine 串行完成 64 次；多个 goroutine 分担这 64 次请求。GOMAXPROCS 控制同时执行 Go 代码的 CPU 并行度，与调用者数量分别设置。
 
-### 64 个请求并发访问
+分别读取同一个 key 和 64 个不同 key，比较无缓存、首次加载和缓存命中。所有配置使用相同的加载函数：计算该 key 对应的固定 64 KiB 数据的 SHA-256 摘要。不同 key 的数据不同。下表单位均为**微秒 / 整批 64 次请求**，越小越快。
 
-每批同时发起 64 个请求，分别测同一个商品 key 和 64 个不同商品 key。所有模式使用相同的加载函数：计算该 key 对应的固定 64 KiB 数据的 SHA-256 摘要。不同 key 的数据不同。
+### GOMAXPROCS=1
 
-| 请求的数据 | 缓存状态 | 整批总耗时 | 实际加载次数 |
-| --- | --- | ---: | ---: |
-| 同一个 key | 无缓存 | 429.02 微秒 | 64 |
-| 同一个 key | 从空缓存开始首次加载 | 71.17 微秒 | 1 |
-| 同一个 key | 全部命中缓存 | 49.21 微秒 | 0 |
-| 不同 key | 无缓存 | 439.12 微秒 | 64 |
-| 不同 key | 从空缓存开始首次加载 | 474.60 微秒 | 64 |
-| 不同 key | 全部命中缓存 | 51.29 微秒 | 0 |
+| 请求的数据 | 缓存状态 | 1 个 goroutine | 4 个 | 16 个 | 64 个 | 实际加载次数 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 同一个 key | 无缓存 | 1,398.58 | 1,430.35 | 1,417.42 | 1,456.69 | 64 |
+| 同一个 key | 从空缓存开始首次加载 | 44.20 | 44.20 | 52.64 | 82.18 | 1 |
+| 同一个 key | 全部命中缓存 | 15.02 | 16.45 | 23.81 | 51.90 | 0 |
+| 不同 key | 无缓存 | 1,415.30 | 1,418.52 | 1,451.63 | 1,492.18 | 64 |
+| 不同 key | 从空缓存开始首次加载 | 1,502.89 | 1,494.51 | 1,561.59 | 1,666.83 | 64 |
+| 不同 key | 全部命中缓存 | 14.82 | 16.60 | 24.40 | 57.47 | 0 |
 
-同 key 的首次请求共享一次加载，或命中刚安装的结果。不同 key 的首次请求各自需要加载；没有数据可以复用时，缓存会增加管理开销，不会减少这些首次后端计算。
+### GOMAXPROCS=4
 
-预热和每批之间清空冷缓存的准备成本不计时。预热阶段每个 key 加载一次，“全部命中”只统计正式测量阶段的加载。每个请求检查对应 key 的摘要，各模式都验证实际加载次数符合预期。
+| 请求的数据 | 缓存状态 | 1 个 goroutine | 4 个 | 16 个 | 64 个 | 实际加载次数 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 同一个 key | 无缓存 | 1,398.65 | 421.73 | 428.44 | 495.77 | 64 |
+| 同一个 key | 从空缓存开始首次加载 | 51.82 | 56.79 | 62.11 | 71.89 | 1 |
+| 同一个 key | 全部命中缓存 | 17.43 | 23.13 | 34.19 | 49.60 | 0 |
+| 不同 key | 无缓存 | 1,414.06 | 414.18 | 424.92 | 452.89 | 64 |
+| 不同 key | 从空缓存开始首次加载 | 1,758.86 | 442.75 | 476.14 | 529.24 | 64 |
+| 不同 key | 全部命中缓存 | 18.06 | 23.71 | 34.91 | 52.08 | 0 |
 
-测量日期为 2026-10-08，环境是 Go 1.27.1、macOS / darwin arm64、Apple M3 Pro。耗时取三次样本的中位数。[原始输出](benchmarks-concurrent-darwin-arm64.txt) 包含所有请求数量、分配数据和平均加入进行中加载的请求数量。
+### 如何理解结果
+
+CPU=1 时，无缓存计算没有因增加调用者而明显提速；CPU=4 时，4 个调用者把同 key 无缓存的整批耗时从 1,398.65 降至 421.73 微秒，约快 3.3 倍。不同 key 的首次加载也能利用 CPU 并行计算。
+
+同 key 首次加载在所有配置下都只执行一次 loader，随后请求共享进行中的加载或命中结果。不同 key 首次加载仍需要 64 次，缓存不会省掉尚未加载过的独立数据。
+
+命中缓存时，增加调用者没有提速。这些读取很短，计时还包含 goroutine 创建、调度和共享 Client 的同步成本。表格衡量整批请求完成耗时，不能把差异全部归因于锁竞争，也不表示每个请求都会变慢。
+
+预热和每批之间清空冷缓存的准备成本不计时。每次读取检查对应 key 的摘要，并验证所有配置的实际加载次数。测量日期为 2026-10-08，环境是 Go 1.27.1、macOS / darwin arm64、Apple M3 Pro。耗时取三次样本的中位数。[原始输出](benchmarks-concurrent-darwin-arm64.txt) 包含所有 CPU 与调用者数量组合及分配数据。
 
 ### 复现
 
-从仓库根目录运行所有请求数量，固定 CPU 并行度：
+从仓库根目录运行，比较两种 CPU 并行度：
 
 ```sh
-go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms -count=3 -cpu=4
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms -count=3 -cpu=1,4
 ```
 
-只运行 64 个请求的场景：
+仅比较 1 和 4 个调用者：
 
 ```sh
-go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Requests=64$' -benchmem -benchtime=200ms -count=3 -cpu=4
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Workers=(1|4)$' -benchmem -benchtime=200ms -count=3 -cpu=1,4
 ```
 
-测试名称直接表达场景，例如：`BenchmarkConcurrentFetch/Requests=64/SameKey/FirstLoad`。
+名称例如 `BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4`，`Workers=4` 表示 4 个调用者，末尾 `-4` 表示 GOMAXPROCS=4；GOMAXPROCS=1 时没有数字后缀。
 
 | 输出指标 | 含义 |
 | --- | --- |
-| `ns/op` | 一整批请求的总耗时，除以 1,000 得到微秒 |
-| `requests/batch` | 明确创建的请求 goroutine 数量：4、16、64 |
+| `ns/op` | 一整批 64 次请求的总耗时，除以 1,000 得到微秒 |
+| `requests/batch` | 每批请求数，固定为 64 |
+| `goroutines/batch` | 每批调用者 goroutine 数：1、4、16、64，不含 cacheq 内部 goroutine |
 | `loads/batch` | 测量阶段每批实际执行的 loader 次数 |
 | `merged/batch` | 每批加入进行中加载的平均请求数量 |
-| `B/op`、`allocs/op` | 整批内存分配，包含创建请求 goroutine 的成本 |
+| `B/op`、`allocs/op` | 整批内存分配，包含创建调用者 goroutine 的成本 |
 
 快速验证正确性和 race，不用于耗时结论：
 
 ```sh
-go test -race -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchtime=1x -cpu=4
+go test -race -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchtime=1x -cpu=1,4
 ```
 
-保持机器空闲，在相同条件下重复采样，并记录源码版本、Go 版本、CPU 和命令。这组 CPU 计算样本的收益取决于加载成本和复用程度；评估真实应用时应使用有代表性的加载负载。计时包含并发准备成本，不能直接和此前的单次读取数据比较。
+保持机器空闲，在相同条件下重复采样，并记录源码版本、Go 版本、CPU 和命令。这组 CPU 计算样本的收益取决于加载成本和复用程度；评估真实应用时应使用有代表性的加载负载。
 
-分析锁竞争时，仍然明确指定请求数量：
+分析锁竞争时，可以单独采集 profile：
 
 ```sh
-go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Requests=64$/SameKey/CacheHit$' -benchtime=3s -cpu=4 -mutexprofile=/tmp/cacheq-mutex.pprof -o /tmp/cacheq-profile.test
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Workers=64$/SameKey/CacheHit$' -benchtime=3s -cpu=4 -mutexprofile=/tmp/cacheq-mutex.pprof -o /tmp/cacheq-profile.test
 go tool pprof /tmp/cacheq-profile.test /tmp/cacheq-mutex.pprof
 ```
 
