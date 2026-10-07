@@ -271,7 +271,7 @@ func TestConditionalConsumers(t *testing.T) {
 		client,
 		"user:42",
 		fetch,
-		cacheq.QueryOptions{Enabled: false},
+		cacheq.QueryOptions{Enabled: new(bool)},
 	)
 	t.Cleanup(disabled.Close)
 	if disabled.Snapshot().Fetching || disabled.Snapshot().HasData || api.count("/users/42") != 0 {

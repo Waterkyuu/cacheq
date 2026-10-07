@@ -556,7 +556,7 @@ func TestGCSubscriptions(t *testing.T) {
 		client,
 		"a",
 		func(context.Context) (string, error) { return "unused", nil },
-		QueryOptions{Enabled: false},
+		QueryOptions{Enabled: new(bool)},
 	)
 	first, cancelFirst := firstHandle.Updates(), firstHandle.Close
 	defer cancelFirst()
@@ -564,7 +564,7 @@ func TestGCSubscriptions(t *testing.T) {
 		client,
 		"a",
 		func(context.Context) (string, error) { return "unused", nil },
-		QueryOptions{Enabled: false},
+		QueryOptions{Enabled: new(bool)},
 	)
 	second, cancelSecond := secondHandle.Updates(), secondHandle.Close
 	defer cancelSecond()

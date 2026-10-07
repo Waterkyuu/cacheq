@@ -83,7 +83,7 @@ func TestMaxAgeSubscriptions(t *testing.T) {
 	query := Query(c, "a", func(context.Context) (int, error) {
 		t.Fatal("disabled consumer started a load")
 		return 0, nil
-	}, QueryOptions{Enabled: false})
+	}, QueryOptions{Enabled: new(bool)})
 	t.Cleanup(query.Close)
 	<-query.Updates()
 	now.Store(int64(time.Minute))
