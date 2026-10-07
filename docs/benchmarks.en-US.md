@@ -118,6 +118,63 @@ Durations are medians of three samples.
 [Raw output](benchmarks-concurrent-darwin-arm64.txt) includes all combinations of
 CPU parallelism and caller count, together with allocations.
 
+### First-load profile investigation
+
+For **four callers, one shared key, first load**, collect CPU, mutex, and block
+profiles and execution traces separately for GOMAXPROCS=1 and 4. The recordings
+support two sources of overhead: resuming callers waiting for the load, and
+Client lock contention during subsequent cached reads.
+
+| Observed trace events | GOMAXPROCS=1 | GOMAXPROCS=4 |
+| --- | ---: | ---: |
+| Callers waiting for the load per batch, including its initiator | 1.00 | 4.00 |
+| Median time from being woken after the load to resuming execution | 0.19 µs | 4.93 µs |
+| Cache-lock blocking events per batch | 0 | 10.28 |
+
+Both traces contain 1,001 batches, including one calibration batch, with exactly
+one loader per batch. With one CPU slot, the other callers usually hit the newly
+cached result. With four slots, about three callers join the active load. The
+`pending` return path still returns data directly, but a waiting goroutine must
+be scheduled to resume first. Each caller also performs subsequent reads, and
+those cache hits still acquire the Client lock.
+
+The four-slot mutex profile attributes most lock waiting to the unlock site in
+`Client.fetch`: this is the stack that releases the lock and allows waiters to
+proceed, not evidence that `Unlock` itself performs expensive computation. The
+block profile also records lock waiting in `Client.fetch`. CPU samples include
+runtime scheduling, thread waiting, and wake-up functions. They cover the whole
+benchmark, including preparation excluded from `ns/op`, so overall CPU profile
+percentages are not used to estimate the cache's own elapsed time.
+
+Profiling and tracing change execution timing. These observations confirm
+waiting and resumption, but **cannot assign the original 12.59-microsecond
+difference precisely to locking or scheduling**. Waits overlap across goroutines;
+their totals are not batch elapsed time. See the
+[investigation record](benchmarks-firstload-profile-darwin-arm64.txt) for complete
+output and the trace event extraction method. The primary sequential comparison
+and ordinary concurrent timing samples retain their original values.
+
+Collect one-slot and four-slot recordings sequentially to avoid interference:
+
+```sh
+for cpu in 1 4; do
+  go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Workers=4$/^SameKey$/^FirstLoad$' \
+    -benchtime=2s -count=1 -cpu="$cpu" \
+    -cpuprofile="/tmp/cacheq-firstload-cpu${cpu}.pprof" \
+    -mutexprofile="/tmp/cacheq-firstload-mutex${cpu}.pprof" -mutexprofilefraction=1 \
+    -blockprofile="/tmp/cacheq-firstload-block${cpu}.pprof" -blockprofilerate=1 \
+    -o /tmp/cacheq-firstload-profile.test
+  /tmp/cacheq-firstload-profile.test -test.run '^$' \
+    -test.bench '^BenchmarkConcurrentFetch$/^Workers=4$/^SameKey$/^FirstLoad$' \
+    -test.benchtime=1000x -test.count=1 -test.cpu="$cpu" \
+    -test.trace="/tmp/cacheq-firstload-trace${cpu}.out"
+done
+
+go tool pprof -top /tmp/cacheq-firstload-profile.test /tmp/cacheq-firstload-mutex4.pprof
+go tool pprof -top /tmp/cacheq-firstload-profile.test /tmp/cacheq-firstload-block4.pprof
+go tool trace /tmp/cacheq-firstload-trace4.out
+```
+
 ### Reproduce
 
 Run from the repository root, comparing both CPU parallelism limits:

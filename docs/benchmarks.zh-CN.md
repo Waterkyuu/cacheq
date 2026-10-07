@@ -76,6 +76,43 @@ CPU=1 时，无缓存计算没有因增加调用者而明显提速；CPU=4 时�
 
 预热和每批之间清空冷缓存的准备成本不计时。每次读取检查对应 key 的摘要，并验证所有配置的实际加载次数。测量日期为 2026-10-08，环境是 Go 1.27.1、macOS / darwin arm64、Apple M3 Pro。耗时取三次样本的中位数。[原始输出](benchmarks-concurrent-darwin-arm64.txt) 包含所有 CPU 与调用者数量组合及分配数据。
 
+### 首次加载的 profile 调查
+
+针对上表的 **4 个调用者、同 key 首次加载**，分别采集 CPU、mutex、block profile 和执行 trace。诊断支持两个开销来源：等待加载的请求恢复执行，以及后续缓存读取争用 Client 的锁。
+
+| Trace 中实际记录的情况 | GOMAXPROCS=1 | GOMAXPROCS=4 |
+| --- | ---: | ---: |
+| 每批等待加载的请求数，包含发起者 | 1.00 | 4.00 |
+| 等待加载的请求被唤醒后，到恢复执行的中位耗时 | 0.19 微秒 | 4.93 微秒 |
+| 每批因缓存锁而暂停的事件数 | 0 | 10.28 |
+
+两次 trace 都记录了 1,001 批，包括 1 批预跑；每批仍然只执行一次 loader。单核下其他调用者通常直接命中新结果；四核下约 3 个调用者加入进行中的加载。`pending` 完成后直接返回数据的实现没有改变，但 goroutine 需要先被调度恢复执行。每个调用者还要完成后续读取，这些命中缓存的请求仍需取得 Client 的锁。
+
+四核 mutex profile 将主要锁等待归到 `Client.fetch` 的解锁位置；这是释放锁、让等待者继续的调用栈，不表示 `Unlock` 自身计算很慢。block profile 也记录了 `Client.fetch` 中的锁等待。CPU profile 出现了调度、线程等待和唤醒相关的 runtime 函数，但它覆盖整个 benchmark，包括不计入 `ns/op` 的准备步骤，因此不使用总体占比推算缓存自身耗时。
+
+profile 和 trace 会改变执行时序。这些数据可以确认等待和恢复执行确实发生，**不能把原表多出的 12.59 微秒精确分摊给锁或调度**。多个 goroutine 的等待时间也会重叠，不能相加当作整批耗时。完整输出和 trace 统计方法见 [调查原始记录](benchmarks-firstload-profile-darwin-arm64.txt)。串行主表与普通并发耗时样本保持原值。
+
+复现时先采集单核，再采集四核，避免两个测试相互争用 CPU：
+
+```sh
+for cpu in 1 4; do
+  go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Workers=4$/^SameKey$/^FirstLoad$' \
+    -benchtime=2s -count=1 -cpu="$cpu" \
+    -cpuprofile="/tmp/cacheq-firstload-cpu${cpu}.pprof" \
+    -mutexprofile="/tmp/cacheq-firstload-mutex${cpu}.pprof" -mutexprofilefraction=1 \
+    -blockprofile="/tmp/cacheq-firstload-block${cpu}.pprof" -blockprofilerate=1 \
+    -o /tmp/cacheq-firstload-profile.test
+  /tmp/cacheq-firstload-profile.test -test.run '^$' \
+    -test.bench '^BenchmarkConcurrentFetch$/^Workers=4$/^SameKey$/^FirstLoad$' \
+    -test.benchtime=1000x -test.count=1 -test.cpu="$cpu" \
+    -test.trace="/tmp/cacheq-firstload-trace${cpu}.out"
+done
+
+go tool pprof -top /tmp/cacheq-firstload-profile.test /tmp/cacheq-firstload-mutex4.pprof
+go tool pprof -top /tmp/cacheq-firstload-profile.test /tmp/cacheq-firstload-block4.pprof
+go tool trace /tmp/cacheq-firstload-trace4.out
+```
+
 ### 复现
 
 从仓库根目录运行，比较两种 CPU 并行度：
