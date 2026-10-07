@@ -1,101 +1,106 @@
-# Cache benefit benchmarks
+# Concurrent request benchmarks
 
 [简体中文](benchmarks.zh-CN.md)
 
-The main comparison answers a practical question: how much work does cacheq save
-when an application reads the same data repeatedly?
+These benchmarks simulate concurrent application requests calling cacheq. Every
+scenario explicitly starts **4, 16, or 64 request goroutines**. CPU parallelism
+is fixed separately at GOMAXPROCS=4; it does not set the request count.
 
-## Main comparison: 100 reads of the same data
+## Main comparison: 64 concurrent requests
 
-All three scenarios perform 100 sequential reads and return the same SHA-256
-digest of a fixed 64 KiB payload. They use the same loader, context, and result
-checks. Each reported duration covers **the complete batch of 100 reads**.
+Each batch serves 64 requests, either for one shared product key or for 64
+different product keys. All modes use the same loader: compute the SHA-256
+digest of a fixed 64 KiB payload for that key. Distinct keys have distinct payloads.
 
-| Scenario | Reads | Total time | Actual loader calls |
-| --- | ---: | ---: | ---: |
-| No cache: load for every read | 100 | 2,184.51 µs | 100 |
-| First load: start empty, then reuse the result | 100 | 46.56 µs | 1 |
-| Cache hits: start with a fresh cached result | 100 | 21.46 µs | 0 |
+| Requested data | Cache state | Total batch time | Actual loader calls |
+| --- | --- | ---: | ---: |
+| Same key | No cache | 429.02 µs | 64 |
+| Same key | First load from an empty cache | 71.17 µs | 1 |
+| Same key | All cache hits | 49.21 µs | 0 |
+| Different keys | No cache | 439.12 µs | 64 |
+| Different keys | First loads from an empty cache | 474.60 µs | 64 |
+| Different keys | All cache hits | 51.29 µs | 0 |
 
-“First load” includes one cache miss followed by 99 hits. It measures the cost of
-serving repeated requests starting with an empty cache. “Cache hits” measures 100
-hits after a separate warm-up; the warm-up's one loader call and duration are
-excluded from that row. Resetting the cold cache between batches is also excluded.
-Every batch verifies the returned digest, and each scenario asserts its exact
-loader count.
+Same-key cold requests share one load or reuse its newly cached result.
+Different-key cold requests each need their own load. The latter scenario
+exposes cache management overhead when nothing can yet be reused; caching does
+not remove those initial backend calculations.
 
-Measured on 2026-10-07 with Go 1.27.1, macOS / darwin arm64, Apple M3 Pro.
-Durations are medians of five samples, converted from ns/op to microseconds per
-batch. [Raw output](benchmarks-cache-benefit-darwin-arm64.txt) includes every
-sample and allocations.
+Warm-up and clearing between cold batches are excluded. Warm-up performs one
+load per key before measurement; the warm-cache row counts only measured loads.
+Every result is checked against the expected digest for its key, and each mode
+asserts the exact number of measured loader calls.
+
+Measured on 2026-10-08 with Go 1.27.1, macOS / darwin arm64, Apple M3 Pro.
+Durations are medians of three samples.
+[Raw output](benchmarks-concurrent-darwin-arm64.txt) includes every request count,
+allocation data, and the average number of requests joining an active load.
+
+## How concurrency is created
+
+For each batch:
+
+1. Create the specified number of goroutines, one per request.
+2. Each goroutine signals readiness and waits on the same start channel.
+3. After all are ready, close that channel to release the requests together.
+4. Each goroutine performs one direct loader call or one cacheq Fetch.
+5. Wait for all requests and check every result.
+
+This models the cache access inside simultaneous application requests. It calls
+Fetch directly and does not include HTTP transport, JSON encoding, or a real
+database. The timed batch includes goroutine creation, the start barrier,
+scheduling, reads, completion waits, and result checks. It is a complete burst
+duration, not per-request tail latency or steady-state cache-read throughput.
+
+The loader does deterministic CPU work without sleep-based delays. Same-key
+cold requests arriving while loading contribute to `merged/batch`; later ones
+can hit the newly installed result. The merge count is measured rather than
+assumed to be the request count minus one. In the recorded 64-request sample,
+the median of the per-run averages was 59.37 joined requests per batch.
+They all still resulted in exactly one load.
 
 ## Reproduce
 
-Run from the repository root:
+Run all request counts from the repository root, with CPU parallelism fixed:
 
 ```sh
-go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -benchtime=300ms -count=5 -cpu=1
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms -count=3 -cpu=4
 ```
 
-In Go's output, one operation is one batch: `ns/op` is the total time for 100
-reads, `reads/batch` is 100, and `loads/batch` is 100, 1, or 0. Divide ns/op by
-1,000 to get the microsecond totals in the main table. `B/op` and `allocs/op`
-also apply to a complete batch.
-
-The SHA-256 loader performs deterministic CPU work without network requests or
-artificial sleeps. This is a reproducible example of avoiding repeated backend
-work. The benefit depends on the real loader's cost, freshness window, and hit
-rate; replace the workload with your application's loader before estimating its
-benefit. The sample does not measure request merging, failures, or retries.
-
-For a quick correctness check:
+Run only the 64-request scenarios:
 
 ```sh
-go test -race -run '^$' -bench '^BenchmarkCacheBenefit$' -benchtime=1x
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Requests=64$' -benchmem -benchtime=200ms -count=3 -cpu=4
 ```
 
-Use ordinary builds for timings. Record the source revision, Go version, OS,
-architecture, CPU, command, and all samples. Keep the machine idle and compare
-repeated samples under the same conditions.
+Benchmark names describe the scenario directly, for example:
+`BenchmarkConcurrentFetch/Requests=64/SameKey/FirstLoad`.
 
-## Internal cost and concurrency diagnostics
-
-The remaining benchmarks help maintainers investigate API overhead and
-contention. Their earlier [raw sample](benchmarks-darwin-arm64.txt) is retained
-separately from the cache-benefit comparison.
-
-| Benchmark | One operation measures |
+| Output | Meaning |
 | --- | --- |
-| `CacheHit/Get`, `Fetch`, `Snapshot` | One warm typed public API read |
-| `CacheHit/MapMutexReference` | A locked map read without query lifecycle management |
-| `ParallelFetch/Keys=1,1024` | One warm Fetch across concurrent workers |
-| `SharedLoad/Consumers=1,8,64` | One concurrent subscription burst, including registration and cleanup |
-| `SubscriberUpdates/Subscribers=1,16,128` | One Set and its notifications; Consumed also drains every notification |
-| `CapacityEviction/Entries=64,1024` | One write that evicts an entry from a full LRU cache |
-| `GCRetentionRead/GCTime=0s,1h0m0s` | One read with inactive retention disabled or a timer rescheduled |
+| `ns/op` | Total time for a complete request batch; divide by 1,000 for microseconds |
+| `requests/batch` | The explicit number of request goroutines: 4, 16, or 64 |
+| `loads/batch` | Actual loader calls in the measured batch |
+| `merged/batch` | Average requests that joined a load while it was active |
+| `B/op`, `allocs/op` | Allocations for the entire batch, including request goroutine setup |
 
-SharedLoad holds the loader behind a channel barrier until every consumer has
-registered. It checks for exactly one load per burst and one join per additional
-consumer. LatestOnly subscriber tests exercise snapshot replacement for slow
-consumers. Capacity tests check for one eviction per write. GCRetentionRead
-measures timer scheduling, not expiration or collection throughput.
-
-The map-and-mutex reference supplies fewer semantics than cacheq and cannot
-demonstrate the benefit of caching. ParallelFetch's ns/op represents aggregate
-throughput, not per-request tail latency. Increasing GOMAXPROCS affects concurrent
-workers; it does not turn serial benchmarks into parallel workloads.
-
-Run the dedicated concurrency diagnostics when investigating scalability:
+For correctness and race checking, without performance claims:
 
 ```sh
-go test -run '^$' -bench '^BenchmarkParallelFetch$' -benchmem -count=3 -cpu=1,4
+go test -race -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchtime=1x -cpu=4
 ```
 
-To collect a mutex profile:
+Keep the machine idle and compare repeated samples under the same conditions.
+Record the source revision, Go version, CPU, and command. This CPU-bound sample's
+benefit depends on load cost and reuse; use a representative application loader
+when evaluating a real workload. Timings include concurrency setup costs and
+cannot be compared directly with older single-read measurements.
+
+To investigate lock contention while keeping the request count explicit:
 
 ```sh
-go test -run '^$' -bench '^BenchmarkParallelFetch$' -benchtime=3s -cpu=4 -mutexprofile=/tmp/cacheq-mutex.pprof -o /tmp/cacheq-profile.test
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Requests=64$/SameKey/CacheHit$' -benchtime=3s -cpu=4 -mutexprofile=/tmp/cacheq-mutex.pprof -o /tmp/cacheq-profile.test
 go tool pprof /tmp/cacheq-profile.test /tmp/cacheq-mutex.pprof
 ```
 
-Profiling adds overhead; collect ordinary timings separately.
+Collect ordinary timings separately from profiling.
