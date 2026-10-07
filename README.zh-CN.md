@@ -136,7 +136,7 @@ go run .
 
 ## 可复现的 benchmark
 
-对同一份数据读取 100 次，比较**无缓存、首次加载和缓存命中**，见 [benchmark 文档](docs/benchmarks.zh-CN.md)。主表展示总耗时和实际加载次数，内部开销与并发诊断单独说明。
+对同一份数据**串行读取 100 次**，比较**无缓存、首次加载和缓存命中**，见 [benchmark 文档](docs/benchmarks.zh-CN.md)。主表展示总耗时和实际加载次数，内部开销与并发诊断单独说明。
 
 ```sh
 go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
