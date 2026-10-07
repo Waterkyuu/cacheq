@@ -50,6 +50,9 @@ type Options struct {
 	MaxAge time.Duration
 	// Retry limits additional attempts after the initial load; zero disables retries.
 	Retry int
+	// RetryIf permits another attempt for an error, subject to Retry and cancellation.
+	// Nil retries every error except cancellation and deadline expiration; it runs outside the client lock.
+	RetryIf func(error) bool
 	// RetryDelay supplies the delay before each additional attempt, numbered from one.
 	// Nil uses exponential backoff capped at thirty seconds.
 	RetryDelay func(attempt int) time.Duration
@@ -59,11 +62,72 @@ type Options struct {
 	Clock func() time.Time
 }
 
-// QueryOptions controls automatic loading for one query handle without disabling other consumers.
+// FetchOptions overrides freshness and request behavior for one imperative fetch.
+// Nil fields inherit Client defaults; pointer fields allow explicit zero values.
+// Capacity, data age, garbage collection, and the clock remain owned by the Client.
+// Callbacks run outside the Client lock and must synchronize any captured mutable state.
+type FetchOptions struct {
+	// StaleTime overrides this consumer's freshness for ordinary data; zero makes it immediately stale.
+	// Explicit deadlines from FetchWithExpiry remain authoritative.
+	StaleTime *time.Duration
+	// Retry overrides the number of additional attempts; zero disables retries.
+	Retry *int
+	// RetryIf overrides which errors permit another attempt within the retry limit.
+	// To allow every non-cancellation error despite a Client predicate, supply a function returning true.
+	RetryIf func(error) bool
+	// RetryDelay overrides the delay before each additional attempt, numbered from one.
+	RetryDelay func(attempt int) time.Duration
+	// Timeout overrides the whole load's deadline, including retries; zero adds no Client timeout.
+	Timeout *time.Duration
+}
+
+// resolvePolicy copies overrides into an independent policy without retaining caller-owned pointers.
+func resolvePolicy(options Options, policy FetchOptions) Options {
+	if policy.StaleTime != nil {
+		options.StaleTime = *policy.StaleTime
+	}
+	if policy.Retry != nil {
+		options.Retry = *policy.Retry
+	}
+	if policy.RetryIf != nil {
+		options.RetryIf = policy.RetryIf
+	}
+	if policy.RetryDelay != nil {
+		options.RetryDelay = policy.RetryDelay
+	}
+	if policy.Timeout != nil {
+		options.Timeout = *policy.Timeout
+	}
+	return options
+}
+
+// QueryOptions controls one handle's automatic loading, freshness, retry policy, and timeout.
 // Query defaults to enabled when this optional configuration is omitted.
+// Nil fields inherit Client defaults; supplied options retain Enabled's existing zero-value behavior.
+// Pointer values are copied; callbacks run outside the Client lock and must synchronize captured mutable state.
 type QueryOptions struct {
 	// Enabled allows initial loading and invalidation refreshes; false keeps the handle passive.
 	Enabled bool
+	// StaleTime overrides this handle's freshness for ordinary shared data; nil inherits Client defaults.
+	// Explicit deadlines from FetchWithExpiry remain authoritative.
+	StaleTime *time.Duration
+	// Retry overrides additional attempts for loads this handle initiates; zero disables retries.
+	Retry *int
+	// RetryIf overrides which errors permit another attempt within the retry limit.
+	RetryIf func(error) bool
+	// RetryDelay overrides the delay before each additional attempt, numbered from one.
+	RetryDelay func(attempt int) time.Duration
+	// Timeout overrides this handle's whole-load timeout; zero adds no Client timeout.
+	// Joining an existing request preserves its initiator's retry and timeout policy.
+	Timeout *time.Duration
+}
+
+// fetchOptions extracts request overrides without applying observer enablement to imperative calls.
+func (o QueryOptions) fetchOptions() FetchOptions {
+	return FetchOptions{
+		StaleTime: o.StaleTime, Retry: o.Retry, RetryIf: o.RetryIf,
+		RetryDelay: o.RetryDelay, Timeout: o.Timeout,
+	}
 }
 
 // RefetchMode controls whether invalidation starts background work for subscribed queries.
@@ -99,7 +163,7 @@ type Snapshot[V any] struct {
 	Fetching bool
 	// UpdatedAt records when Data was last installed in the cache.
 	UpdatedAt time.Time
-	// ExpiresAt is the absolute freshness deadline, or zero for invalidated data.
+	// ExpiresAt is this consumer's effective freshness deadline, or zero for invalidated data.
 	ExpiresAt time.Time
 }
 
