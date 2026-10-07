@@ -61,81 +61,105 @@ repeated samples under the same conditions.
 
 ## Concurrent request scenarios
 
-`BenchmarkConcurrentFetch` simulates concurrent application requests calling cacheq. Every
-scenario explicitly starts **4, 16, or 64 request goroutines**. CPU parallelism
-is fixed separately at GOMAXPROCS=4; it does not set the request count.
+Keep each batch at **64 requests**, compare **1, 4, 16, and 64 caller goroutines**,
+and measure separately with **GOMAXPROCS=1 and 4**. One goroutine handles all
+64 requests sequentially; multiple goroutines divide those same 64 requests.
+GOMAXPROCS limits CPU parallelism for Go code and is configured independently
+of the caller count.
 
-### 64 concurrent requests
-
-Each batch serves 64 requests, either for one shared product key or for 64
-different product keys. All modes use the same loader: compute the SHA-256
+Read either one shared key or 64 distinct keys, comparing no cache, first loads,
+and cache hits. Every configuration uses the same loader: compute the SHA-256
 digest of a fixed 64 KiB payload for that key. Distinct keys have distinct payloads.
+All times below are **microseconds per complete batch of 64 requests**; lower is faster.
 
-| Requested data | Cache state | Total batch time | Actual loader calls |
-| --- | --- | ---: | ---: |
-| Same key | No cache | 429.02 µs | 64 |
-| Same key | First load from an empty cache | 71.17 µs | 1 |
-| Same key | All cache hits | 49.21 µs | 0 |
-| Different keys | No cache | 439.12 µs | 64 |
-| Different keys | First loads from an empty cache | 474.60 µs | 64 |
-| Different keys | All cache hits | 51.29 µs | 0 |
+### GOMAXPROCS=1
 
-Same-key cold requests share one load or reuse its newly cached result.
-Different-key cold requests each need their own load. The latter scenario
-exposes cache management overhead when nothing can yet be reused; caching does
-not remove those initial backend calculations.
+| Requested data | Cache state | 1 goroutine | 4 | 16 | 64 | Actual loader calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Same key | No cache | 1,398.58 | 1,430.35 | 1,417.42 | 1,456.69 | 64 |
+| Same key | First loads from an empty cache | 44.20 | 44.20 | 52.64 | 82.18 | 1 |
+| Same key | All cache hits | 15.02 | 16.45 | 23.81 | 51.90 | 0 |
+| Different keys | No cache | 1,415.30 | 1,418.52 | 1,451.63 | 1,492.18 | 64 |
+| Different keys | First loads from an empty cache | 1,502.89 | 1,494.51 | 1,561.59 | 1,666.83 | 64 |
+| Different keys | All cache hits | 14.82 | 16.60 | 24.40 | 57.47 | 0 |
 
-Warm-up and clearing between cold batches are excluded. Warm-up performs one
-load per key before measurement; the warm-cache row counts only measured loads.
-Every result is checked against the expected digest for its key, and each mode
-asserts the exact number of measured loader calls.
+### GOMAXPROCS=4
 
+| Requested data | Cache state | 1 goroutine | 4 | 16 | 64 | Actual loader calls |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Same key | No cache | 1,398.65 | 421.73 | 428.44 | 495.77 | 64 |
+| Same key | First loads from an empty cache | 51.82 | 56.79 | 62.11 | 71.89 | 1 |
+| Same key | All cache hits | 17.43 | 23.13 | 34.19 | 49.60 | 0 |
+| Different keys | No cache | 1,414.06 | 414.18 | 424.92 | 452.89 | 64 |
+| Different keys | First loads from an empty cache | 1,758.86 | 442.75 | 476.14 | 529.24 | 64 |
+| Different keys | All cache hits | 18.06 | 23.71 | 34.91 | 52.08 | 0 |
+
+### Interpreting the results
+
+With GOMAXPROCS=1, more callers do not substantially accelerate uncached
+computation. With GOMAXPROCS=4, four callers reduce the same-key uncached batch
+from 1,398.65 to 421.73 microseconds, about 3.3 times faster. First loads for
+distinct keys can also benefit from parallel CPU computation.
+
+Same-key first loads execute the loader once in every configuration. Later
+requests either join the active load or reuse its cached result. First loads
+for distinct keys still require 64 loader calls; caching cannot skip the initial
+computation for independent data.
+
+Cache hits do not get faster with more callers in this sample. Those reads are
+short, and timing includes goroutine creation, scheduling, and shared Client
+synchronization. These are batch completion times; the differences cannot all
+be attributed to lock contention and do not imply that every request gets slower.
+
+Warm-up and clearing between cold batches are excluded. Every read checks its
+key's expected digest, and every configuration verifies its exact loader count.
 Measured on 2026-10-08 with Go 1.27.1, macOS / darwin arm64, Apple M3 Pro.
 Durations are medians of three samples.
-[Raw output](benchmarks-concurrent-darwin-arm64.txt) includes every request count,
-allocation data, and the average number of requests joining an active load.
+[Raw output](benchmarks-concurrent-darwin-arm64.txt) includes all combinations of
+CPU parallelism and caller count, together with allocations.
 
 ### Reproduce
 
-Run all request counts from the repository root, with CPU parallelism fixed:
+Run from the repository root, comparing both CPU parallelism limits:
 
 ```sh
-go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms -count=3 -cpu=4
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms -count=3 -cpu=1,4
 ```
 
-Run only the 64-request scenarios:
+Compare only one and four callers:
 
 ```sh
-go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Requests=64$' -benchmem -benchtime=200ms -count=3 -cpu=4
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Workers=(1|4)$' -benchmem -benchtime=200ms -count=3 -cpu=1,4
 ```
 
-Benchmark names describe the scenario directly, for example:
-`BenchmarkConcurrentFetch/Requests=64/SameKey/FirstLoad`.
+For example, `BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4` means
+four callers (`Workers=4`) with GOMAXPROCS=4 (the `-4` suffix).
+GOMAXPROCS=1 has no numeric suffix.
 
 | Output | Meaning |
 | --- | --- |
-| `ns/op` | Total time for a complete request batch; divide by 1,000 for microseconds |
-| `requests/batch` | The explicit number of request goroutines: 4, 16, or 64 |
+| `ns/op` | Total time for a complete batch of 64 requests; divide by 1,000 for microseconds |
+| `requests/batch` | Requests per batch, fixed at 64 |
+| `goroutines/batch` | Caller goroutines per batch: 1, 4, 16, or 64; excludes cacheq's internal goroutines |
 | `loads/batch` | Actual loader calls in the measured batch |
 | `merged/batch` | Average requests that joined a load while it was active |
-| `B/op`, `allocs/op` | Allocations for the entire batch, including request goroutine setup |
+| `B/op`, `allocs/op` | Allocations for the entire batch, including caller goroutine setup |
 
 For correctness and race checking, without performance claims:
 
 ```sh
-go test -race -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchtime=1x -cpu=4
+go test -race -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchtime=1x -cpu=1,4
 ```
 
 Keep the machine idle and compare repeated samples under the same conditions.
 Record the source revision, Go version, CPU, and command. This CPU-bound sample's
 benefit depends on load cost and reuse; use a representative application loader
-when evaluating a real workload. Timings include concurrency setup costs and
-cannot be compared directly with older single-read measurements.
+when evaluating a real workload.
 
-To investigate lock contention while keeping the request count explicit:
+To investigate lock contention, collect a separate profile:
 
 ```sh
-go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Requests=64$/SameKey/CacheHit$' -benchtime=3s -cpu=4 -mutexprofile=/tmp/cacheq-mutex.pprof -o /tmp/cacheq-profile.test
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Workers=64$/SameKey/CacheHit$' -benchtime=3s -cpu=4 -mutexprofile=/tmp/cacheq-mutex.pprof -o /tmp/cacheq-profile.test
 go tool pprof /tmp/cacheq-profile.test /tmp/cacheq-mutex.pprof
 ```
 
