@@ -22,6 +22,7 @@
 - Each query retains static typing; incompatible types for a key return an error.
 - One `Query` entry point supplies state, updates, enablement, and manual refresh.
 - Freshness, background refresh, same-key request sharing, retries, and load timeouts.
+- Per-consumer freshness, retry filtering, and timeout overrides through query and fetch options.
 - Single-key, mixed-type batch, and predicate invalidation with optional deferred refresh.
 - Local writes, prefetching, cancellation, and inactive cache cleanup.
 
@@ -83,6 +84,7 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | Guide | Coverage |
 | --- | --- |
 | [Queries and conditions](docs/queries.en-US.md) | `Query`, snapshots, updates, enablement, refresh, `Fetch`, and HTTP loaders |
+| [Query options](docs/query-options.en-US.md) | Per-consumer defaults, independent freshness, filtered retries, timeouts, and shared request ownership |
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
 | [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
 | [Observability](docs/observability.en-US.md) | Cache hits, shared requests, load outcomes and duration, retries, and cleanup statistics |

@@ -80,6 +80,16 @@ export const chapters: Chapter[] = [
 				"了解 cacheq 的版本与升级规则：公开 API 兼容性、v0 与稳定版本的发布规则、弃用策略、Go 版本支持和升级方式。",
 		},
 	},
+	{
+		id: "query-options",
+		zh: "查询配置",
+		en: "Query options",
+		description: {
+			en: "Override cacheq Client defaults per query or fetch in Go. Configure independent freshness, filtered retries, and timeouts while sharing same-key data and requests.",
+			"zh-CN":
+				"在 Go 中通过 cacheq 的每次查询或获取调用覆盖客户端默认配置，独立判断新鲜度，设置重试错误判断和超时，同时共享同键数据与请求。",
+		},
+	},
 ];
 
 // Adapt repository documentation without creating another maintained copy.
