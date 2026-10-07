@@ -10,8 +10,10 @@ import (
 type subscription struct {
 	// enabled permits this handle to initiate automatic requests.
 	enabled bool
-	// load retains this handle's erased loader without exposing untyped values to callers.
-	load Loader[any]
+	// request retains this consumer's loader and copied policy without exposing untyped results to callers.
+	request queryRequest
+	// order identifies this consumer's place in automatic refresh selection.
+	order uint64
 	// publish installs a typed snapshot in the handle's bounded updates channel.
 	publish func(Snapshot[any])
 	// close ends the handle's channel after its subscription has been detached.
@@ -35,12 +37,16 @@ type QueryHandle[V any] struct {
 
 // Query creates a typed handle and loads missing or stale data in the background.
 // Automatic loading defaults to enabled; if options are supplied, the last option wins.
+// Nil policy fields inherit Client defaults; each handle evaluates its own ordinary freshness.
+// Concurrent loads share the initiator's policy; automatic invalidation uses the oldest enabled handle.
 // Invalid keys, incompatible result types, and nil fetchers are reported through Snapshot and Updates.
 // Disabled handles still receive shared updates and may explicitly Refetch. Close releases the subscription.
 func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOptions) *QueryHandle[V] {
 	enabled := true
+	policy := client.options
 	for _, option := range options {
 		enabled = option.Enabled
+		policy = resolvePolicy(client.options, option.fetchOptions())
 	}
 	handle := &QueryHandle[V]{client: client, key: key, updates: make(chan Snapshot[V], 1)}
 	client.mu.Lock()
@@ -58,10 +64,12 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOpt
 	_ = client.bindLocked(key, reflect.TypeFor[V]())
 	observer := &subscription{
 		enabled: enabled,
-		load:    eraseLoader(client, fetch),
+		request: eraseFetcher(fetch, policy),
+		order:   client.nextObserver,
 		publish: func(state Snapshot[any]) { publishLatest(handle.updates, typedSnapshot[V](state)) },
 		close:   func() { close(handle.updates) },
 	}
+	client.nextObserver++
 	handle.observer = observer
 	if client.observers[key] == nil {
 		client.observers[key] = make(map[*subscription]struct{})
@@ -73,9 +81,9 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOpt
 	}
 	client.touchCapacityLocked(key)
 	if enabled {
-		client.loadObservedLocked(key, observer.load)
+		client.loadObservedLocked(key, observer.request)
 	}
-	observer.publish(client.snapshotLocked(key))
+	observer.publish(client.withFreshnessLocked(key, client.snapshotLocked(key), policy))
 	return handle
 }
 
@@ -85,7 +93,7 @@ func (h *QueryHandle[V]) Snapshot() Snapshot[V] {
 	if h.err != nil {
 		return Snapshot[V]{Status: Error, Stale: true, Err: h.err}
 	}
-	return Get[V](h.client, h.key)
+	return getSnapshot[V](h.client, h.key, h.observer.request.options)
 }
 
 // Updates returns the initial and latest states; slow readers may skip intermediate transitions.
@@ -105,7 +113,7 @@ func (h *QueryHandle[V]) SetEnabled(enabled bool) error {
 	}
 	h.observer.enabled = enabled
 	if enabled {
-		c.loadObservedLocked(h.key, h.observer.load)
+		c.loadObservedLocked(h.key, h.observer.request)
 	}
 	return nil
 }
@@ -121,7 +129,7 @@ func (h *QueryHandle[V]) Refetch(ctx context.Context) (V, error) {
 		ctx,
 		h.key,
 		reflect.TypeFor[V](),
-		h.observer.load,
+		h.observer.request,
 		true,
 		h.observer,
 	)
@@ -168,7 +176,29 @@ func Fetch[V any](ctx context.Context, client *Client, key any, fetch Fetcher[V]
 		ctx,
 		key,
 		reflect.TypeFor[V](),
-		eraseLoader(client, fetch),
+		eraseFetcher(fetch, client.options),
+		false,
+		nil,
+	)
+	return typedValue[V](value), err
+}
+
+// FetchWithOptions waits for data using this call's copied overrides of Client defaults.
+// Ordinary freshness is evaluated independently; explicit loader deadlines stay authoritative.
+// Joining in-flight work preserves its initiator's loader, retries, and timeout.
+// Canceling ctx stops this caller's wait; a configured timeout applies only to loads it starts.
+func FetchWithOptions[V any](
+	ctx context.Context,
+	client *Client,
+	key any,
+	fetch Fetcher[V],
+	options FetchOptions,
+) (V, error) {
+	value, err := client.fetch(
+		ctx,
+		key,
+		reflect.TypeFor[V](),
+		eraseFetcher(fetch, resolvePolicy(client.options, options)),
 		false,
 		nil,
 	)
@@ -189,7 +219,7 @@ func FetchWithExpiry[V any](ctx context.Context, client *Client, key any, load L
 		ctx,
 		key,
 		reflect.TypeFor[V](),
-		erased,
+		queryRequest{load: erased, options: client.options},
 		false,
 		nil,
 	)
@@ -210,6 +240,11 @@ func Prefetch[V any](ctx context.Context, client *Client, key any, fetch Fetcher
 // Get reads typed cached state without starting a request or binding a previously unused key.
 // Incompatible result types return ErrTypeMismatch instead of panicking or exposing another query's data.
 func Get[V any](client *Client, key any) Snapshot[V] {
+	return getSnapshot[V](client, key, client.options)
+}
+
+// getSnapshot reads shared state using one consumer's freshness without changing another consumer's policy.
+func getSnapshot[V any](client *Client, key any, options Options) Snapshot[V] {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if err := client.checkLocked(key, reflect.TypeFor[V]()); err != nil {
@@ -220,7 +255,7 @@ func Get[V any](client *Client, key any) Snapshot[V] {
 	}
 	client.touchCapacityLocked(key)
 	client.touchGCLocked(key)
-	return typedSnapshot[V](client.snapshotLocked(key))
+	return typedSnapshot[V](client.withFreshnessLocked(key, client.snapshotLocked(key), options))
 }
 
 // Set installs a typed local result, cancels older loads, and notifies all compatible handles.
@@ -235,7 +270,7 @@ func Set[V any](client *Client, key any, value V) error {
 	now := client.options.Clock()
 	client.entries[key] = entry{
 		typ: reflect.TypeFor[V](), value: value, hasData: true, updatedAt: now,
-		expiresAt: client.limitExpiry(now, now.Add(client.options.StaleTime)),
+		expiresAt: client.limitExpiry(now, now.Add(client.options.StaleTime)), ordinary: true,
 	}
 	client.touchCapacityLocked(key)
 	client.touchGCLocked(key)
@@ -248,7 +283,7 @@ func (c *Client) fetch(
 	ctx context.Context,
 	key any,
 	typ reflect.Type,
-	load Loader[any],
+	request queryRequest,
 	force bool,
 	observer *subscription,
 ) (any, error) {
@@ -277,7 +312,8 @@ func (c *Client) fetch(
 			c.notifyLocked(key)
 		}
 		cached := c.entries[key]
-		fresh := cached.hasData && c.options.Clock().Before(cached.expiresAt)
+		state := c.withFreshnessLocked(key, c.snapshotLocked(key), request.options)
+		fresh := !state.Stale
 		if useCache && !countedLookup {
 			c.recordLookupLocked(fresh)
 			countedLookup = true
@@ -288,7 +324,7 @@ func (c *Client) fetch(
 			c.mu.Unlock()
 			return cached.value, cached.err
 		}
-		if load == nil {
+		if request.load == nil {
 			c.mu.Unlock()
 			return nil, ErrNoFetcher
 		}
@@ -299,13 +335,14 @@ func (c *Client) fetch(
 		if force {
 			cached = c.entries[key]
 			cached.expiresAt = time.Time{}
+			cached.invalidated = true
 			c.entries[key] = cached
 			c.notifyLocked(key)
 			force = false
 		}
 		pending := c.pending[key]
 		if pending == nil {
-			pending = c.startLocked(ctx, key, load)
+			pending = c.startLocked(ctx, key, request)
 		} else if !countedMerge {
 			// Owner cancellation can repeat this loop, but one caller still represents one shared request.
 			c.stats.MergedRequests++
@@ -329,8 +366,8 @@ func (c *Client) fetch(
 }
 
 // loadObservedLocked records an enabled consumer's cache decision and starts or joins a stale load.
-func (c *Client) loadObservedLocked(key any, load Loader[any]) {
-	state := c.snapshotLocked(key)
+func (c *Client) loadObservedLocked(key any, request queryRequest) {
+	state := c.withFreshnessLocked(key, c.snapshotLocked(key), request.options)
 	c.recordLookupLocked(!state.Stale)
 	if !state.Stale {
 		return
@@ -339,21 +376,20 @@ func (c *Client) loadObservedLocked(key any, load Loader[any]) {
 		c.stats.MergedRequests++
 		return
 	}
-	c.startLocked(c.ctx, key, load)
+	c.startLocked(c.ctx, key, request)
 }
 
-// eraseLoader retains static typing at the API boundary while sharing a single heterogeneous cache.
-func eraseLoader[V any](client *Client, fetch Fetcher[V]) Loader[any] {
+// eraseFetcher copies an ordinary fetcher's policy and retains static typing at the API boundary.
+func eraseFetcher[V any](fetch Fetcher[V], options Options) queryRequest {
+	request := queryRequest{options: options, ordinary: true}
 	if fetch == nil {
-		return nil
+		return request
 	}
-	return func(ctx context.Context) (any, time.Time, error) {
+	request.load = func(ctx context.Context) (any, time.Time, error) {
 		value, err := fetch(ctx)
-		if err != nil {
-			return value, time.Time{}, err
-		}
-		return value, client.options.Clock().Add(client.options.StaleTime), nil
+		return value, time.Time{}, err
 	}
+	return request
 }
 
 // typedValue restores a value only after its static type has been checked under the client lock.
