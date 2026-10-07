@@ -51,9 +51,8 @@ func main() {
 	})
 	defer steady.Close()
 
-	enabled := false
 	live := cacheq.Query(client, "greeting", load, cacheq.QueryOptions{
-		Enabled:   &enabled,
+		Disable:   true,
 		StaleTime: &immediate,
 	})
 	defer live.Close()
@@ -87,7 +86,7 @@ loads=1; retries=1
 
 | 字段 | 未设置 / nil | 显式覆盖 |
 | --- | --- | --- |
-| `Enabled` | 默认自动加载 | 布尔指针；false 明确关闭自动加载 |
+| `Disable` | 默认为 false，允许自动加载 | true 明确关闭自动加载 |
 | `StaleTime` | 使用 Client 新鲜时间 | 时长指针；零值让普通数据立即过期 |
 | `Retry` | 使用 Client 重试次数 | 整数指针；零值关闭额外重试 |
 | `Timeout` | 使用 Client 超时 | 时长指针；零值取消 Client 超时限制，调用方 context 的取消和截止时间仍然有效 |
@@ -96,7 +95,7 @@ loads=1; retries=1
 
 调用或创建 handle 时会复制指针指向的值，之后修改原变量不会改变该 handle。回调闭包仍然引用其捕获的状态，多次加载共享可变状态时需要自行同步。handle 在启用状态切换和 `Refetch` 时继续使用创建时的策略。
 
-`Enabled` 为 nil 时默认自动加载，即使传入空 `QueryOptions` 或只覆盖新鲜时间。明确传入指向 false 的指针才会禁用自动加载。创建时会复制开关值，之后通过 `SetEnabled` 修改。传入多个 `QueryOptions` 时，仅最后一份配置覆盖 Client 默认值。
+`Disable` 默认为 false，因此空 `QueryOptions` 或只覆盖新鲜时间时都允许自动加载。设置 `Disable: true` 才会禁用自动加载。创建时会复制开关值，之后通过 `SetEnabled` 修改。传入多个 `QueryOptions` 时，仅最后一份配置覆盖 Client 默认值。
 
 Client 的 `Options` 和每个消费者的配置都可以设置 `RetryIf`。只有错误允许重试且剩余次数足够时才会调用判断函数；取消和截止时间错误永不重试。nil 继承 Client 判断函数；如需覆盖 Client 的限制，可提供始终返回 true 的函数。判断函数与延时函数在 Client 锁外执行，可以调用 Client API。
 
@@ -118,7 +117,7 @@ Client 的 `Options` 和每个消费者的配置都可以设置 `RetryIf`。只�
 
 ## 开关配置迁移
 
-`QueryOptions.Enabled` 从 `bool` 改为 `*bool`。原来的 `Enabled: true` 可以直接省略，使用默认开启。原来的 `Enabled: false` 改为先声明 `enabled := false`，再传入 `Enabled: &enabled`。空 `QueryOptions{}` 现在默认开启加载；原先用空配置关闭加载的调用必须改为显式 false 指针。已有的 `SetEnabled(bool)` 调用不变。
+v0.1.1 的 `QueryOptions.Enabled *bool` 替换为 `Disable bool`。原来的 `Enabled` 为 nil 或指向 true 时，直接省略 `Disable`；指向 false 时，改为 `Disable: true`。如果开关来自计算得到的布尔值，使用 `Disable: !enabled`。空 `QueryOptions{}` 和只覆盖新鲜时间仍默认自动加载。已有的 `SetEnabled(bool)` 调用不变。
 
 ## 验证
 

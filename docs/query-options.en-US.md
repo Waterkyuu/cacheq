@@ -51,9 +51,8 @@ func main() {
 	})
 	defer steady.Close()
 
-	enabled := false
 	live := cacheq.Query(client, "greeting", load, cacheq.QueryOptions{
-		Enabled:   &enabled,
+		Disable:   true,
 		StaleTime: &immediate,
 	})
 	defer live.Close()
@@ -87,7 +86,7 @@ loads=1; retries=1
 
 | Field | Omitted / nil | Explicit override |
 | --- | --- | --- |
-| `Enabled` | Automatic loading enabled | Boolean pointer; false disables automatic loading |
+| `Disable` | False permits automatic loading | True disables automatic loading |
 | `StaleTime` | Use Client freshness | Pointer to a duration; zero makes ordinary data immediately stale |
 | `Retry` | Use Client retry count | Pointer to an integer; zero disables additional attempts |
 | `Timeout` | Use Client timeout | Pointer to a duration; zero removes the Client timeout, while caller cancellation and deadlines still apply |
@@ -96,7 +95,7 @@ loads=1; retries=1
 
 Pointer values are copied when a call or handle is created. Later mutation of the source variables does not reconfigure a handle. Callback closures retain their captured state; synchronize it when shared across loads. A handle keeps its policy through enablement changes and `Refetch`.
 
-`Enabled` defaults to automatic loading when nil, even with an empty `QueryOptions` or freshness-only overrides. Use a pointer to false to disable automatic loading explicitly. The flag is copied at construction; use `SetEnabled` to change it later. When several `QueryOptions` arguments are supplied, only the last one's fields are applied over Client defaults.
+`Disable` defaults to false, so an empty `QueryOptions` or freshness-only overrides permit automatic loading. Set `Disable: true` to disable automatic loading explicitly. The flag is copied at construction; use `SetEnabled` to change it later. When several `QueryOptions` arguments are supplied, only the last one's fields are applied over Client defaults.
 
 `RetryIf` is available in both Client `Options` and per-consumer options. It is consulted only for retryable errors while attempts remain. Cancellation and deadline errors never retry. Nil inherits the Client predicate; to override a restrictive Client predicate, provide a function returning true. Predicates and delay callbacks run outside the Client lock and may call Client APIs.
 
@@ -118,7 +117,7 @@ Same-key loaders must still represent the same data; include parameters, user id
 
 ## Migrating enablement configuration
 
-`QueryOptions.Enabled` changes from `bool` to `*bool`. Remove `Enabled: true` to use the default. To migrate `Enabled: false`, declare `enabled := false` and pass `Enabled: &enabled`. An empty `QueryOptions{}` now enables loading; callers that previously used it to disable loading must supply an explicit false pointer. Existing `SetEnabled(bool)` calls remain unchanged.
+`QueryOptions.Enabled *bool` from v0.1.1 is replaced by `Disable bool`. Omit `Disable` when the old `Enabled` was nil or pointed to true. Replace a pointer to false with `Disable: true`; for a computed boolean, use `Disable: !enabled`. Empty `QueryOptions{}` and freshness-only overrides still enable automatic loading. Existing `SetEnabled(bool)` calls remain unchanged.
 
 ## Verification
 
