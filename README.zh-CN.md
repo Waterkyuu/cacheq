@@ -5,7 +5,7 @@
 
   <p><a href="./README.md">English</a> | <strong>简体中文</strong></p>
 
-  <p><strong>缓存、重试、共享查询数据</strong></p>
+  <p><strong>管理共享查询数据、请求状态和刷新生命周期</strong></p>
   <p>面向 Go 1.22 及以上版本、没有外部依赖的查询客户端</p>
   <p>多个组件共享数据、合并重复请求，并订阅查询状态。</p>
 
@@ -15,6 +15,17 @@
 
   <p><a href="#功能">功能</a> · <a href="#安装">安装</a></p>
 </div>
+
+## 什么时候使用 cacheq
+
+当 Go 应用中的多个组件需要同一份远端或加载成本较高的数据，并且需要响应加载、刷新或失败状态时，可以使用 cacheq。共享客户端负责缓存复用、同键请求合并和状态通知，每个消费者保留自己的类型安全查询句柄。
+
+| 应用需求 | 选择建议 |
+| --- | --- |
+| 共享数据，以及加载、错误、刷新和失效状态 | cacheq |
+| 少量本地值，只需要基本过期，没有查询订阅 | 带同步和过期处理的简单 map，或 TTL 缓存 |
+| 面向高吞吐和内存预算优化缓存准入、淘汰策略 | 为该负载设计的缓存；先测量再选型 |
+| 持久化或跨进程共享缓存 | 外部存储或缓存系统；cacheq 的数据保存在单个进程中 |
 
 ## 功能
 
@@ -36,17 +47,61 @@ go get github.com/Waterkyuu/cacheq
 
 ## 快速开始
 
-```go
-client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-defer client.Close()
+把这个完整程序保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。无需服务器或凭据。
 
-query := cacheq.Query(client, "greeting", func(context.Context) (string, error) {
-	return "hello", nil
-})
-defer query.Close()
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+)
+
+// main gives two components the same query without loading the data twice.
+func main() {
+	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	defer client.Close()
+
+	var calls atomic.Int32
+	load := func(context.Context) (string, error) {
+		calls.Add(1)
+		return "hello", nil
+	}
+	queries := []*cacheq.QueryHandle[string]{
+		cacheq.Query(client, "greeting", load),
+		cacheq.Query(client, "greeting", load),
+	}
+	for _, query := range queries {
+		defer query.Close()
+	}
+	for i, query := range queries {
+		for state := range query.Updates() {
+			if state.Err != nil {
+				panic(state.Err)
+			}
+			if state.HasData && !state.Fetching {
+				fmt.Printf("component %d: %s\n", i+1, state.Data)
+				break
+			}
+		}
+	}
+	fmt.Printf("loader calls: %d\n", calls.Load())
+}
 ```
 
-`Query` 后台加载数据，同键查询共享缓存与请求。用 `Snapshot()` 读取状态，用 `Updates()` 接收变化；需要等待结果时使用 `Fetch`。
+预期输出：
+
+```text
+component 1: hello
+component 2: hello
+loader calls: 1
+```
+
+`Query` 后台加载数据。这两个组件会加入同一个正在执行的请求，或复用它的新鲜结果。`Updates()` 提供初始状态和最新变化，慢消费者可能跳过中间状态；用 `Snapshot()` 读取当前状态，不需要订阅而只想等待结果时使用 `Fetch`。
 
 ## 使用场景
 
@@ -61,7 +116,9 @@ defer query.Close()
 
 ## Bubble Tea 示例
 
-[完整代码与说明](examples/bubbletea/)展示查询状态如何进入 TUI 消息循环，包括后台刷新、失败后保留数据和退出清理。示例需要 Go 1.26+。
+[运行任务看板](examples/bubbletea/)，查看列表、详情和统计三个视图如何订阅同一个查询。切换任务完成状态会刷新三个视图，也可以注入失败，查看保留旧数据和恢复过程。示例需要 Go 1.26+。
+
+订阅与修改流程见 [Bubble Tea 实践文档](docs/bubbletea.zh-CN.md)。
 
 ```sh
 cd examples/bubbletea
@@ -75,6 +132,14 @@ go run .
 ```sh
 cd examples/mcp
 go run .
+```
+
+## 可复现的 benchmark
+
+测量缓存命中、并发访问、共享加载、订阅更新、LRU 淘汰和 GC 定时器调度，见 [benchmark 文档](docs/benchmarks.zh-CN.md)。文档说明各负载、计量单位和 map + mutex 基线的适用边界。
+
+```sh
+go test -run '^$' -bench . -benchmem -count=3 -cpu=1,4
 ```
 
 ## 功能文档
