@@ -139,10 +139,10 @@ go run .
 
 ## Reproducible benchmarks
 
-Measure cache hits, concurrent access, shared loads, subscriber updates, LRU eviction, and GC timer scheduling with the [benchmark guide](docs/benchmarks.en-US.md). It explains each workload, its units, and the limits of the map-and-mutex reference.
+Compare **no cache, first load, and cache hits** for 100 reads of the same data in the [benchmark guide](docs/benchmarks.en-US.md). The main table reports total time and actual loader calls; internal cost and concurrency diagnostics are documented separately.
 
 ```sh
-go test -run '^$' -bench . -benchmem -count=3 -cpu=1,4
+go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 ```
 
 ## Feature guides

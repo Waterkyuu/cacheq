@@ -136,10 +136,10 @@ go run .
 
 ## 可复现的 benchmark
 
-测量缓存命中、并发访问、共享加载、订阅更新、LRU 淘汰和 GC 定时器调度，见 [benchmark 文档](docs/benchmarks.zh-CN.md)。文档说明各负载、计量单位和 map + mutex 基线的适用边界。
+对同一份数据读取 100 次，比较**无缓存、首次加载和缓存命中**，见 [benchmark 文档](docs/benchmarks.zh-CN.md)。主表展示总耗时和实际加载次数，内部开销与并发诊断单独说明。
 
 ```sh
-go test -run '^$' -bench . -benchmem -count=3 -cpu=1,4
+go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 ```
 
 ## 功能文档

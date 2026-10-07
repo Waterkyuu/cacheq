@@ -1,112 +1,101 @@
-# Reproducible cacheq benchmarks
+# Cache benefit benchmarks
 
 [简体中文](benchmarks.zh-CN.md)
 
-The benchmarks in [query_benchmark_test.go](../query_benchmark_test.go) measure
-public API costs without network services or extra module dependencies. They
-check returned values and report allocations. Request-sharing and eviction
-workloads also check their counters, so a faster run cannot silently do less work.
+The main comparison answers a practical question: how much work does cacheq save
+when an application reads the same data repeatedly?
 
-## Run from the repository root
+## Main comparison: 100 reads of the same data
 
-For repeated measurements across two worker counts:
+All three scenarios perform 100 sequential reads and return the same SHA-256
+digest of a fixed 64 KiB payload. They use the same loader, context, and result
+checks. Each reported duration covers **the complete batch of 100 reads**.
+
+| Scenario | Reads | Total time | Actual loader calls |
+| --- | ---: | ---: | ---: |
+| No cache: load for every read | 100 | 2,184.51 µs | 100 |
+| First load: start empty, then reuse the result | 100 | 46.56 µs | 1 |
+| Cache hits: start with a fresh cached result | 100 | 21.46 µs | 0 |
+
+“First load” includes one cache miss followed by 99 hits. It measures the cost of
+serving repeated requests starting with an empty cache. “Cache hits” measures 100
+hits after a separate warm-up; the warm-up's one loader call and duration are
+excluded from that row. Resetting the cold cache between batches is also excluded.
+Every batch verifies the returned digest, and each scenario asserts its exact
+loader count.
+
+Measured on 2026-10-07 with Go 1.27.1, macOS / darwin arm64, Apple M3 Pro.
+Durations are medians of five samples, converted from ns/op to microseconds per
+batch. [Raw output](benchmarks-cache-benefit-darwin-arm64.txt) includes every
+sample and allocations.
+
+## Reproduce
+
+Run from the repository root:
 
 ```sh
-go test -run '^$' -bench . -benchmem -count=3 -cpu=1,4
+go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -benchtime=300ms -count=5 -cpu=1
 ```
 
-For a quick workload correctness check, use `-benchtime=1x`. A single iteration
-is not a performance measurement. Use ordinary builds for published timings;
-the race detector changes costs substantially.
+In Go's output, one operation is one batch: `ns/op` is the total time for 100
+reads, `reads/batch` is 100, and `loads/batch` is 100, 1, or 0. Divide ns/op by
+1,000 to get the microsecond totals in the main table. `B/op` and `allocs/op`
+also apply to a complete batch.
 
-Record the source revision, Go version, OS, architecture, CPU, command, and all
-samples. Keep the machine idle and use the same environment for comparisons.
-Do not select just the fastest run. For a before/after comparison, save each
-revision's output and analyze repeated samples with your preferred statistical
-tool.
+The SHA-256 loader performs deterministic CPU work without network requests or
+artificial sleeps. This is a reproducible example of avoiding repeated backend
+work. The benefit depends on the real loader's cost, freshness window, and hit
+rate; replace the workload with your application's loader before estimating its
+benefit. The sample does not measure request merging, failures, or retries.
 
-## Workloads and units
+For a quick correctness check:
+
+```sh
+go test -race -run '^$' -bench '^BenchmarkCacheBenefit$' -benchtime=1x
+```
+
+Use ordinary builds for timings. Record the source revision, Go version, OS,
+architecture, CPU, command, and all samples. Keep the machine idle and compare
+repeated samples under the same conditions.
+
+## Internal cost and concurrency diagnostics
+
+The remaining benchmarks help maintainers investigate API overhead and
+contention. Their earlier [raw sample](benchmarks-darwin-arm64.txt) is retained
+separately from the cache-benefit comparison.
 
 | Benchmark | One operation measures |
 | --- | --- |
-| `CacheHit/Get`, `Fetch`, `Snapshot` | One warm typed public API read; setup and initial data installation are excluded |
-| `CacheHit/MapMutexReference` | A locked map read and value check, without TTL, query state, statistics, or request sharing |
-| `ParallelFetch/Keys=1,1024` | One warm Fetch; workers cycle through preloaded keys with no loader execution |
-| `SharedLoad/Consumers=1,8,64` | One complete concurrent subscription burst: reset the key, register consumers, load once, receive results, close handles |
-| `SubscriberUpdates/Subscribers=1,16,128` | One Set and all notifications; Consumed also drains each subscriber's notification |
-| `CapacityEviction/Entries=64,1024` | One Set in a full LRU cache, cycling through capacity + 1 keys to force one eviction |
-| `GCRetentionRead/GCTime=0s,1h0m0s` | One Get of an unsubscribed key, with inactive retention disabled or a timer stopped and rescheduled |
+| `CacheHit/Get`, `Fetch`, `Snapshot` | One warm typed public API read |
+| `CacheHit/MapMutexReference` | A locked map read without query lifecycle management |
+| `ParallelFetch/Keys=1,1024` | One warm Fetch across concurrent workers |
+| `SharedLoad/Consumers=1,8,64` | One concurrent subscription burst, including registration and cleanup |
+| `SubscriberUpdates/Subscribers=1,16,128` | One Set and its notifications; Consumed also drains every notification |
+| `CapacityEviction/Entries=64,1024` | One write that evicts an entry from a full LRU cache |
+| `GCRetentionRead/GCTime=0s,1h0m0s` | One read with inactive retention disabled or a timer rescheduled |
 
-Each SharedLoad operation is a **burst**, not one consumer call. Its
-`consumers/burst` and `loads/burst` metrics show the amount of work.
-A channel barrier holds the loader until every concurrent consumer has
-registered. Exactly one loader must execute per burst, with every other
-consumer joining it. No sleep is used to create overlap.
+SharedLoad holds the loader behind a channel barrier until every consumer has
+registered. It checks for exactly one load per burst and one join per additional
+consumer. LatestOnly subscriber tests exercise snapshot replacement for slow
+consumers. Capacity tests check for one eviction per write. GCRetentionRead
+measures timer scheduling, not expiration or collection throughput.
 
-LatestOnly leaves notification channels unread after registration, exercising
-replacement of the latest snapshot for slow consumers. Consumed receives every
-publication. Each Set is one operation regardless of the subscriber count.
+The map-and-mutex reference supplies fewer semantics than cacheq and cannot
+demonstrate the benefit of caching. ParallelFetch's ns/op represents aggregate
+throughput, not per-request tail latency. Increasing GOMAXPROCS affects concurrent
+workers; it does not turn serial benchmarks into parallel workloads.
 
-ParallelFetch uses `testing.B.RunParallel`; `-cpu` changes GOMAXPROCS and the
-worker count. Its ns/op describes aggregate throughput, not per-request tail
-latency. Distributed keys cycle through a warm working set, rather than
-measuring unbounded insertion. Keys are boxed before timing to avoid charging
-key construction to cache access.
-
-GCRetentionRead measures production timer scheduling, **not** expiration or
-collection throughput. Its long deadline prevents timed deletion during the run.
-GC cleanup behavior remains covered by the deterministic retention tests.
-
-## Recorded local sample
-
-Measured on 2026-10-07 with Go 1.27.1, macOS / darwin arm64, Apple M3 Pro.
-Numbers below are medians of three samples in ns/op, rounded to one decimal.
-The [raw output](benchmarks-darwin-arm64.txt) includes all workloads and allocations.
+Run the dedicated concurrency diagnostics when investigating scalability:
 
 ```sh
-go test -run '^$' -bench . -benchmem -benchtime=200ms -count=3 -cpu=1,4
+go test -run '^$' -bench '^BenchmarkParallelFetch$' -benchmem -count=3 -cpu=1,4
 ```
 
-| Workload | GOMAXPROCS=1 | GOMAXPROCS=4 |
-| --- | ---: | ---: |
-| CacheHit / Get | 208.1 | 207.4 |
-| CacheHit / Fetch | 231.9 | 212.1 |
-| ParallelFetch / 1 key | 189.1 | 338.3 |
-| ParallelFetch / 1024 keys | 218.5 | 308.7 |
-| SharedLoad / 64 consumers, per burst | 73235.0 | 77942.0 |
-| SubscriberUpdates / 128 consumed, per Set | 12322.0 | 12301.0 |
-| CapacityEviction / 1024 entries | 305.8 | 250.1 |
-| GCRetentionRead / timer enabled | 423.3 | 391.5 |
-
-Every shared-load configuration reports 1 load/burst, and every capacity
-configuration reports 1 eviction/op. Warm concurrent reads do not scale
-linearly on this machine. That motivates profiling the shared lock under an
-application workload before deciding whether sharding is worthwhile.
-
-These are short local samples of small integer values, not a cross-platform
-performance promise. Subscriber tests measure notification and receive costs,
-not rendering. There is no external I/O, serialization, retry, or large payload.
-Allocation counts include the public API path and, for bursts, goroutine and
-subscription setup.
-
-## Interpret comparisons carefully
-
-The map-and-mutex reference is a minimal synchronization cost reference, not a
-feature-equivalent cache. It does not implement freshness, retained errors,
-invalidation, subscriptions, cancellation, or request sharing. Its timing cannot
-support a claim that one complete solution is a given multiple faster.
-
-For a comparison with another cache, align key construction, result types,
-expiration behavior, initial state, concurrency, load latency, and capacity.
-Compare basic retrieval separately from the query lifecycle, and describe the
-additional application code needed to provide matching semantics.
-
-To investigate warm-read lock contention:
+To collect a mutex profile:
 
 ```sh
 go test -run '^$' -bench '^BenchmarkParallelFetch$' -benchtime=3s -cpu=4 -mutexprofile=/tmp/cacheq-mutex.pprof -o /tmp/cacheq-profile.test
 go tool pprof /tmp/cacheq-profile.test /tmp/cacheq-mutex.pprof
 ```
 
-Profiling adds overhead; collect ordinary timings separately. Optimize only
-when an observed application workload justifies the complexity.
+Profiling adds overhead; collect ordinary timings separately.
