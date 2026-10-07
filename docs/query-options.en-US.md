@@ -43,7 +43,6 @@ func main() {
 	hour, immediate, timeout := time.Hour, time.Duration(0), 3*time.Second
 	retries := 1
 	steady := cacheq.Query(client, "greeting", load, cacheq.QueryOptions{
-		Enabled:    true,
 		StaleTime:  &hour,
 		Retry:      &retries,
 		RetryIf:    func(err error) bool { return errors.Is(err, transient) },
@@ -52,8 +51,9 @@ func main() {
 	})
 	defer steady.Close()
 
+	enabled := false
 	live := cacheq.Query(client, "greeting", load, cacheq.QueryOptions{
-		Enabled:   false,
+		Enabled:   &enabled,
 		StaleTime: &immediate,
 	})
 	defer live.Close()
@@ -87,6 +87,7 @@ loads=1; retries=1
 
 | Field | Omitted / nil | Explicit override |
 | --- | --- | --- |
+| `Enabled` | Automatic loading enabled | Boolean pointer; false disables automatic loading |
 | `StaleTime` | Use Client freshness | Pointer to a duration; zero makes ordinary data immediately stale |
 | `Retry` | Use Client retry count | Pointer to an integer; zero disables additional attempts |
 | `Timeout` | Use Client timeout | Pointer to a duration; zero removes the Client timeout, while caller cancellation and deadlines still apply |
@@ -95,7 +96,7 @@ loads=1; retries=1
 
 Pointer values are copied when a call or handle is created. Later mutation of the source variables does not reconfigure a handle. Callback closures retain their captured state; synchronize it when shared across loads. A handle keeps its policy through enablement changes and `Refetch`.
 
-`Enabled` retains the existing contract: omitted `QueryOptions` enables loading, while supplying options requires `Enabled: true` to load automatically. When several `QueryOptions` arguments are supplied, only the last one's fields are applied over Client defaults.
+`Enabled` defaults to automatic loading when nil, even with an empty `QueryOptions` or freshness-only overrides. Use a pointer to false to disable automatic loading explicitly. The flag is copied at construction; use `SetEnabled` to change it later. When several `QueryOptions` arguments are supplied, only the last one's fields are applied over Client defaults.
 
 `RetryIf` is available in both Client `Options` and per-consumer options. It is consulted only for retryable errors while attempts remain. Cancellation and deadline errors never retry. Nil inherits the Client predicate; to override a restrictive Client predicate, provide a function returning true. Predicates and delay callbacks run outside the Client lock and may call Client APIs.
 
@@ -114,6 +115,10 @@ The consumer starting a load supplies its loader, retry count, predicate, backof
 Automatic invalidation refresh uses the oldest still-enabled handle's loader and policy. Disabling or closing that handle allows the next enabled handle to supply future automatic refreshes. Existing requests keep their initiator's settings. Manual `Refetch` uses the invoking handle when starting a new load.
 
 Same-key loaders must still represent the same data; include parameters, user identity, and tenant scope in the key. The implementation adopts TanStack Query's distinction between shared data and observer-specific options, while preserving cacheq's explicit-expiry, cancellation, and invalidation contracts. See [TanStack's default option merge](https://github.com/TanStack/query/blob/main/packages/query-core/src/queryClient.ts), [observer freshness](https://github.com/TanStack/query/blob/main/packages/query-core/src/queryObserver.ts), and [request reuse](https://github.com/TanStack/query/blob/main/packages/query-core/src/query.ts).
+
+## Migrating enablement configuration
+
+`QueryOptions.Enabled` changes from `bool` to `*bool`. Remove `Enabled: true` to use the default. To migrate `Enabled: false`, declare `enabled := false` and pass `Enabled: &enabled`. An empty `QueryOptions{}` now enables loading; callers that previously used it to disable loading must supply an explicit false pointer. Existing `SetEnabled(bool)` calls remain unchanged.
 
 ## Verification
 
