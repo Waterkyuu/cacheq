@@ -5,7 +5,7 @@
 
   <p><strong>English</strong> | <a href="./README.zh-CN.md">简体中文</a></p>
 
-  <p><strong>Cache, retry, and share your queries</strong></p>
+  <p><strong>Manage shared query data, state, and refresh lifecycles</strong></p>
   <p>A typed, dependency-free query client for Go 1.22 and later</p>
   <p>Share data across components, combine duplicate requests, and observe query state.</p>
 
@@ -15,6 +15,20 @@
 
   <p><a href="#features">Features</a> · <a href="#install">Install</a></p>
 </div>
+
+## When to use cacheq
+
+Use cacheq when several parts of one Go application need the same remote or
+expensive data and must react to loading, refreshes, or failures. One shared
+client handles cache reuse, in-flight request sharing, and query notifications;
+consumers keep their own typed handles.
+
+| Your application needs | Choose |
+| --- | --- |
+| Shared data plus loading, error, refresh, and invalidation state | cacheq |
+| A few local values with basic expiration and no query observers | A simple map with synchronization and expiration, or a TTL cache |
+| An admission policy optimized for a high-volume cache and a memory budget | A cache designed for that workload; benchmark before choosing |
+| Persistent or cross-process cache sharing | An external storage or cache system; cacheq stores data in one process |
 
 ## Features
 
@@ -36,17 +50,61 @@ Import `github.com/Waterkyuu/cacheq` as package `cacheq`. Requires Go 1.22 or la
 
 ## Quick start
 
-```go
-client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-defer client.Close()
+Save this complete program as `main.go` in a Go module that imports cacheq, then run `go run .`. It needs no server or credentials.
 
-query := cacheq.Query(client, "greeting", func(context.Context) (string, error) {
-	return "hello", nil
-})
-defer query.Close()
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+)
+
+// main gives two components the same query without loading the data twice.
+func main() {
+	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	defer client.Close()
+
+	var calls atomic.Int32
+	load := func(context.Context) (string, error) {
+		calls.Add(1)
+		return "hello", nil
+	}
+	queries := []*cacheq.QueryHandle[string]{
+		cacheq.Query(client, "greeting", load),
+		cacheq.Query(client, "greeting", load),
+	}
+	for _, query := range queries {
+		defer query.Close()
+	}
+	for i, query := range queries {
+		for state := range query.Updates() {
+			if state.Err != nil {
+				panic(state.Err)
+			}
+			if state.HasData && !state.Fetching {
+				fmt.Printf("component %d: %s\n", i+1, state.Data)
+				break
+			}
+		}
+	}
+	fmt.Printf("loader calls: %d\n", calls.Load())
+}
 ```
 
-`Query` loads in the background; queries with the same key share cached data and requests. Use `Snapshot()` for state, `Updates()` for notifications, or `Fetch` to wait for a result.
+Expected output:
+
+```text
+component 1: hello
+component 2: hello
+loader calls: 1
+```
+
+`Query` loads in the background. These two components either join the same active request or reuse its fresh result. `Updates()` delivers the initial and latest states; slow consumers can skip intermediate transitions. Use `Snapshot()` for current state, or `Fetch` to wait for a result without subscribing.
 
 ## Use cases
 
@@ -61,7 +119,9 @@ After a successful mutation, use `Invalidate` for related queries. HTTP cache ke
 
 ## Bubble Tea example
 
-[Full source and instructions](examples/bubbletea/) demonstrate query updates in a TUI, background refresh, retained data on failure, and exit cleanup. The example requires Go 1.26+.
+[Run the task board](examples/bubbletea/) to see list, detail, and summary views subscribe to one query. Toggle a task to refresh all three views, or inject a failure to see retained data and recovery. The example requires Go 1.26+.
+
+See the [walkthrough](docs/bubbletea.en-US.md) for the subscription and mutation flow.
 
 ```sh
 cd examples/bubbletea
@@ -75,6 +135,14 @@ go run .
 ```sh
 cd examples/mcp
 go run .
+```
+
+## Reproducible benchmarks
+
+Measure cache hits, concurrent access, shared loads, subscriber updates, LRU eviction, and GC timer scheduling with the [benchmark guide](docs/benchmarks.en-US.md). It explains each workload, its units, and the limits of the map-and-mutex reference.
+
+```sh
+go test -run '^$' -bench . -benchmem -count=3 -cpu=1,4
 ```
 
 ## Feature guides
