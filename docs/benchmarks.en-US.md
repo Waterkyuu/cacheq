@@ -95,29 +95,6 @@ Durations are medians of three samples.
 [Raw output](benchmarks-concurrent-darwin-arm64.txt) includes every request count,
 allocation data, and the average number of requests joining an active load.
 
-### How concurrency is created
-
-For each batch:
-
-1. Create the specified number of goroutines, one per request.
-2. Each goroutine signals readiness and waits on the same start channel.
-3. After all are ready, close that channel to release the requests together.
-4. Each goroutine performs one direct loader call or one cacheq Fetch.
-5. Wait for all requests and check every result.
-
-This models the cache access inside simultaneous application requests. It calls
-Fetch directly and does not include HTTP transport, JSON encoding, or a real
-database. The timed batch includes goroutine creation, the start barrier,
-scheduling, reads, completion waits, and result checks. It is a complete burst
-duration, not per-request tail latency or steady-state cache-read throughput.
-
-The loader does deterministic CPU work without sleep-based delays. Same-key
-cold requests arriving while loading contribute to `merged/batch`; later ones
-can hit the newly installed result. The merge count is measured rather than
-assumed to be the request count minus one. In the recorded 64-request sample,
-the median of the per-run averages was 59.37 joined requests per batch.
-They all still resulted in exactly one load.
-
 ### Reproduce
 
 Run all request counts from the repository root, with CPU parallelism fixed:
