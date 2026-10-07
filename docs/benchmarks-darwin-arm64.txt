@@ -1,0 +1,124 @@
+Date: 2026-10-07 (Asia/Shanghai)
+Go: go1.27.1
+Command: go test -run '^$' -bench . -benchmem -benchtime=200ms -count=3 -cpu=1,4
+
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkCacheHit/MapMutexReference           	32023483	         7.500 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCacheHit/MapMutexReference           	32140884	         8.398 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCacheHit/MapMutexReference           	31739910	         7.605 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCacheHit/MapMutexReference-4         	32188300	         7.447 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCacheHit/MapMutexReference-4         	32453079	         8.019 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCacheHit/MapMutexReference-4         	29434760	         7.667 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCacheHit/Get                         	 1000000	       201.0 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Get                         	 1000000	       221.7 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Get                         	 1000000	       208.1 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Get-4                       	 1000000	       200.3 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Get-4                       	 1000000	       207.4 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Get-4                       	 1000000	       212.1 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Fetch                       	 1000000	       225.9 ns/op	      25 B/op	       2 allocs/op
+BenchmarkCacheHit/Fetch                       	 1000000	       233.0 ns/op	      25 B/op	       2 allocs/op
+BenchmarkCacheHit/Fetch                       	  967254	       231.9 ns/op	      25 B/op	       2 allocs/op
+BenchmarkCacheHit/Fetch-4                     	 1000000	       207.5 ns/op	      25 B/op	       2 allocs/op
+BenchmarkCacheHit/Fetch-4                     	 1000000	       214.7 ns/op	      25 B/op	       2 allocs/op
+BenchmarkCacheHit/Fetch-4                     	 1000000	       212.1 ns/op	      25 B/op	       2 allocs/op
+BenchmarkCacheHit/Snapshot                    	 1000000	       211.5 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Snapshot                    	 1000000	       206.0 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Snapshot                    	 1000000	       200.4 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Snapshot-4                  	 1000000	       203.4 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Snapshot-4                  	 1000000	       209.3 ns/op	       1 B/op	       1 allocs/op
+BenchmarkCacheHit/Snapshot-4                  	 1000000	       201.5 ns/op	       1 B/op	       1 allocs/op
+BenchmarkParallelFetch/Keys=1                 	 1294317	       185.3 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1                 	 1297015	       192.0 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1                 	 1256853	       189.1 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1-4               	  821108	       338.3 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1-4               	  642727	       389.2 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1-4               	  950040	       278.6 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1024              	 1000000	       221.3 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1024              	 1000000	       207.6 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1024              	 1000000	       218.5 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1024-4            	  769004	       308.7 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1024-4            	  783619	       308.8 ns/op	      25 B/op	       2 allocs/op
+BenchmarkParallelFetch/Keys=1024-4            	  783577	       307.5 ns/op	      25 B/op	       2 allocs/op
+BenchmarkSharedLoad/Consumers=1               	   70556	      3607 ns/op	         1.000 consumers/burst	         1.000 loads/burst	    1467 B/op	      23 allocs/op
+BenchmarkSharedLoad/Consumers=1               	   74702	      3224 ns/op	         1.000 consumers/burst	         1.000 loads/burst	    1467 B/op	      23 allocs/op
+BenchmarkSharedLoad/Consumers=1               	   76880	      3234 ns/op	         1.000 consumers/burst	         1.000 loads/burst	    1467 B/op	      23 allocs/op
+BenchmarkSharedLoad/Consumers=1-4             	   44592	      5405 ns/op	         1.000 consumers/burst	         1.000 loads/burst	    1467 B/op	      23 allocs/op
+BenchmarkSharedLoad/Consumers=1-4             	   45831	      5559 ns/op	         1.000 consumers/burst	         1.000 loads/burst	    1467 B/op	      23 allocs/op
+BenchmarkSharedLoad/Consumers=1-4             	   39711	      8978 ns/op	         1.000 consumers/burst	         1.000 loads/burst	    1467 B/op	      23 allocs/op
+BenchmarkSharedLoad/Consumers=8               	   19876	     11070 ns/op	         8.000 consumers/burst	         1.000 loads/burst	    5289 B/op	      93 allocs/op
+BenchmarkSharedLoad/Consumers=8               	   21549	     11154 ns/op	         8.000 consumers/burst	         1.000 loads/burst	    5289 B/op	      93 allocs/op
+BenchmarkSharedLoad/Consumers=8               	   21613	     11055 ns/op	         8.000 consumers/burst	         1.000 loads/burst	    5289 B/op	      93 allocs/op
+BenchmarkSharedLoad/Consumers=8-4             	   16161	     14689 ns/op	         8.000 consumers/burst	         1.000 loads/burst	    5290 B/op	      93 allocs/op
+BenchmarkSharedLoad/Consumers=8-4             	   16124	     14731 ns/op	         8.000 consumers/burst	         1.000 loads/burst	    5291 B/op	      93 allocs/op
+BenchmarkSharedLoad/Consumers=8-4             	   16213	     14724 ns/op	         8.000 consumers/burst	         1.000 loads/burst	    5292 B/op	      93 allocs/op
+BenchmarkSharedLoad/Consumers=64              	    3144	     72980 ns/op	        64.00 consumers/burst	         1.000 loads/burst	   40321 B/op	     662 allocs/op
+BenchmarkSharedLoad/Consumers=64              	    3316	     73235 ns/op	        64.00 consumers/burst	         1.000 loads/burst	   40321 B/op	     662 allocs/op
+BenchmarkSharedLoad/Consumers=64              	    2890	     90510 ns/op	        64.00 consumers/burst	         1.000 loads/burst	   40321 B/op	     662 allocs/op
+BenchmarkSharedLoad/Consumers=64-4            	    3194	     74996 ns/op	        64.00 consumers/burst	         1.000 loads/burst	   40370 B/op	     662 allocs/op
+BenchmarkSharedLoad/Consumers=64-4            	    3151	     77942 ns/op	        64.00 consumers/burst	         1.000 loads/burst	   40371 B/op	     662 allocs/op
+BenchmarkSharedLoad/Consumers=64-4            	    2910	     82548 ns/op	        64.00 consumers/burst	         1.000 loads/burst	   40374 B/op	     662 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/LatestOnly           	  648844	       388.7 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/LatestOnly           	  543242	       398.3 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/LatestOnly           	  671781	       351.0 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/LatestOnly-4         	  691410	       349.0 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/LatestOnly-4         	  691450	       362.8 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/LatestOnly-4         	  663532	       358.6 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/Consumed             	  670422	       345.1 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/Consumed             	  700065	       344.5 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/Consumed             	  699300	       343.9 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/Consumed-4           	  682423	       348.5 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/Consumed-4           	  718696	       345.6 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=1/Consumed-4           	  695862	       345.3 ns/op	         1.000 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/LatestOnly          	  137964	      1747 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/LatestOnly          	  137500	      1751 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/LatestOnly          	  136959	      1755 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/LatestOnly-4        	  138454	      1742 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/LatestOnly-4        	  137869	      1776 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/LatestOnly-4        	  135315	      1787 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/Consumed            	  134887	      1775 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/Consumed            	  137020	      2175 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/Consumed            	  120276	      1784 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/Consumed-4          	  134604	      1769 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/Consumed-4          	  137438	      1826 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=16/Consumed-4          	  136794	      1761 ns/op	        16.00 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/LatestOnly         	   19520	     12659 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/LatestOnly         	   19442	     12310 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/LatestOnly         	   19552	     12280 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/LatestOnly-4       	   19540	     12232 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/LatestOnly-4       	   19551	     12175 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/LatestOnly-4       	   18295	     12301 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/Consumed           	   19498	     12288 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/Consumed           	   19506	     12322 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/Consumed           	   19390	     12405 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/Consumed-4         	   19490	     12311 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/Consumed-4         	   19578	     12293 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkSubscriberUpdates/Subscribers=128/Consumed-4         	   19540	     12301 ns/op	       128.0 subscribers/update	       1 B/op	       1 allocs/op
+BenchmarkCapacityEviction/Entries=64                          	 1000000	       248.5 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=64                          	 1000000	       266.1 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=64                          	 1000000	       259.5 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=64-4                        	 1000000	       231.9 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=64-4                        	 1000000	       235.8 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=64-4                        	 1000000	       226.7 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=1024                        	  976154	       294.9 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=1024                        	  979390	       308.8 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=1024                        	  985238	       305.8 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=1024-4                      	  980758	       250.1 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=1024-4                      	 1000000	       247.4 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkCapacityEviction/Entries=1024-4                      	  958832	       250.9 ns/op	         1.000 evictions/op	      49 B/op	       2 allocs/op
+BenchmarkGCRetentionRead/GCTime=0s                            	 1237916	       194.1 ns/op	       1 B/op	       1 allocs/op
+BenchmarkGCRetentionRead/GCTime=0s                            	 1239187	       194.1 ns/op	       1 B/op	       1 allocs/op
+BenchmarkGCRetentionRead/GCTime=0s                            	 1236856	       194.2 ns/op	       1 B/op	       1 allocs/op
+BenchmarkGCRetentionRead/GCTime=0s-4                          	 1236304	       194.4 ns/op	       1 B/op	       1 allocs/op
+BenchmarkGCRetentionRead/GCTime=0s-4                          	 1232236	       194.5 ns/op	       1 B/op	       1 allocs/op
+BenchmarkGCRetentionRead/GCTime=0s-4                          	 1237406	       196.9 ns/op	       1 B/op	       1 allocs/op
+BenchmarkGCRetentionRead/GCTime=1h0m0s                        	  639147	       423.3 ns/op	     209 B/op	       5 allocs/op
+BenchmarkGCRetentionRead/GCTime=1h0m0s                        	  631772	       425.3 ns/op	     209 B/op	       5 allocs/op
+BenchmarkGCRetentionRead/GCTime=1h0m0s                        	  616458	       422.5 ns/op	     209 B/op	       5 allocs/op
+BenchmarkGCRetentionRead/GCTime=1h0m0s-4                      	  632403	       387.6 ns/op	     209 B/op	       5 allocs/op
+BenchmarkGCRetentionRead/GCTime=1h0m0s-4                      	  613084	       391.5 ns/op	     209 B/op	       5 allocs/op
+BenchmarkGCRetentionRead/GCTime=1h0m0s-4                      	  621996	       395.3 ns/op	     209 B/op	       5 allocs/op
+PASS
+ok  	github.com/Waterkyuu/cacheq	33.526s
