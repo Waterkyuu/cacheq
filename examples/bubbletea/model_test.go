@@ -18,7 +18,7 @@ func TestSubscriptionCommands(t *testing.T) {
 		client,
 		"greeting",
 		func(context.Context) (string, error) { return "unused", nil },
-		cacheq.QueryOptions{Enabled: new(bool)},
+		cacheq.QueryOptions{Disable: true},
 	)
 	t.Cleanup(query.Close)
 	initial := model{client: client, query: query}

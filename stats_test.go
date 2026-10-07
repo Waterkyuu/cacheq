@@ -36,7 +36,7 @@ func TestStatsCacheDecisions(t *testing.T) {
 		c,
 		"a",
 		func(context.Context) (int, error) { return 2, nil },
-		QueryOptions{Enabled: new(bool)},
+		QueryOptions{Disable: true},
 	)
 	t.Cleanup(disabled.Close)
 	Get[int](c, "a")
