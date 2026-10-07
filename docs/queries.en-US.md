@@ -85,7 +85,7 @@ state := users.Snapshot()
 
 Missing data starts an initial request. Fresh data is reused. Stale data remains available while a background request runs. Neither `Query` nor `Snapshot()` waits for HTTP completion. A snapshot is a value; a previously returned variable does not update itself.
 
-Omitting options enables loading. Explicit `cacheq.QueryOptions{}` disables it because `Enabled` is false. If multiple options are supplied, the last wins. Construction failures appear in `Snapshot().Err` and the initial `Updates()` value; the failed handle's channel then closes.
+Omitting options, supplying an empty `cacheq.QueryOptions{}`, or leaving `Enabled` nil enables loading. Only a pointer to false explicitly disables automatic loading. If multiple options are supplied, the last wins. Construction failures appear in `Snapshot().Err` and the initial `Updates()` value; the failed handle's channel then closes.
 
 ## `Updates`: receive the latest state
 
@@ -105,12 +105,13 @@ The channel provides initial and subsequent latest states. Request transitions, 
 ## `SetEnabled`: load only when a condition permits
 
 ```go
+enabled := false
 users := cacheq.Query(
 	client,
 	"users",
 	getUsers,
 	cacheq.QueryOptions{
-		Enabled: false,
+		Enabled: &enabled,
 	},
 )
 defer users.Close()

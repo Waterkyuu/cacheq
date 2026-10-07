@@ -88,7 +88,7 @@ state := users.Snapshot()
 
 没有缓存时启动首次请求；缓存新鲜时直接复用；缓存过期时保留旧数据并在后台刷新。`Query` 不等待网络请求完成，`Snapshot()` 也是一次快照，之前拿到的变量不会自己变化。
 
-不传 `QueryOptions` 时默认启用。显式传 `cacheq.QueryOptions{}` 时，`Enabled` 的零值是 false；如果传多个配置，最后一个生效。
+不传 `QueryOptions`、传空配置或省略 `Enabled` 时都默认启用；只有明确传入指向 false 的指针才禁用自动加载。如果传多个配置，最后一个生效。
 
 创建失败不会 panic。查询对象的 `Snapshot().Err` 和 `Updates()` 中的初始状态会包含错误；失败对象的更新通道随后关闭。
 
@@ -110,12 +110,13 @@ for state := range users.Updates() {
 ## `SetEnabled`：满足条件才请求
 
 ```go
+enabled := false
 users := cacheq.Query(
 	client,
 	"users",
 	getUsers,
 	cacheq.QueryOptions{
-		Enabled: false,
+		Enabled: &enabled,
 	},
 )
 defer users.Close()

@@ -43,7 +43,6 @@ func main() {
 	hour, immediate, timeout := time.Hour, time.Duration(0), 3*time.Second
 	retries := 1
 	steady := cacheq.Query(client, "greeting", load, cacheq.QueryOptions{
-		Enabled:    true,
 		StaleTime:  &hour,
 		Retry:      &retries,
 		RetryIf:    func(err error) bool { return errors.Is(err, transient) },
@@ -52,8 +51,9 @@ func main() {
 	})
 	defer steady.Close()
 
+	enabled := false
 	live := cacheq.Query(client, "greeting", load, cacheq.QueryOptions{
-		Enabled:   false,
+		Enabled:   &enabled,
 		StaleTime: &immediate,
 	})
 	defer live.Close()
@@ -87,6 +87,7 @@ loads=1; retries=1
 
 | 字段 | 未设置 / nil | 显式覆盖 |
 | --- | --- | --- |
+| `Enabled` | 默认自动加载 | 布尔指针；false 明确关闭自动加载 |
 | `StaleTime` | 使用 Client 新鲜时间 | 时长指针；零值让普通数据立即过期 |
 | `Retry` | 使用 Client 重试次数 | 整数指针；零值关闭额外重试 |
 | `Timeout` | 使用 Client 超时 | 时长指针；零值取消 Client 超时限制，调用方 context 的取消和截止时间仍然有效 |
@@ -95,7 +96,7 @@ loads=1; retries=1
 
 调用或创建 handle 时会复制指针指向的值，之后修改原变量不会改变该 handle。回调闭包仍然引用其捕获的状态，多次加载共享可变状态时需要自行同步。handle 在启用状态切换和 `Refetch` 时继续使用创建时的策略。
 
-`Enabled` 保留现有语义：不传 `QueryOptions` 时自动加载；传入配置后，需要指定 `Enabled: true` 才会自动加载。传入多个 `QueryOptions` 时，仅最后一份配置覆盖 Client 默认值。
+`Enabled` 为 nil 时默认自动加载，即使传入空 `QueryOptions` 或只覆盖新鲜时间。明确传入指向 false 的指针才会禁用自动加载。创建时会复制开关值，之后通过 `SetEnabled` 修改。传入多个 `QueryOptions` 时，仅最后一份配置覆盖 Client 默认值。
 
 Client 的 `Options` 和每个消费者的配置都可以设置 `RetryIf`。只有错误允许重试且剩余次数足够时才会调用判断函数；取消和截止时间错误永不重试。nil 继承 Client 判断函数；如需覆盖 Client 的限制，可提供始终返回 true 的函数。判断函数与延时函数在 Client 锁外执行，可以调用 Client API。
 
@@ -114,6 +115,10 @@ Client 的 `Options` 和每个消费者的配置都可以设置 `RetryIf`。只�
 失效操作触发自动刷新时，使用最早创建且仍启用的 handle 的 loader 和策略。禁用或关闭该 handle 后，由下一个启用的 handle 提供后续自动刷新配置。正在执行的请求继续使用发起者的设置。手动 `Refetch` 启动新请求时使用调用它的 handle。
 
 同 key 的 loader 必须代表同一份数据，请将参数、用户身份和租户范围纳入 key。实现参考了 TanStack Query 对共享数据与 observer 配置的区分，同时保留 cacheq 对显式截止时间、取消和失效的约定。参考 [默认值合并](https://github.com/TanStack/query/blob/main/packages/query-core/src/queryClient.ts)、[observer 新鲜度](https://github.com/TanStack/query/blob/main/packages/query-core/src/queryObserver.ts) 和 [请求复用](https://github.com/TanStack/query/blob/main/packages/query-core/src/query.ts)。
+
+## 开关配置迁移
+
+`QueryOptions.Enabled` 从 `bool` 改为 `*bool`。原来的 `Enabled: true` 可以直接省略，使用默认开启。原来的 `Enabled: false` 改为先声明 `enabled := false`，再传入 `Enabled: &enabled`。空 `QueryOptions{}` 现在默认开启加载；原先用空配置关闭加载的调用必须改为显式 false 指针。已有的 `SetEnabled(bool)` 调用不变。
 
 ## 验证
 
