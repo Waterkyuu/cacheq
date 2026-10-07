@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose an improvement with a concrete use case.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search existing issues before opening a proposal. English and Chinese are both welcome.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Describe what you are trying to accomplish and where the current API falls short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Explain the desired behavior. Include an example of how you would use the API if helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe existing APIs, application-level workarounds, or other approaches you considered.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include relevant tradeoffs, compatibility concerns, or related issues.

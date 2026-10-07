@@ -1,0 +1,49 @@
+name: Bug report
+description: Report incorrect behavior or a regression in cacheq.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search existing issues before opening a report. English and Chinese are both welcome.
+  - type: input
+    id: version
+    attributes:
+      label: cacheq version
+      description: Provide the version tag or commit SHA used by the affected application.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Go version and environment
+      description: Include the output of `go version` and `go env GOOS GOARCH`. Mention relevant integrations.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: |
+        Provide a small Go example or a reproducer repository with steps to run it.
+        Include Client and query options, and relevant cancellation or concurrency conditions.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe the result you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Describe what happened, including relevant errors or unexpected query state.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include relevant logs, race detector output, related issues, or a known working version.
