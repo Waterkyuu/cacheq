@@ -99,13 +99,3 @@ See the [version policy](docs/versioning.en-US.md) for the public API boundary, 
 ## License
 
 cacheq is licensed under the [MIT License](LICENSE).
-
-## Verify
-
-```sh
-task lint
-task test
-task build
-```
-
-`task test` includes race detection and [HTTP e2e tests](e2e/query_lifecycle_test.go). The isolated local service exercises mutations, heterogeneous cache data, enablement, request sharing, retries, and cancellation without external services.

@@ -100,12 +100,3 @@ cacheq 遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。在 `v0` �
 
 cacheq 使用 [MIT 许可证](LICENSE)。
 
-## 验证
-
-```sh
-task lint
-task test
-task build
-```
-
-`task test` 包含竞态检测和 [HTTP e2e 测试](e2e/query_lifecycle_test.go)。e2e 使用本地测试服务，覆盖真实修改、多类型缓存、条件请求、共享加载、重试和取消；不会访问外部服务。
