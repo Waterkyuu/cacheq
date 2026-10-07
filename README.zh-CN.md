@@ -98,7 +98,10 @@ cacheq 遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。在 `v0` �
 
 公开 API 边界、弃用策略、Go 版本支持和升级方式见[版本与升级规则](docs/versioning.zh-CN.md)。已发布的版本 tag 不会移动或复用。
 
+## 参与贡献
+
+本地环境、Go 代码规范、测试、文档和 PR 流程见[贡献指南（英文）](CONTRIBUTING.md)。欢迎通过 GitHub Issues 提交 Bug 报告和功能建议。
+
 ## 许可证
 
 cacheq 使用 [MIT 许可证](LICENSE)。
-

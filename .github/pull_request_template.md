@@ -1,3 +1,5 @@
+<!-- Contribution guide: https://github.com/Waterkyuu/cacheq/blob/main/CONTRIBUTING.md -->
+
 ## Summary
 
 <!-- Describe the problem and the resulting behavior. Keep the change focused. -->
