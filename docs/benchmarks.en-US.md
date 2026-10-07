@@ -5,11 +5,12 @@
 The main comparison answers a practical question: how much work does cacheq save
 when an application reads the same data repeatedly?
 
-## Main comparison: 100 reads of the same data
+## Main comparison: 100 sequential reads of the same data
 
-All three scenarios perform 100 sequential reads and return the same SHA-256
+All three scenarios use one request goroutine to perform **100 sequential reads,
+waiting for each read to return before starting the next**, and return the same SHA-256
 digest of a fixed 64 KiB payload. They use the same loader, context, and result
-checks. Each reported duration covers **the complete batch of 100 reads**.
+checks. Each reported duration covers **the complete batch of 100 sequential reads**.
 
 | Scenario | Reads | Total time | Actual loader calls |
 | --- | ---: | ---: | ---: |
