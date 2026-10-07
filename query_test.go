@@ -55,7 +55,7 @@ func TestQueryDisabled(t *testing.T) {
 					calls.Add(1)
 					return 8, nil
 				},
-				QueryOptions{Enabled: false},
+				QueryOptions{Enabled: new(bool)},
 			)
 			t.Cleanup(observer.Close)
 			state := <-observer.Updates()
@@ -88,7 +88,7 @@ func TestQueryEnableTransitions(t *testing.T) {
 		func(context.Context) (int, error) {
 			return int(calls.Add(1)), nil
 		},
-		QueryOptions{Enabled: false},
+		QueryOptions{Enabled: new(bool)},
 	)
 	t.Cleanup(observer.Close)
 	observer.SetEnabled(true)
@@ -129,7 +129,7 @@ func TestQueryFreshData(t *testing.T) {
 			calls.Add(1)
 			return 8, nil
 		},
-		QueryOptions{Enabled: true},
+		QueryOptions{},
 	)
 	t.Cleanup(observer.Close)
 	if state := observer.Snapshot(); state.Data != 7 || state.Fetching || calls.Load() != 0 {
@@ -153,7 +153,7 @@ func TestQuerySharedEnablement(t *testing.T) {
 			disabledCalls.Add(1)
 			return 99, nil
 		},
-		QueryOptions{Enabled: false},
+		QueryOptions{Enabled: new(bool)},
 	)
 	t.Cleanup(disabled.Close)
 	started, release := make(chan struct{}), make(chan struct{})
@@ -173,7 +173,7 @@ func TestQuerySharedEnablement(t *testing.T) {
 		client,
 		"users",
 		fetch,
-		QueryOptions{Enabled: true},
+		QueryOptions{},
 	)
 	t.Cleanup(first.Close)
 	<-started
@@ -181,7 +181,7 @@ func TestQuerySharedEnablement(t *testing.T) {
 		client,
 		"users",
 		fetch,
-		QueryOptions{Enabled: true},
+		QueryOptions{},
 	)
 	t.Cleanup(second.Close)
 	close(release)
@@ -218,7 +218,7 @@ func TestQueryManualRequests(t *testing.T) {
 				client,
 				"users",
 				fetch,
-				QueryOptions{Enabled: false},
+				QueryOptions{Enabled: new(bool)},
 			)
 			t.Cleanup(observer.Close)
 			switch action {
@@ -268,7 +268,7 @@ func TestQueryDisableDuringLoad(t *testing.T) {
 			}
 			return int(call), nil
 		},
-		QueryOptions{Enabled: true},
+		QueryOptions{},
 	)
 	t.Cleanup(observer.Close)
 	<-started
@@ -300,7 +300,7 @@ func TestQueryFailure(t *testing.T) {
 			calls.Add(1)
 			return 0, failure
 		},
-		QueryOptions{Enabled: true},
+		QueryOptions{},
 	)
 	t.Cleanup(observer.Close)
 	state := awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Err != nil && !s.Fetching })
@@ -326,7 +326,7 @@ func TestQueryClose(t *testing.T) {
 				calls.Add(1)
 				return 1, nil
 			},
-			QueryOptions{Enabled: false},
+			QueryOptions{Enabled: new(bool)},
 		)
 		<-observer.Updates()
 		if closeClient {
@@ -345,7 +345,7 @@ func TestQueryClose(t *testing.T) {
 				client,
 				"users",
 				nil,
-				QueryOptions{Enabled: true},
+				QueryOptions{},
 			)
 			state := <-closed.Updates()
 			if !errors.Is(state.Err, ErrClosed) || state.Fetching {
@@ -368,7 +368,7 @@ func TestQueryDisabledRetention(t *testing.T) {
 		client,
 		"users",
 		func(context.Context) (string, error) { return "unused", nil },
-		QueryOptions{Enabled: false},
+		QueryOptions{Enabled: new(bool)},
 	)
 	t.Cleanup(observer.Close)
 	scheduler.now.Add(int64(time.Hour))
@@ -400,7 +400,7 @@ func TestQueryCloseDuringLoad(t *testing.T) {
 				return 7, nil
 			}
 		},
-		QueryOptions{Enabled: true},
+		QueryOptions{},
 	)
 	t.Cleanup(observer.Close)
 	<-started
@@ -408,7 +408,7 @@ func TestQueryCloseDuringLoad(t *testing.T) {
 		client,
 		"users",
 		func(context.Context) (int, error) { return 0, nil },
-		QueryOptions{Enabled: false},
+		QueryOptions{Enabled: new(bool)},
 	)
 	updates, unsubscribe := passive.Updates(), passive.Close
 	t.Cleanup(unsubscribe)
@@ -434,7 +434,7 @@ func TestQueryClientCancellation(t *testing.T) {
 			finished <- ctx.Err()
 			return 0, ctx.Err()
 		},
-		QueryOptions{Enabled: true},
+		QueryOptions{},
 	)
 	t.Cleanup(observer.Close)
 	<-started
@@ -699,7 +699,7 @@ func TestQueryLifecycle(t *testing.T) {
 		c,
 		"user",
 		func(context.Context) (int, error) { return 0, nil },
-		QueryOptions{Enabled: false},
+		QueryOptions{Enabled: new(bool)},
 	)
 	<-handle.Updates()
 	Set(c, "user", 1)
@@ -748,7 +748,7 @@ func TestNoFetcher(t *testing.T) {
 		c,
 		"user",
 		nil,
-		QueryOptions{Enabled: false},
+		QueryOptions{Enabled: new(bool)},
 	)
 	if !errors.Is(handle.Snapshot().Err, ErrNoFetcher) {
 		t.Fatal("nil query loader accepted")
