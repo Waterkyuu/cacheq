@@ -11,10 +11,10 @@ import (
 	cacheq "github.com/Waterkyuu/cacheq"
 )
 
-// loadResult lets the test finish a real query operation without using sleep-based timing.
+// loadResult lets the test finish a real query operation without sleep-based timing.
 type loadResult struct {
-	// value becomes the query's data when the controlled load succeeds.
-	value string
+	// value becomes the shared query's data when the controlled load succeeds.
+	value []task
 	// err selects the final load outcome.
 	err error
 }
@@ -32,49 +32,51 @@ func receive[V any](t *testing.T, ctx context.Context, events <-chan V) V {
 	}
 }
 
-// awaitSnapshot skips unrelated notifications until the expected observable state is delivered.
-func awaitSnapshot(
+// awaitViews waits until all three consumers have received the expected phase.
+func awaitViews(
 	t *testing.T,
 	ctx context.Context,
-	states <-chan cacheq.Snapshot[string],
-	matches func(cacheq.Snapshot[string]) bool,
+	states <-chan snapshotMsg,
+	matches func(cacheq.Snapshot[[]task]) bool,
 ) {
 	t.Helper()
-	for {
-		if matches(receive(t, ctx, states)) {
-			return
-		}
+	var seen [3]bool
+	for seen != [3]bool{true, true, true} {
+		update := receive(t, ctx, states)
+		seen[update.view] = matches(update.state)
 	}
 }
 
-// TestProgramRefreshLifecycle exercises actual terminal input, query commands, and the Bubble Tea event loop.
+// TestProgramRefreshLifecycle covers shared loading, mutation, retained failures, and recovery on the actual UI loop.
 func TestProgramRefreshLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
+	store := newTaskStore()
 	requests := make(chan chan loadResult, 1)
-	fetch := func(ctx context.Context) (string, error) {
+	fetch := func(ctx context.Context) ([]task, error) {
 		reply := make(chan loadResult, 1)
 		select {
 		case requests <- reply:
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return nil, ctx.Err()
 		}
 		select {
 		case result := <-reply:
 			return result.value, result.err
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 	input, keys := io.Pipe()
 	t.Cleanup(func() { input.Close(); keys.Close() })
-	states := make(chan cacheq.Snapshot[string], 16)
+	states := make(chan snapshotMsg, 64)
 	finished := make(chan error, 1)
 	go func() {
 		finished <- run(
 			client,
+			store,
 			fetch,
 			tea.WithContext(ctx),
 			tea.WithInput(input),
@@ -83,78 +85,84 @@ func TestProgramRefreshLifecycle(t *testing.T) {
 			tea.WithoutSignalHandler(),
 			tea.WithFilter(func(_ tea.Model, msg tea.Msg) tea.Msg {
 				if update, ok := msg.(snapshotMsg); ok {
-					states <- update.state
+					select {
+					case states <- update:
+					case <-ctx.Done():
+					}
 				}
 				return msg
 			}),
 		)
 	}()
 	reply := receive(t, ctx, requests)
-	awaitSnapshot(
-		t,
-		ctx,
-		states,
-		func(s cacheq.Snapshot[string]) bool { return s.Fetching && !s.HasData },
-	)
-	reply <- loadResult{value: "first"}
-	awaitSnapshot(
-		t,
-		ctx,
-		states,
-		func(s cacheq.Snapshot[string]) bool { return s.HasData && !s.Fetching },
-	)
-	if _, err := io.WriteString(keys, "r"); err != nil {
+	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool { return s.Fetching && !s.HasData })
+	if stats := client.Stats(); stats.Loads != 1 || stats.MergedRequests != 2 {
+		t.Fatalf("three consumers did not share the initial load: %+v", stats)
+	}
+	data, err := store.list()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply <- loadResult{value: data}
+	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool { return s.HasData && !s.Fetching })
+	if _, err := io.WriteString(keys, " "); err != nil {
 		t.Fatal(err)
 	}
 	reply = receive(t, ctx, requests)
-	awaitSnapshot(
-		t,
-		ctx,
-		states,
-		func(s cacheq.Snapshot[string]) bool { return s.Fetching && s.Data == "first" },
-	)
-	failure := errors.New("offline")
+	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool {
+		return s.Fetching && s.HasData && !s.Data[0].done
+	})
+	data, err = store.list()
+	if err != nil || !data[0].done {
+		t.Fatalf("toggle did not change backend state: %v", err)
+	}
+	reply <- loadResult{value: data}
+	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool {
+		return s.HasData && !s.Fetching && s.Data[0].done
+	})
+	if _, err := io.WriteString(keys, "f"); err != nil {
+		t.Fatal(err)
+	}
+	reply = receive(t, ctx, requests)
+	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool { return s.Fetching && s.HasData })
+	_, failure := store.list()
+	if failure == nil {
+		t.Fatal("f did not inject a backend failure")
+	}
 	reply <- loadResult{err: failure}
-	awaitSnapshot(
-		t,
-		ctx,
-		states,
-		func(s cacheq.Snapshot[string]) bool {
-			retained := !s.Fetching && s.Data == "first"
-			return retained && errors.Is(s.Err, failure)
-		},
-	)
+	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool {
+		retained := !s.Fetching && s.HasData && s.Data[0].done
+		return retained && errors.Is(s.Err, failure)
+	})
 	if _, err := io.WriteString(keys, "r"); err != nil {
 		t.Fatal(err)
 	}
 	reply = receive(t, ctx, requests)
-	reply <- loadResult{value: "recovered"}
-	awaitSnapshot(
-		t,
-		ctx,
-		states,
-		func(s cacheq.Snapshot[string]) bool {
-			recovered := !s.Fetching && s.Data == "recovered"
-			return recovered && s.Err == nil
-		},
-	)
+	data, err = store.list()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply <- loadResult{value: data}
+	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool {
+		return !s.Fetching && s.HasData && s.Data[0].done && s.Err == nil
+	})
 	if _, err := io.WriteString(keys, "q"); err != nil {
 		t.Fatal(err)
 	}
 	if err := receive(t, ctx, finished); err != nil {
 		t.Fatal(err)
 	}
-	state := client.Stats()
-	correctOutcomes := state.Loads == 3 && state.LoadSuccesses == 2 && state.LoadFailures == 1
+	stats := client.Stats()
+	correctOutcomes := stats.Loads == 4 && stats.LoadSuccesses == 3 && stats.LoadFailures == 1
 	if !correctOutcomes {
-		t.Fatalf("terminal refreshes did not match query work: %+v", state)
+		t.Fatalf("terminal actions did not match shared query work: %+v", stats)
 	}
-	if err := cacheq.Get[string](client, "greeting").Err; !errors.Is(err, cacheq.ErrClosed) {
+	if err := cacheq.Get[[]task](client, "tasks").Err; !errors.Is(err, cacheq.ErrClosed) {
 		t.Fatalf("program did not release its client: %v", err)
 	}
 }
 
-// TestProgramQuitDuringLoad releases a waiting subscription and cancels application-owned work.
+// TestProgramQuitDuringLoad releases all waiting subscriptions and cancels application-owned work.
 func TestProgramQuitDuringLoad(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
@@ -167,11 +175,12 @@ func TestProgramQuitDuringLoad(t *testing.T) {
 	go func() {
 		finished <- run(
 			client,
-			func(ctx context.Context) (string, error) {
+			newTaskStore(),
+			func(ctx context.Context) ([]task, error) {
 				close(started)
 				<-ctx.Done()
 				close(stopped)
-				return "", ctx.Err()
+				return nil, ctx.Err()
 			},
 			tea.WithContext(ctx),
 			tea.WithInput(input),
@@ -197,7 +206,8 @@ func TestProgramStartupFailure(t *testing.T) {
 	client := cacheq.NewClient(cacheq.Options{})
 	err := run(
 		client,
-		func(context.Context) (string, error) { return "unused", nil },
+		newTaskStore(),
+		func(context.Context) ([]task, error) { return nil, nil },
 		tea.WithContext(ctx),
 		tea.WithInput(nil),
 		tea.WithOutput(io.Discard),
@@ -207,7 +217,7 @@ func TestProgramStartupFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("canceled startup succeeded")
 	}
-	if err := cacheq.Get[string](client, "greeting").Err; !errors.Is(err, cacheq.ErrClosed) {
+	if err := cacheq.Get[[]task](client, "tasks").Err; !errors.Is(err, cacheq.ErrClosed) {
 		t.Fatalf("startup failure did not release the client: %v", err)
 	}
 }
