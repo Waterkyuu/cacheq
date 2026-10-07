@@ -70,6 +70,16 @@ export const chapters: Chapter[] = [
 				"在 Go MCP 服务端接入 cacheq，跨连接共享资源读取，保留原始 TTL，隔离私有数据，并在修改后使缓存失效、通知客户端重新读取。",
 		},
 	},
+	{
+		id: "versioning",
+		zh: "版本与升级规则",
+		en: "Versioning & upgrades",
+		description: {
+			en: "Understand cacheq's version policy: public API compatibility, v0 and stable release rules, deprecations, supported Go versions, and upgrade guidance.",
+			"zh-CN":
+				"了解 cacheq 的版本与升级规则：公开 API 兼容性、v0 与稳定版本的发布规则、弃用策略、Go 版本支持和升级方式。",
+		},
+	},
 ];
 
 // Adapt repository documentation without creating another maintained copy.
