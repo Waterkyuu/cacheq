@@ -9,6 +9,82 @@ import (
 	"time"
 )
 
+// TestQueryOptionsDefaultEnabled keeps automatic loading on unless the final options explicitly disable it.
+func TestQueryOptionsDefaultEnabled(t *testing.T) {
+	enabled, disabled := true, false
+	freshness, timeout, retries := time.Minute, time.Hour, 1
+	for _, tc := range []struct {
+		// name identifies the omitted or explicit enablement setting.
+		name string
+		// options contains the complete option values supplied to Query.
+		options []QueryOptions
+		// automatic indicates whether construction and invalidation should load data.
+		automatic bool
+	}{
+		{name: "omitted", automatic: true},
+		{name: "empty", options: []QueryOptions{{}}, automatic: true},
+		{name: "freshness only", options: []QueryOptions{{StaleTime: &freshness}}, automatic: true},
+		{name: "retry only", options: []QueryOptions{{Retry: &retries}}, automatic: true},
+		{name: "timeout only", options: []QueryOptions{{Timeout: &timeout}}, automatic: true},
+		{name: "retry predicate only", options: []QueryOptions{{RetryIf: func(error) bool { return false }}}, automatic: true},
+		{name: "retry delay only", options: []QueryOptions{{RetryDelay: func(int) time.Duration { return 0 }}}, automatic: true},
+		{name: "enabled", options: []QueryOptions{{Enabled: &enabled}}, automatic: true},
+		{name: "disabled", options: []QueryOptions{{Enabled: &disabled}}},
+		{name: "disabled with freshness", options: []QueryOptions{{Enabled: &disabled, StaleTime: &freshness}}},
+		{name: "last omitted flag", options: []QueryOptions{{Enabled: &disabled}, {StaleTime: &freshness}}, automatic: true},
+		{name: "last disabled flag", options: []QueryOptions{{StaleTime: &freshness}, {Enabled: &disabled}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newInvalidationClient(t)
+			var calls atomic.Int32
+			handle := Query(c, "users", func(context.Context) (int, error) {
+				return int(calls.Add(1)), nil
+			}, tc.options...)
+			t.Cleanup(handle.Close)
+			if tc.automatic {
+				awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
+			} else if state := handle.Snapshot(); state.Fetching || state.HasData || calls.Load() != 0 {
+				t.Fatalf("disabled initial state = %+v; calls=%d", state, calls.Load())
+			}
+			if err := c.Invalidate("users"); err != nil {
+				t.Fatal(err)
+			}
+			if tc.automatic {
+				awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching })
+			} else if state := handle.Snapshot(); state.Fetching || state.HasData || calls.Load() != 0 {
+				t.Fatalf("disabled invalidation state = %+v; calls=%d", state, calls.Load())
+			}
+		})
+	}
+}
+
+// TestQueryOptionsEnabledCopied changes permission only through SetEnabled after construction.
+func TestQueryOptionsEnabledCopied(t *testing.T) {
+	c := newInvalidationClient(t)
+	enabled := false
+	var calls atomic.Int32
+	handle := Query(c, "users", func(context.Context) (int, error) {
+		return int(calls.Add(1)), nil
+	}, QueryOptions{Enabled: &enabled})
+	t.Cleanup(handle.Close)
+	enabled = true
+	if err := c.Invalidate("users"); err != nil {
+		t.Fatal(err)
+	}
+	if handle.Snapshot().Fetching || calls.Load() != 0 {
+		t.Fatal("changing the original flag enabled automatic loading")
+	}
+	if err := handle.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
+	enabled = false
+	if err := c.Invalidate("users"); err != nil {
+		t.Fatal(err)
+	}
+	awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching })
+}
+
 // TestQueryOptionsFreshness keeps same-key data shared while consumers evaluate independent deadlines.
 func TestQueryOptionsFreshness(t *testing.T) {
 	c, now := newAgeClient(t, Options{StaleTime: time.Minute})
@@ -21,8 +97,8 @@ func TestQueryOptionsFreshness(t *testing.T) {
 		return 8, nil
 	}
 	zero, hour := time.Duration(0), time.Hour
-	fast := Query(c, "users", fetch, QueryOptions{StaleTime: &zero})
-	slow := Query(c, "users", fetch, QueryOptions{StaleTime: &hour})
+	fast := Query(c, "users", fetch, QueryOptions{Enabled: new(bool), StaleTime: &zero})
+	slow := Query(c, "users", fetch, QueryOptions{Enabled: new(bool), StaleTime: &hour})
 	t.Cleanup(fast.Close)
 	t.Cleanup(slow.Close)
 	for _, tc := range []struct {
@@ -114,7 +190,7 @@ func TestQueryOptionsExplicitExpiry(t *testing.T) {
 	c, now := newAgeClient(t, Options{StaleTime: time.Minute, MaxAge: 5 * time.Minute})
 	hour, zero := time.Hour, time.Duration(0)
 	fetch := func(context.Context) (int, error) { return 7, nil }
-	ordinary := Query(c, "ordinary", fetch, QueryOptions{Enabled: true, StaleTime: &hour})
+	ordinary := Query(c, "ordinary", fetch, QueryOptions{StaleTime: &hour})
 	t.Cleanup(ordinary.Close)
 	state := awaitState(t, ordinary.Updates(), func(s Snapshot[int]) bool { return s.HasData && !s.Fetching })
 	if !state.ExpiresAt.Equal(time.Unix(0, 0).Add(5 * time.Minute)) {
@@ -213,7 +289,10 @@ func TestQueryOptionsRetries(t *testing.T) {
 					_, err = FetchWithOptions(context.Background(), c, "users", fetch, tc.options)
 				} else {
 					handle := Query(c, "users", fetch, QueryOptions{
-						Retry: tc.options.Retry, RetryIf: tc.options.RetryIf, RetryDelay: tc.options.RetryDelay,
+						Enabled:    new(bool),
+						Retry:      tc.options.Retry,
+						RetryIf:    tc.options.RetryIf,
+						RetryDelay: tc.options.RetryDelay,
 					})
 					t.Cleanup(handle.Close)
 					_, err = handle.Refetch(context.Background())
@@ -240,7 +319,7 @@ func TestQueryOptionsCopied(t *testing.T) {
 		}
 		return 7, nil
 	}, QueryOptions{
-		StaleTime: &hour, Retry: &retries, RetryDelay: func(int) time.Duration { return 0 },
+		Enabled: new(bool), StaleTime: &hour, Retry: &retries, RetryDelay: func(int) time.Duration { return 0 },
 	})
 	t.Cleanup(handle.Close)
 	hour, retries = 0, 0
@@ -288,7 +367,7 @@ func TestQueryOptionsTimeout(t *testing.T) {
 						FetchOptions{Timeout: tc.timeout},
 					)
 				} else {
-					handle := Query(c, "users", fetch, QueryOptions{Timeout: tc.timeout})
+					handle := Query(c, "users", fetch, QueryOptions{Enabled: new(bool), Timeout: tc.timeout})
 					t.Cleanup(handle.Close)
 					deadline, err = handle.Refetch(context.Background())
 				}
@@ -347,7 +426,7 @@ func TestQueryOptionsSharedRequest(t *testing.T) {
 		}
 		return 7, nil
 	}, QueryOptions{
-		Enabled: true, StaleTime: &hour, Retry: &retries, Timeout: &hour,
+		StaleTime: &hour, Retry: &retries, Timeout: &hour,
 		RetryIf: func(err error) bool { return errors.Is(err, failure) },
 		RetryDelay: func(int) time.Duration {
 			delays.Add(1)
@@ -361,7 +440,7 @@ func TestQueryOptionsSharedRequest(t *testing.T) {
 		return 99, nil
 	}
 	joiner := Query(c, "users", joinFetch, QueryOptions{
-		Enabled: true, StaleTime: &zero, Timeout: &zero, RetryIf: func(error) bool { return false },
+		StaleTime: &zero, Timeout: &zero, RetryIf: func(error) bool { return false },
 	})
 	t.Cleanup(joiner.Close)
 	result := make(chan error, 1)
@@ -427,7 +506,7 @@ func TestQueryOptionsAutomaticRefresh(t *testing.T) {
 			return 0, errors.New("offline")
 		}
 		return 7, nil
-	}, QueryOptions{Enabled: true, Retry: &retries, RetryDelay: func(int) time.Duration { return 0 }})
+	}, QueryOptions{Retry: &retries, RetryDelay: func(int) time.Duration { return 0 }})
 	t.Cleanup(first.Close)
 	awaitState(t, first.Updates(), func(s Snapshot[int]) bool { return s.HasData && !s.Fetching })
 	second := Query(c, "users", func(context.Context) (int, error) { return 99, nil })
