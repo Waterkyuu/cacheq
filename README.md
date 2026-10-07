@@ -98,6 +98,12 @@ cacheq follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Durin
 
 See the [version policy](docs/versioning.en-US.md) for the public API boundary, deprecation policy, Go support, and upgrade guidance. Published version tags are never moved or reused.
 
+## Contributing
+
+See the [contribution guide](CONTRIBUTING.md) for local setup, Go code guidelines,
+tests, documentation, and the PR workflow. Bug reports and feature proposals are
+welcome through GitHub Issues.
+
 ## License
 
 cacheq is licensed under the [MIT License](LICENSE).
