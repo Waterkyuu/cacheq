@@ -17,12 +17,6 @@ on:
       - '.github/workflows/website.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'docs/**'
-      - 'website/**'
-      - '*.go'
-      - 'go.mod'
-      - '.github/workflows/website.yml'
 
 concurrency:
   group: website-${{ github.workflow }}-${{ github.ref }}
