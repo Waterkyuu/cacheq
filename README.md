@@ -145,7 +145,7 @@ Compare **no cache, first load, and cache hits** for **100 sequential reads** of
 go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 ```
 
-The [concurrent request scenarios](docs/benchmarks.en-US.md#concurrent-request-scenarios) compare 1, 4, 16, and 64 caller goroutines handling the same 64 requests, with GOMAXPROCS set to 1 and 4, against shared and distinct keys.
+The [concurrent request scenarios](docs/benchmarks.en-US.md#concurrent-request-scenarios) compare cache behavior for shared and distinct keys with 100 reads, GOMAXPROCS=4, and four request goroutines performing 25 reads each.
 
 ## Feature guides
 

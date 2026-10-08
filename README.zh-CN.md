@@ -142,7 +142,7 @@ go run .
 go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 ```
 
-[独立并发测试](docs/benchmarks.zh-CN.md#独立并发请求测试)固定每批 64 次请求，比较 1、4、16、64 个调用者 goroutine，并分别在 GOMAXPROCS=1 和 4 下测量同一个 key 与不同 key。
+[独立并发测试](docs/benchmarks.zh-CN.md#独立并发请求测试)固定每批 100 次读取、GOMAXPROCS=4、4 个请求 goroutine，每个读取 25 次，比较同一个 key 与不同 key 的缓存表现。
 
 ## 功能文档
 
