@@ -1,0 +1,679 @@
+Date: 2026-10-09 (Asia/Shanghai)
+Source revision: f93a08a9b317bb70a944714cd548024f23d2cdbe
+Go: go1.27.1 darwin/arm64
+CPU: Apple M3 Pro
+All controls: GOMAXPROCS=4; 4 request goroutines; 100 same-key reads per batch
+Ordinary timings: median of five samples; 300ms per sample; profiles and traces collected separately
+Investigation was performed in a temporary git-archive checkout. Production code was not changed.
+
+Findings:
+- Shared Client state is a bottleneck: SharedHit 34.271 us vs IsolatedHit 21.585 us.
+- Persistent workers barely improve these batches: SharedHit 33.429 us, FirstLoad 65.532 us.
+- NoOp runs the same batch harness and digest checks without a Fetch: 2.719 us.
+- FixedClockHit removes both time.Now calls under the lock: 30.290 us.
+- Passing a nil fetcher only after warm-up removes its erased wrapper: 32.955 us,
+  with 107 allocations instead of 207; this is a warm-cache-only diagnostic control.
+- Direct freshness calculation removes the full snapshot, duplicate age/map checks,
+  pending lookup, and second clock read: SharedHit 25.639 us, FirstLoad 58.078 us.
+- Restoring the original query.go returns SharedHit to 35.034 us and FirstLoad to 67.871 us.
+- The direct-freshness candidate passed go test -race ./... -count=1 in the temporary checkout.
+- Trace: CacheHit has 20.43 Client-mutex blocking events per batch.
+- Trace: FirstLoad has about 4 pending waits per batch; median time from the load waking
+  a caller to that caller resuming is 5.824 us. Its 18.91 Client-mutex blocking events
+  per batch mostly occur after the caller has been woken by Client.execute
+  (18,623 of 18,927 events). Completed pending reads return directly without reacquiring
+  the Client lock; these later waits belong to subsequent cached reads.
+
+Interpretation limits:
+- Independent Clients isolate sharing of Client state; they do not implement shared caching.
+- Persistent workers exchange goroutine creation for a dispatch channel. This is a useful
+  control, not exact subtraction of goroutine creation time.
+- NoOp measures a lighter workload. Its cost cannot simply be subtracted from other rows.
+- Shorter critical sections reduce lock contention nonlinearly. Do not sum the timing
+  differences or assign percentages of the original serial/concurrent gap to each control.
+- A mutex profile attributes accumulated contention to the releasing Unlock stack;
+  it does not say Unlock itself is expensive, or describe a percentage of batch elapsed time.
+- Trace and profile instrumentation changes timing. Aggregate waits across callers overlap
+  and must not be added to infer batch latency. The original benchmark tables are unchanged.
+
+Timing commands (in the temporary checkout after adding the diagnostic source below):
+go test -race -run '^$' -bench '^BenchmarkReadDiagnosis$' -benchtime=1x -cpu=4
+go test -run '^$' -bench '^BenchmarkReadDiagnosis$' -benchmem -benchtime=300ms -count=5 -cpu=4
+go test -run '^$' -bench '^BenchmarkReadDiagnosis$/./^NilFetcherHit$' -benchmem -benchtime=300ms -count=5 -cpu=4
+Extract the diagnostic-only patch below into diagnosis.diff in the temporary checkout, then run:
+git apply --unidiff-zero diagnosis.diff
+go test -race ./... -count=1
+go test -run '^$' -bench '^BenchmarkReadDiagnosis$/./^(SharedHit|FirstLoad)$' -benchmem -benchtime=300ms -count=5 -cpu=4
+Restore query.go from the source revision, and repeat the preceding timing command.
+The initial baseline was recorded before adding the NilFetcherHit branch to the diagnostic.
+The direct-freshness and restored-baseline samples use the same diagnostic source, including that branch.
+
+Trace commands (using a binary built from the unchanged source revision):
+go test -c -o /tmp/cacheq-diagnosis.test
+Run separately for MODE=CacheHit and MODE=FirstLoad:
+/tmp/cacheq-diagnosis.test -test.run '^$' -test.bench '^BenchmarkConcurrentFetch$/^Workers=4$/^SameKey$/^MODE$' -test.benchtime=1000x -test.count=1 -test.cpu=4 -test.trace=/tmp/MODE.trace
+go tool trace -d=parsed /tmp/MODE.trace > MODE-trace-events.txt
+The parser below expects CacheHit-trace-events.txt and FirstLoad-trace-events.txt beside it.
+Both recordings include 1,000 measured batches and one calibration batch.
+
+Profile command (run separately for CacheHit and FirstLoad):
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Workers=4$/^SameKey$/^MODE$' -benchtime=3s -count=1 -cpu=4 -cpuprofile=/tmp/cpu.pprof -mutexprofile=/tmp/mutex.pprof -mutexprofilefraction=1 -blockprofile=/tmp/block.pprof -blockprofilerate=1 -o /tmp/cacheq-diagnosis.test
+go tool pprof -top -nodecount=15 /tmp/cacheq-diagnosis.test /tmp/mutex.pprof
+go tool pprof -top -nodecount=15 /tmp/cacheq-diagnosis.test /tmp/block.pprof
+go tool pprof -top -nodecount=15 /tmp/cacheq-diagnosis.test /tmp/cpu.pprof
+
+Diagnostic source SHA-256: 7fd6cd17942a37cfdd09483d5d0a0208204ec0bbbbf62382a052c1f55a5302c0
+
+
+Initial baseline samples
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkReadDiagnosis/FreshWorkers/NoOp-4    	  116456	      2722 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5232 B/op	       7 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/NoOp-4    	  133732	      2719 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5232 B/op	       7 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/NoOp-4    	  133048	      2701 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5232 B/op	       7 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/NoOp-4    	  135212	      2728 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5232 B/op	       7 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/NoOp-4    	  130048	      2705 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5232 B/op	       7 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   10000	     35386 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7732 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   10000	     34549 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7733 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   10000	     34249 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7733 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   10000	     34256 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7732 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   10000	     34271 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7732 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/IsolatedHit-4       	   15296	     21626 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7736 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/IsolatedHit-4       	   16687	     21585 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7735 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/IsolatedHit-4       	   16628	     21528 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7735 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/IsolatedHit-4       	   16680	     21647 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7734 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/IsolatedHit-4       	   16567	     21380 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7734 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FixedClockHit-4     	   10000	     30169 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7733 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FixedClockHit-4     	   12164	     30195 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7732 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FixedClockHit-4     	   10000	     30290 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7733 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FixedClockHit-4     	   10000	     30681 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7732 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FixedClockHit-4     	   10000	     30880 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7732 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    5250	     69776 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8262 B/op	     216 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    5371	     69363 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8263 B/op	     216 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    5406	     66998 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8263 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    5373	     67207 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8262 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    5395	     67299 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8264 B/op	     216 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/NoOp-4         	  128737	      2736 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5104 B/op	       3 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/NoOp-4         	  130729	      2754 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5104 B/op	       3 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/NoOp-4         	  130924	      2750 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5104 B/op	       3 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/NoOp-4         	  131769	      2730 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5104 B/op	       3 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/NoOp-4         	  131025	      2714 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5104 B/op	       3 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   10000	     33429 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   10000	     32985 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   10000	     33176 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   10000	     34632 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   10000	     33490 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/IsolatedHit-4  	   15507	     20908 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/IsolatedHit-4  	   17349	     21023 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/IsolatedHit-4  	   17116	     20848 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/IsolatedHit-4  	   17256	     20883 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/IsolatedHit-4  	   18271	     33737 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FixedClockHit-4         	   12303	     29709 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FixedClockHit-4         	   10000	     30005 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FixedClockHit-4         	   10000	     31641 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FixedClockHit-4         	   12063	     29535 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FixedClockHit-4         	   12109	     29608 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4             	    5656	     65459 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8127 B/op	     212 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4             	    5482	     65548 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8127 B/op	     213 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4             	    5444	     65532 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8128 B/op	     213 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4             	    5558	     65419 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8127 B/op	     213 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4             	    5563	     65662 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8127 B/op	     212 allocs/op
+PASS
+ok  	github.com/Waterkyuu/cacheq	24.550s
+
+
+Warm-cache nil-fetcher samples
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkReadDiagnosis/FreshWorkers/NilFetcherHit-4         	   10413	     32955 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5336 B/op	     107 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/NilFetcherHit-4         	   10000	     32936 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5333 B/op	     107 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/NilFetcherHit-4         	   10000	     33049 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5333 B/op	     107 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/NilFetcherHit-4         	   10000	     33140 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5333 B/op	     107 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/NilFetcherHit-4         	   10000	     32942 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5332 B/op	     107 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/NilFetcherHit-4    	   10000	     32059 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5204 B/op	     103 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/NilFetcherHit-4    	   10000	     32104 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5204 B/op	     103 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/NilFetcherHit-4    	   10000	     31822 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5204 B/op	     103 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/NilFetcherHit-4    	   10000	     32051 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5204 B/op	     103 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/NilFetcherHit-4    	   10000	     31864 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    5204 B/op	     103 allocs/op
+PASS
+ok  	github.com/Waterkyuu/cacheq	3.888s
+
+
+Direct freshness candidate samples
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   12732	     26438 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7734 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   13726	     25639 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7733 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   13936	     25433 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7733 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   13011	     25300 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7733 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   13846	     25701 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7734 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    6406	     58078 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8260 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    6219	     57681 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8260 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    7057	     56847 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8260 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    6608	     58081 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8261 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    6693	     58296 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8260 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   14401	     24672 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   14472	     24390 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   14710	     24335 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   14560	     24446 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   14704	     24699 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4    	    6507	     57785 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8128 B/op	     212 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4    	    6273	     59013 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8128 B/op	     212 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4    	    6301	     56984 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8128 B/op	     212 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4    	    6404	     56433 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8128 B/op	     212 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4    	    6381	     56500 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8128 B/op	     212 allocs/op
+PASS
+ok  	github.com/Waterkyuu/cacheq	13.077s
+
+
+Restored original query.go samples
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	    9158	     35508 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7734 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   10000	     35174 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7734 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   10000	     35034 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7733 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   10000	     34838 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7733 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/SharedHit-4         	   10000	     34039 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7732 B/op	     207 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    5630	     67871 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8266 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    5350	     68387 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8264 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    5286	     68057 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8264 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    5305	     67742 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8263 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/FreshWorkers/FirstLoad-4         	    5300	     67679 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8261 B/op	     217 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   10000	     34561 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   10000	     34169 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   10000	     33665 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	   10000	     41555 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/SharedHit-4    	    6048	     58711 ns/op	         4.000 goroutines/batch	         0 loads/batch	       100.0 reads/batch	    7604 B/op	     203 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4    	    5562	     66931 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8127 B/op	     212 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4    	    5370	     67092 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8127 B/op	     212 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4    	    5385	     67227 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8127 B/op	     212 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4    	    5379	     66807 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8127 B/op	     212 allocs/op
+BenchmarkReadDiagnosis/PersistentWorkers/FirstLoad-4    	    5376	     67311 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	       100.0 reads/batch	    8127 B/op	     212 allocs/op
+PASS
+ok  	github.com/Waterkyuu/cacheq	10.480s
+
+
+CacheHit profile benchmark
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4         	   87394	     41379 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+PASS
+ok  	github.com/Waterkyuu/cacheq	5.140s
+
+
+CacheHit profile summaries
+Profile: mutex
+File: benchmark.test
+Type: delay
+Time: 2026-10-09 06:51:32 CST
+Showing nodes accounting for 2.84s, 99.94% of 2.84s total
+Dropped 70 nodes (cum <= 0.01s)
+      flat  flat%   sum%        cum   cum%
+     2.84s 99.94% 99.94%      2.84s   100%  sync.(*Mutex).Unlock (inline)
+         0     0% 99.94%      2.84s   100%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0% 99.94%      2.84s   100%  github.com/Waterkyuu/cacheq.Fetch[go.shape.[32]uint8]
+         0     0% 99.94%      2.84s   100%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+
+Profile: block
+File: benchmark.test
+Type: delay
+Time: 2026-10-09 06:51:32 CST
+Showing nodes accounting for 22.75s, 100% of 22.75s total
+Dropped 4 nodes (cum <= 0.11s)
+Showing top 15 nodes out of 33
+      flat  flat%   sum%        cum   cum%
+    16.52s 72.61% 72.61%     16.52s 72.61%  runtime.chanrecv1
+     3.75s 16.50% 89.11%      3.75s 16.50%  sync.(*WaitGroup).Wait
+     2.48s 10.89%   100%      2.48s 10.89%  sync.(*Mutex).Lock (inline)
+         0     0%   100%      2.48s 10.89%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0%   100%      2.48s 10.89%  github.com/Waterkyuu/cacheq.Fetch[go.shape.[32]uint8]
+         0     0%   100%      4.03s 17.73%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch
+         0     0%   100%      4.03s 17.73%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1
+         0     0%   100%      4.03s 17.73%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1
+         0     0%   100%      3.75s 16.50%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1.1
+         0     0%   100%      3.75s 16.50%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch
+         0     0%   100%      2.69s 11.83%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+         0     0%   100%      4.20s 18.47%  main.main
+         0     0%   100%      4.20s 18.47%  runtime.main
+         0     0%   100%      0.17s  0.73%  runtime/pprof.StopCPUProfile
+         0     0%   100%      0.17s  0.73%  sync.(*Once).Do (inline)
+
+Profile: cpu
+File: benchmark.test
+Type: cpu
+Time: 2026-10-09 06:51:28 CST
+Duration: 4.20s, Total samples = 6.46s (153.75%)
+Showing nodes accounting for 6.30s, 97.52% of 6.46s total
+Dropped 52 nodes (cum <= 0.03s)
+Showing top 15 nodes out of 56
+      flat  flat%   sum%        cum   cum%
+     2.47s 38.24% 38.24%      2.47s 38.24%  runtime.pthread_cond_wait
+     2.04s 31.58% 69.81%      2.04s 31.58%  runtime.pthread_cond_signal
+     1.64s 25.39% 95.20%      1.64s 25.39%  runtime.usleep
+     0.10s  1.55% 96.75%      0.10s  1.55%  runtime.madvise
+     0.02s  0.31% 97.06%      0.09s  1.39%  internal/sync.(*Mutex).lockSlow
+     0.01s  0.15% 97.21%      0.05s  0.77%  runtime.mapaccess1
+     0.01s  0.15% 97.37%      0.05s  0.77%  time.now
+     0.01s  0.15% 97.52%      0.06s  0.93%  time.runtimeNow
+         0     0% 97.52%      1.71s 26.47%  _.goready.func1
+         0     0% 97.52%      0.28s  4.33%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0% 97.52%      0.06s  0.93%  github.com/Waterkyuu/cacheq.(*Client).snapshotLocked
+         0     0% 97.52%      0.29s  4.49%  github.com/Waterkyuu/cacheq.Fetch[go.shape.[32]uint8]
+         0     0% 97.52%      0.29s  4.49%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+         0     0% 97.52%      0.09s  1.39%  internal/sync.(*Mutex).Lock (inline)
+         0     0% 97.52%      0.07s  1.08%  internal/sync.(*Mutex).Unlock (inline)
+
+
+FirstLoad profile benchmark
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4         	   49238	     73307 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.993 merged/batch	       100.0 requests/batch	    8935 B/op	     219 allocs/op
+PASS
+ok  	github.com/Waterkyuu/cacheq	7.226s
+
+
+FirstLoad profile summaries
+Profile: mutex
+File: benchmark.test
+Type: delay
+Time: 2026-10-09 06:52:00 CST
+Showing nodes accounting for 1.16s, 99.84% of 1.17s total
+Dropped 116 nodes (cum <= 0.01s)
+      flat  flat%   sum%        cum   cum%
+     1.16s 99.84% 99.84%      1.16s 99.86%  sync.(*Mutex).Unlock (inline)
+         0     0% 99.84%      1.16s 99.83%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0% 99.84%      1.16s 99.83%  github.com/Waterkyuu/cacheq.Fetch[go.shape.[32]uint8]
+         0     0% 99.84%      1.16s 99.83%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+
+Profile: block
+File: benchmark.test
+Type: delay
+Time: 2026-10-09 06:52:00 CST
+Showing nodes accounting for 38.73s, 100% of 38.73s total
+Dropped 13 nodes (cum <= 0.19s)
+Showing top 15 nodes out of 26
+      flat  flat%   sum%        cum   cum%
+    27.36s 70.63% 70.63%     27.36s 70.63%  runtime.chanrecv1
+     6.09s 15.72% 86.35%      6.09s 15.72%  runtime.selectgo
+     4.16s 10.73% 97.08%      4.16s 10.73%  sync.(*WaitGroup).Wait
+     1.13s  2.92%   100%      1.13s  2.92%  sync.(*Mutex).Lock (inline)
+         0     0%   100%      7.22s 18.64%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0%   100%      7.22s 18.64%  github.com/Waterkyuu/cacheq.Fetch[go.shape.[32]uint8]
+         0     0%   100%      6.76s 17.46%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch
+         0     0%   100%      6.76s 17.45%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1
+         0     0%   100%      6.76s 17.45%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1
+         0     0%   100%      4.16s 10.73%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1.1
+         0     0%   100%      4.16s 10.73%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch
+         0     0%   100%      7.39s 19.08%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+         0     0%   100%      6.90s 17.82%  main.main
+         0     0%   100%      6.90s 17.82%  runtime.main
+         0     0%   100%     27.04s 69.82%  testing.(*B).Run
+
+Profile: cpu
+File: benchmark.test
+Type: cpu
+Time: 2026-10-09 06:51:53 CST
+Duration: 6.90s, Total samples = 7.28s (105.46%)
+Showing nodes accounting for 7.13s, 97.94% of 7.28s total
+Dropped 91 nodes (cum <= 0.04s)
+Showing top 15 nodes out of 68
+      flat  flat%   sum%        cum   cum%
+     3.21s 44.09% 44.09%      3.21s 44.09%  runtime.pthread_cond_signal
+     1.96s 26.92% 71.02%      1.96s 26.92%  runtime.pthread_cond_wait
+     0.85s 11.68% 82.69%      0.85s 11.68%  runtime.usleep
+     0.45s  6.18% 88.87%      0.45s  6.18%  runtime.pthread_cond_timedwait_relative_np
+     0.31s  4.26% 93.13%      0.31s  4.26%  runtime.kevent
+     0.14s  1.92% 95.05%      0.14s  1.92%  crypto/internal/fips140/sha256.blockSHA2
+     0.06s  0.82% 95.88%      0.06s  0.82%  runtime.nanotime1
+     0.05s  0.69% 96.57%      0.05s  0.69%  runtime.pthread_kill
+     0.04s  0.55% 97.12%      0.04s  0.55%  runtime.walltime
+     0.02s  0.27% 97.39%      0.04s  0.55%  internal/sync.(*Mutex).lockSlow
+     0.01s  0.14% 97.53%      0.12s  1.65%  runtime.lock2
+     0.01s  0.14% 97.66%      0.07s  0.96%  runtime.mapaccess1
+     0.01s  0.14% 97.80%      0.06s  0.82%  runtime.mapaccess2
+     0.01s  0.14% 97.94%      0.77s 10.58%  runtime.stealWork
+         0     0% 97.94%      2.98s 40.93%  _.goready.func1
+
+
+CacheHit trace benchmark
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4         	    1000	     35273 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8461 B/op	     209 allocs/op
+PASS
+
+
+FirstLoad trace benchmark
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4         	    1000	     73417 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.997 merged/batch	       100.0 requests/batch	    9003 B/op	     219 allocs/op
+PASS
+
+
+Trace event summary
+{
+  "CacheHit": {
+    "workers": 4004,
+    "batches_including_calibration": 1001,
+    "post_load_mutex_wait_events": 0,
+    "start": {
+      "events_per_batch": 3.998001998001998,
+      "wait_median_us": 0.832,
+      "resume_median_us": 2.496,
+      "aggregate_wait_us_per_batch": 4.349988011988012,
+      "aggregate_resume_us_per_batch": 12.568901098901097
+    },
+    "pending": {
+      "events_per_batch": 0.0,
+      "wait_median_us": 0,
+      "resume_median_us": 0,
+      "aggregate_wait_us_per_batch": 0.0,
+      "aggregate_resume_us_per_batch": 0.0
+    },
+    "mutex": {
+      "events_per_batch": 20.425574425574425,
+      "wait_median_us": 0.256,
+      "resume_median_us": 0.32,
+      "aggregate_wait_us_per_batch": 14.787672327672329,
+      "aggregate_resume_us_per_batch": 24.892322677322678
+    }
+  },
+  "FirstLoad": {
+    "workers": 4004,
+    "batches_including_calibration": 1001,
+    "post_load_mutex_wait_events": 18623,
+    "start": {
+      "events_per_batch": 3.992007992007992,
+      "wait_median_us": 0.896,
+      "resume_median_us": 4.48,
+      "aggregate_wait_us_per_batch": 5.154006993006993,
+      "aggregate_resume_us_per_batch": 17.652352647352647
+    },
+    "pending": {
+      "events_per_batch": 3.997002997002997,
+      "wait_median_us": 27.392,
+      "resume_median_us": 5.824,
+      "aggregate_wait_us_per_batch": 110.52437662337663,
+      "aggregate_resume_us_per_batch": 19.771164835164836
+    },
+    "mutex": {
+      "events_per_batch": 18.908091908091908,
+      "wait_median_us": 0.256,
+      "resume_median_us": 0.384,
+      "aggregate_wait_us_per_batch": 13.549227772227772,
+      "aggregate_resume_us_per_batch": 23.443278721278723
+    }
+  }
+}
+
+
+BEGIN DIAGNOSTIC SOURCE: read_diagnosis_test.go
+package cacheq_test
+
+import (
+	"context"
+	"crypto/sha256"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	cacheq "github.com/Waterkyuu/cacheq"
+)
+
+// readDiagnosis selects one controlled change to the same-key read workload.
+type readDiagnosis struct {
+	// mode selects cached reads, one cold load, or the harness without any cache access.
+	mode string
+	// persistent moves request goroutine creation outside the measured batches.
+	persistent bool
+	// isolated gives each caller its own warm Client to remove shared Client lock contention.
+	isolated bool
+	// fixedClock removes time.Now calls while preserving a fresh cached result.
+	fixedClock bool
+}
+
+// BenchmarkReadDiagnosis separates batch setup, shared Client contention, and clock work.
+// These controlled workloads diagnose costs and do not replace the public benefit benchmarks.
+func BenchmarkReadDiagnosis(b *testing.B) {
+	for _, harness := range []string{"FreshWorkers", "PersistentWorkers"} {
+		b.Run(harness, func(b *testing.B) {
+			for _, scenario := range []string{"NoOp", "SharedHit", "IsolatedHit", "FixedClockHit", "NilFetcherHit", "FirstLoad"} {
+				b.Run(scenario, func(b *testing.B) {
+					mode := "CacheHit"
+					if scenario == "NoOp" || scenario == "FirstLoad" || scenario == "NilFetcherHit" {
+						mode = scenario
+					}
+					benchmarkReadDiagnosis(b, readDiagnosis{
+						mode: mode, persistent: harness == "PersistentWorkers",
+						isolated: scenario == "IsolatedHit", fixedClock: scenario == "FixedClockHit",
+					})
+				})
+			}
+		})
+	}
+}
+
+// benchmarkReadDiagnosis keeps 100 checked reads and four callers in every control.
+func benchmarkReadDiagnosis(b *testing.B, config readDiagnosis) {
+	payload := make([]byte, benchmarkPayloadBytes)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+	want := sha256.Sum256(payload)
+	ctx := context.Background()
+	var calls atomic.Uint64
+	load := func(ctx context.Context) ([sha256.Size]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return [sha256.Size]byte{}, err
+		}
+		calls.Add(1)
+		return sha256.Sum256(payload), nil
+	}
+	options := cacheq.Options{StaleTime: time.Hour}
+	if config.fixedClock {
+		now := time.Unix(1, 0)
+		options.Clock = func() time.Time { return now }
+	}
+	clients := make([]*cacheq.Client, benchmarkConcurrentWorkers)
+	clients[0] = cacheq.NewClient(options)
+	b.Cleanup(clients[0].Close)
+	for worker := 1; worker < benchmarkConcurrentWorkers; worker++ {
+		clients[worker] = clients[0]
+		if config.isolated {
+			clients[worker] = cacheq.NewClient(options)
+			b.Cleanup(clients[worker].Close)
+		}
+	}
+	if config.mode == "CacheHit" || config.mode == "NilFetcherHit" {
+		for _, client := range clients {
+			if value, err := cacheq.Fetch(ctx, client, "product:1", load); err != nil || value != want {
+				b.Fatalf("warm-up failed: %v", err)
+			}
+		}
+		calls.Store(0)
+	}
+	var ready, finished sync.WaitGroup
+	results := make([][sha256.Size]byte, benchmarkConcurrentRequests)
+	failures := make([]error, benchmarkConcurrentRequests)
+	run := func(worker int, start <-chan struct{}) {
+		ready.Done()
+		<-start
+		for request := worker; request < benchmarkConcurrentRequests; request += benchmarkConcurrentWorkers {
+			if config.mode == "NoOp" {
+				results[request] = want
+			} else if config.mode == "NilFetcherHit" {
+				// Warm-cache reads do not need a loader; this control avoids allocating its erased wrapper.
+				results[request], failures[request] = cacheq.Fetch[[sha256.Size]byte](ctx, clients[worker], "product:1", nil)
+			} else {
+				results[request], failures[request] = cacheq.Fetch(ctx, clients[worker], "product:1", load)
+			}
+		}
+		finished.Done()
+	}
+	jobs := make([]chan (<-chan struct{}), benchmarkConcurrentWorkers)
+	var stopped sync.WaitGroup
+	if config.persistent {
+		stopped.Add(benchmarkConcurrentWorkers)
+		for worker := range benchmarkConcurrentWorkers {
+			jobs[worker] = make(chan (<-chan struct{}), 1)
+			go func() {
+				defer stopped.Done()
+				for start := range jobs[worker] {
+					run(worker, start)
+				}
+			}()
+		}
+		b.Cleanup(func() {
+			for _, job := range jobs {
+				close(job)
+			}
+			stopped.Wait()
+		})
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if config.mode == "FirstLoad" {
+			b.StopTimer()
+			clients[0].Clear()
+			b.StartTimer()
+		}
+		results = make([][sha256.Size]byte, benchmarkConcurrentRequests)
+		failures = make([]error, benchmarkConcurrentRequests)
+		start := make(chan struct{})
+		ready.Add(benchmarkConcurrentWorkers)
+		finished.Add(benchmarkConcurrentWorkers)
+		for worker := range benchmarkConcurrentWorkers {
+			if config.persistent {
+				jobs[worker] <- start
+			} else {
+				go run(worker, start)
+			}
+		}
+		ready.Wait()
+		close(start)
+		finished.Wait()
+		for request, err := range failures {
+			if err != nil || results[request] != want {
+				b.Fatalf("request %d failed: %v", request, err)
+			}
+		}
+	}
+	b.StopTimer()
+	var expected uint64
+	if config.mode == "FirstLoad" {
+		expected = uint64(b.N)
+	}
+	if calls.Load() != expected {
+		b.Fatalf("loader calls = %d, want %d", calls.Load(), expected)
+	}
+	b.ReportMetric(float64(calls.Load())/float64(b.N), "loads/batch")
+	b.ReportMetric(benchmarkConcurrentRequests, "reads/batch")
+	b.ReportMetric(benchmarkConcurrentWorkers, "goroutines/batch")
+}
+END DIAGNOSTIC SOURCE
+
+
+BEGIN DIAGNOSTIC PATCH: query.go
+--- a/query.go
++++ b/query.go
+@@ -316,2 +316,7 @@
+-		state := c.withFreshnessLocked(key, c.snapshotLocked(key), request.options)
+-		fresh := !state.Stale
++		// Diagnostic-only control: compute freshness from the entry already read under the lock.
++		// This avoids building a full snapshot and reading the clock a second time.
++		expiresAt := cached.expiresAt
++		if cached.ordinary && cached.hasData && !cached.invalidated {
++			expiresAt = c.limitExpiry(cached.updatedAt, cached.updatedAt.Add(request.options.StaleTime))
++		}
++		fresh := cached.hasData && request.options.Clock().Before(expiresAt)
+END DIAGNOSTIC PATCH
+
+
+BEGIN TRACE PARSER: summarize_trace.py
+from pathlib import Path
+from statistics import median
+import json
+import re
+
+folder = Path(__file__).parent
+summaries = {}
+for mode in ("CacheHit", "FirstLoad"):
+    raw = (folder / (mode + "-trace-events.txt")).read_text()
+    events = []
+    workers = set()
+    for block in re.split(r"(?m)(?=^M=)", raw):
+        header = block.split("\n", 1)[0]
+        match = re.search(r"StateTransition Time=(\d+) GoID=(\d+) (\w+)->(\w+)", header)
+        if not match:
+            continue
+        timestamp, goid, before, after = match.groups()
+        timestamp, goid = int(timestamp), int(goid)
+        events.append((timestamp, goid, before, after, block))
+        transition_stack = block.split("TransitionStack=\n", 1)[-1].split("\n\n", 1)[0]
+        if before == "NotExist" and "benchmarkConcurrentFetch.func2" in transition_stack:
+            workers.add(goid)
+    assert len(workers) == 4004, (mode, len(workers))
+    waiting = {}
+    runnable = {}
+    post_load = set()
+    durations = {kind: {"wait": [], "resume": []} for kind in ("start", "pending", "mutex")}
+    post_load_mutex = 0
+    for timestamp, goid, before, after, block in sorted(events):
+        if goid not in workers:
+            continue
+        if before == "Running" and after == "Waiting":
+            if "cacheq.(*Client).fetch" in block and "sync.(*Mutex).Lock" in block:
+                kind = "mutex"
+                post_load_mutex += goid in post_load
+            elif "cacheq.(*Client).fetch" in block and "runtime.selectgo" in block:
+                kind = "pending"
+            elif "runtime.chanrecv1" in block and "benchmarkConcurrentFetch.func2" in block:
+                kind = "start"
+            else:
+                continue
+            waiting[goid] = (timestamp, kind)
+        elif before == "Waiting" and after == "Runnable" and goid in waiting:
+            start, kind = waiting.pop(goid)
+            durations[kind]["wait"].append((timestamp - start) / 1000)
+            runnable[goid] = (timestamp, kind)
+            if kind == "pending":
+                assert "cacheq.(*Client).execute" in block, block
+                post_load.add(goid)
+        elif before == "Runnable" and after == "Running" and goid in runnable:
+            start, kind = runnable.pop(goid)
+            durations[kind]["resume"].append((timestamp - start) / 1000)
+    summary = {
+        "workers": len(workers),
+        "batches_including_calibration": 1001,
+        "post_load_mutex_wait_events": post_load_mutex,
+    }
+    for kind, samples in durations.items():
+        summary[kind] = {
+            "events_per_batch": len(samples["wait"]) / 1001,
+            "wait_median_us": median(samples["wait"]) if samples["wait"] else 0,
+            "resume_median_us": median(samples["resume"]) if samples["resume"] else 0,
+            "aggregate_wait_us_per_batch": sum(samples["wait"]) / 1001,
+            "aggregate_resume_us_per_batch": sum(samples["resume"]) / 1001,
+        }
+    summaries[mode] = summary
+output = json.dumps(summaries, indent=2) + "\n"
+(folder / "trace-summary.json").write_text(output)
+print(output)
+END TRACE PARSER
