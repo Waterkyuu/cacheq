@@ -75,12 +75,12 @@ synchronization, and result checks.
 
 | Requested data | Cache state | Reads | Total time | Actual loader calls |
 | --- | --- | ---: | ---: | ---: |
-| Same key | No cache | 100 | 630.09 µs | 100 |
-| Same key | First loads from an empty cache | 100 | 66.83 µs | 1 |
-| Same key | All cache hits | 100 | 34.17 µs | 0 |
-| Different keys | No cache | 100 | 629.47 µs | 100 |
-| Different keys | First loads from an empty cache | 100 | 669.40 µs | 100 |
-| Different keys | All cache hits | 100 | 35.69 µs | 0 |
+| Same key | No cache | 100 | 680.24 µs | 100 |
+| Same key | First loads from an empty cache | 100 | 60.45 µs | 1 |
+| Same key | All cache hits | 100 | 27.05 µs | 0 |
+| Different keys | No cache | 100 | 648.34 µs | 100 |
+| Different keys | First loads from an empty cache | 100 | 710.79 µs | 100 |
+| Different keys | All cache hits | 100 | 28.33 µs | 0 |
 
 ### Interpreting the results
 
@@ -98,16 +98,17 @@ scope; their elapsed time measures serving cached results.
 Warm-up and clearing between cold batches are excluded. Every read checks its
 key's expected digest, and every scenario verifies its exact loader count.
 Measured on 2026-10-09 with Go 1.27.1, macOS / darwin arm64, Apple M3 Pro.
-Durations are medians of three samples.
-[Raw output](benchmarks-concurrent-darwin-arm64.txt) includes all samples,
-allocations, the command, and benchmark source identification.
+Durations are medians of six optimized samples from two rounds, each collecting
+three samples of the original version followed by three of the optimization.
+[Raw output](benchmarks-concurrent-darwin-arm64.txt) includes both versions,
+allocations, commands, and source identification.
 
 ### Reproduce
 
 Run from the repository root with CPU parallelism fixed at four:
 
 ```sh
-go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms -count=3 -cpu=4
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms -count=6 -cpu=4
 ```
 
 For example, `BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4` means
@@ -134,10 +135,10 @@ representative application loader when evaluating a real workload.
 
 ## Investigation: same-key concurrent read costs
 
-The shared `Client` mutex serializes the cache-hit path. Inside that critical
-section, `Client.fetch` constructs a full snapshot only to use its freshness
-flag, then applies the caller's freshness policy. That repeats entry lookups,
-age checks, and clock reads while other callers wait for the same lock.
+Before this optimization, `Client.fetch` constructed a full snapshot inside
+the shared `Client` mutex only to use its freshness flag, then applied the
+caller's freshness policy. That repeated entry lookups, age checks, and clock
+reads while other callers waited for the same lock.
 
 Controlled experiments on 2026-10-09 kept GOMAXPROCS=4, four callers, and 100
 checked reads. These are diagnostic workloads in a temporary checkout; their
@@ -170,7 +171,7 @@ completion. The completed pending read returns directly; subsequent cache hits
 cause those later lock waits. Thus the first-load row includes both wake-up
 scheduling and the same cache-hit contention.
 
-The concrete optimization target is the freshness calculation inside
+The identified optimization target was the freshness calculation inside
 `Client.fetch`'s critical section. A plain `RLock` substitution would be unsafe:
 reads also update hit counters and may expire data, update LRU state, or reset
 cleanup timers. Control timings are not additive, and overlapping trace waits

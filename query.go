@@ -313,8 +313,8 @@ func (c *Client) fetch(
 			c.notifyLocked(key)
 		}
 		cached := c.entries[key]
-		state := c.withFreshnessLocked(key, c.snapshotLocked(key), request.options)
-		fresh := !state.Stale
+		// A cache decision only needs freshness; building a snapshot repeats age checks and clock reads under mu.
+		_, fresh := c.entryFreshnessLocked(cached, request.options.StaleTime)
 		if useCache && !countedLookup {
 			c.recordLookupLocked(fresh)
 			countedLookup = true
@@ -368,9 +368,11 @@ func (c *Client) fetch(
 
 // loadObservedLocked records an enabled consumer's cache decision and starts or joins a stale load.
 func (c *Client) loadObservedLocked(key any, request queryRequest) {
-	state := c.withFreshnessLocked(key, c.snapshotLocked(key), request.options)
-	c.recordLookupLocked(!state.Stale)
-	if !state.Stale {
+	// Enabling a consumer must still discard over-age data before checking its freshness policy.
+	c.expireDataLocked(key)
+	_, fresh := c.entryFreshnessLocked(c.entries[key], request.options.StaleTime)
+	c.recordLookupLocked(fresh)
+	if fresh {
 		return
 	}
 	if c.pending[key] != nil {
