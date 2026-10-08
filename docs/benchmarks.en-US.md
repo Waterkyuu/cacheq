@@ -131,3 +131,50 @@ go test -race -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchtime=1x -cpu=4
 Keep the machine idle and compare repeated samples under the same conditions.
 This CPU-bound sample's benefit depends on load cost and reuse; use a
 representative application loader when evaluating a real workload.
+
+## Investigation: same-key concurrent read costs
+
+The shared `Client` mutex serializes the cache-hit path. Inside that critical
+section, `Client.fetch` constructs a full snapshot only to use its freshness
+flag, then applies the caller's freshness policy. That repeats entry lookups,
+age checks, and clock reads while other callers wait for the same lock.
+
+Controlled experiments on 2026-10-09 kept GOMAXPROCS=4, four callers, and 100
+checked reads. These are diagnostic workloads in a temporary checkout; their
+times are medians of five samples:
+
+| Control | All cache hits | First load, then reuse |
+| --- | ---: | ---: |
+| Shared Client, new callers per batch | 34.27 µs | 67.30 µs |
+| Shared Client, reuse callers across batches | 33.43 µs | 65.53 µs |
+| Independent warm Client per caller | 21.59 µs | Not measured |
+| Shared Client, fixed clock | 30.29 µs | Not measured |
+| Shared Client, calculate freshness directly from the entry | 25.64 µs | 58.08 µs |
+| Restore original freshness code | 35.03 µs | 67.87 µs |
+
+Reusing callers provides little improvement. The same batch harness with no
+cache access takes 2.72 µs. Independent Clients remove contention on shared
+Client state, but also stop sharing cached data; this is a diagnostic control,
+not an application configuration recommendation. Calculating freshness directly
+avoids the full snapshot and a second clock read. The temporary candidate passed
+the complete race-enabled test suite, and restoring the original code brought
+the timings back up. Passing a nil fetcher after warm-up removes its erased
+loader wrapper but only reduces the hit batch to 32.96 µs, so wrapper allocation
+is a smaller contributor in this workload.
+
+Execution traces recorded about 20.43 Client-lock blocking events per cache-hit
+batch. First-load batches recorded about four callers waiting for the single
+load; the median delay from being woken to resuming was 5.82 µs. Of 18,927
+Client-lock blocking events, 18,623 occurred after the caller was woken by load
+completion. The completed pending read returns directly; subsequent cache hits
+cause those later lock waits. Thus the first-load row includes both wake-up
+scheduling and the same cache-hit contention.
+
+The concrete optimization target is the freshness calculation inside
+`Client.fetch`'s critical section. A plain `RLock` substitution would be unsafe:
+reads also update hit counters and may expire data, update LRU state, or reset
+cleanup timers. Control timings are not additive, and overlapping trace waits
+are not batch elapsed time. See the
+[diagnostic record](benchmarks-read-diagnosis-darwin-arm64.txt) for all samples,
+profile output, the temporary benchmark source and freshness patch, trace
+extraction code, and reproduction commands.
