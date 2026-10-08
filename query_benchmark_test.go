@@ -13,12 +13,14 @@ import (
 )
 
 const (
-	// benchmarkReadsPerBatch fixes the number of same-key reads in each benefit comparison.
+	// benchmarkReadsPerBatch fixes the read count in the serial and concurrent benefit comparisons.
 	benchmarkReadsPerBatch = 100
 	// benchmarkPayloadBytes fixes the amount of deterministic backend work at 64 KiB per load.
 	benchmarkPayloadBytes = 64 * 1024
-	// benchmarkConcurrentRequests keeps total work identical when comparing different caller counts.
-	benchmarkConcurrentRequests = 64
+	// benchmarkConcurrentRequests keeps concurrent batches the same size as the serial comparison.
+	benchmarkConcurrentRequests = benchmarkReadsPerBatch
+	// benchmarkConcurrentWorkers divides each concurrent batch equally among four request goroutines.
+	benchmarkConcurrentWorkers = 4
 )
 
 // BenchmarkCacheBenefit compares equal read batches without caching, from an empty cache, and from a warm cache.
@@ -86,32 +88,29 @@ func BenchmarkCacheBenefit(b *testing.B) {
 	}
 }
 
-// BenchmarkConcurrentFetch compares one caller with multiple callers handling the same 64 requests.
-// CPU parallelism is selected separately with -cpu; caller counts never change the total workload.
+// BenchmarkConcurrentFetch compares cache scenarios for 100 reads split among four request goroutines.
+// Run with -cpu=4 so every scenario uses the same CPU parallelism and caller count.
 func BenchmarkConcurrentFetch(b *testing.B) {
-	for _, workers := range []int{1, 4, 16, 64} {
-		b.Run(fmt.Sprintf("Workers=%d", workers), func(b *testing.B) {
-			for _, scope := range []string{"SameKey", "DifferentKeys"} {
-				b.Run(scope, func(b *testing.B) {
-					for _, mode := range []string{"NoCache", "FirstLoad", "CacheHit"} {
-						b.Run(mode, func(b *testing.B) {
-							benchmarkConcurrentFetch(
-								b,
-								workers,
-								scope == "SameKey",
-								mode,
-							)
-						})
-					}
-				})
-			}
-		})
-	}
+	b.Run(fmt.Sprintf("Workers=%d", benchmarkConcurrentWorkers), func(b *testing.B) {
+		for _, scope := range []string{"SameKey", "DifferentKeys"} {
+			b.Run(scope, func(b *testing.B) {
+				for _, mode := range []string{"NoCache", "FirstLoad", "CacheHit"} {
+					b.Run(mode, func(b *testing.B) {
+						benchmarkConcurrentFetch(
+							b,
+							scope == "SameKey",
+							mode,
+						)
+					})
+				}
+			})
+		}
+	})
 }
 
-// benchmarkConcurrentFetch divides a fixed request batch among the selected number of goroutines.
+// benchmarkConcurrentFetch divides 100 reads equally among four request goroutines.
 // Every result and measured loader count is checked; cold resets and warm-up are excluded from timing.
-func benchmarkConcurrentFetch(b *testing.B, workers int, sameKey bool, mode string) {
+func benchmarkConcurrentFetch(b *testing.B, sameKey bool, mode string) {
 	keyCount := benchmarkConcurrentRequests
 	if sameKey {
 		keyCount = 1
@@ -161,16 +160,16 @@ func benchmarkConcurrentFetch(b *testing.B, workers int, sameKey bool, mode stri
 		results := make([][sha256.Size]byte, benchmarkConcurrentRequests)
 		failures := make([]error, benchmarkConcurrentRequests)
 		var ready, finished sync.WaitGroup
-		ready.Add(workers)
-		finished.Add(workers)
-		for worker := range workers {
+		ready.Add(benchmarkConcurrentWorkers)
+		finished.Add(benchmarkConcurrentWorkers)
+		for worker := range benchmarkConcurrentWorkers {
 			go func() {
 				defer finished.Done()
 				ready.Done()
 				<-start
 
 				// Strided ownership assigns every request once and gives callers disjoint result slots.
-				for request := worker; request < benchmarkConcurrentRequests; request += workers {
+				for request := worker; request < benchmarkConcurrentRequests; request += benchmarkConcurrentWorkers {
 					keyIndex := request
 					if sameKey {
 						keyIndex = 0
@@ -188,7 +187,7 @@ func benchmarkConcurrentFetch(b *testing.B, workers int, sameKey bool, mode stri
 				}
 			}()
 		}
-		// Start all callers together; one caller still processes all 64 requests sequentially.
+		// Start all four callers together; each performs 25 reads sequentially.
 		ready.Wait()
 		close(start)
 		finished.Wait()
@@ -219,6 +218,6 @@ func benchmarkConcurrentFetch(b *testing.B, workers int, sameKey bool, mode stri
 	}
 	b.ReportMetric(float64(calls.Load())/float64(b.N), "loads/batch")
 	b.ReportMetric(benchmarkConcurrentRequests, "requests/batch")
-	b.ReportMetric(float64(workers), "goroutines/batch")
+	b.ReportMetric(benchmarkConcurrentWorkers, "goroutines/batch")
 	b.ReportMetric(float64(client.Stats().MergedRequests)/float64(b.N), "merged/batch")
 }
