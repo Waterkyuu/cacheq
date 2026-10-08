@@ -1,0 +1,40 @@
+name: Dependabot auto-merge
+
+on:
+  workflow_run:
+    workflows: [CI, Security, Website CI, Docs CI]
+    types: [completed]
+
+concurrency:
+  group: dependabot-merge-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+      actions: write
+    steps:
+      # workflow_run is privileged: only execute scripts from the trusted main branch.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Merge passing Dependabot updates
+        run: sh .github/scripts/dependabot_merge.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEPENDABOT_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          DEPENDABOT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
