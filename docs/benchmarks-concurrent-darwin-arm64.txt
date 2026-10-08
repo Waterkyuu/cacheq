@@ -1,32 +1,135 @@
 Date: 2026-10-09 (Asia/Shanghai)
-Go: go version go1.27.1 darwin/arm64
-Source: query_benchmark_test.go in this commit; parent revision 9522cb722a9fc724d4f170bf8debbd0d24b834a7
-Benchmark source SHA-256: 658d653b29bace105d4efc01c14aada01986573a9c5cb244f1d30a32c56f1ab8
+Go: go1.27.1 darwin/arm64
+CPU: Apple M3 Pro
+Before source: d2db8110c1b3fff0c9dc7beaaec897d380dc8191
+After source: query.go and client.go in this optimization commit
 Requests per batch: fixed at 100
 Caller goroutines per batch: fixed at 4 (25 reads each); GOMAXPROCS: 4
-Command: go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms -count=3 -cpu=4
+Samples: 6 per scenario per version; two rounds of 3 samples each, ordered before/after/before/after
+Benchmark source and measured workload are identical between versions.
+The before binary was built in a temporary git-archive checkout; the after binary was built in the working checkout.
 
+After query_benchmark_test.go SHA-256: 658d653b29bace105d4efc01c14aada01986573a9c5cb244f1d30a32c56f1ab8
+After query.go SHA-256: 6c56953ebbe1f4a0a801e135ad5b9c7987ce2025fd49871b8dae1acea6665677
+After client.go SHA-256: add59d602d76846471aef06a8a01404ba46fec79cd05ebbc94cf8ed07da2284a
+
+Reproduce the optimized results from the repository root:
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms -count=6 -cpu=4
+
+Actual paired sampling procedure:
+Build the original revision with: go test -c -o before.test
+Build the optimization with: go test -c -o after.test
+Run sequentially, repeating this pair twice:
+./before.test -test.run '^$' -test.bench '^BenchmarkConcurrentFetch$' -test.benchmem -test.benchtime=200ms -test.count=3 -test.cpu=4
+./after.test -test.run '^$' -test.bench '^BenchmarkConcurrentFetch$' -test.benchmem -test.benchtime=200ms -test.count=3 -test.cpu=4
+
+Median microseconds per complete batch (negative changes mean lower elapsed time):
+SameKey/NoCache: 668.221 -> 680.236 us (+1.8%)
+SameKey/FirstLoad: 66.999 -> 60.448 us (-9.8%)
+SameKey/CacheHit: 33.886 -> 27.046 us (-20.2%)
+DifferentKeys/NoCache: 652.874 -> 648.342 us (-0.7%)
+DifferentKeys/FirstLoad: 704.155 -> 710.789 us (+0.9%)
+DifferentKeys/CacheHit: 35.029 -> 28.331 us (-19.1%)
+
+NoCache calls the SHA-256 loader directly and bypasses the changed framework path. Its timing differences reflect sample variability.
+
+
+Round 1: before
 goos: darwin
 goarch: arm64
 pkg: github.com/Waterkyuu/cacheq
 cpu: Apple M3 Pro
-BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     374	    627708 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5942 B/op	       9 allocs/op
-BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     381	    635927 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5908 B/op	       9 allocs/op
-BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     375	    630088 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5907 B/op	       9 allocs/op
-BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3486	     66919 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         3.000 merged/batch	       100.0 requests/batch	    8940 B/op	     219 allocs/op
-BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3577	     66769 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.999 merged/batch	       100.0 requests/batch	    8935 B/op	     219 allocs/op
-BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3614	     66826 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         3.000 merged/batch	       100.0 requests/batch	    8937 B/op	     219 allocs/op
-BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    6987	     34186 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
-BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    7010	     34109 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
-BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    7009	     34167 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
-BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     380	    629467 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5914 B/op	       9 allocs/op
-BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     381	    628854 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5916 B/op	       9 allocs/op
-BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     379	    634240 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5909 B/op	       9 allocs/op
-BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     351	    669397 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58614 B/op	     909 allocs/op
-BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     358	    668367 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58601 B/op	     909 allocs/op
-BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     354	    673586 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58629 B/op	     909 allocs/op
-BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    6602	     35710 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8406 B/op	     209 allocs/op
-BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    6601	     35612 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
-BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    6585	     35691 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     364	    634611 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    6016 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     351	    695562 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5950 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     372	    640793 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5905 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3666	     66952 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         3.000 merged/batch	       100.0 requests/batch	    8938 B/op	     219 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3594	     66195 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         3.000 merged/batch	       100.0 requests/batch	    8936 B/op	     219 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3562	     67143 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.999 merged/batch	       100.0 requests/batch	    8936 B/op	     219 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    7045	     33801 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    7095	     33761 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    7153	     34010 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     364	    640266 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5911 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     376	    636641 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5904 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     363	    638918 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5915 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     346	    741825 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58589 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     349	    682545 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58604 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     350	    679373 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58632 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    6550	     34703 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    6494	     35460 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    6436	     34671 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
 PASS
-ok  	github.com/Waterkyuu/cacheq	6.160s
+
+Round 1: after
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     360	    657193 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5924 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     373	    637218 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5907 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     379	    635015 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5904 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    4006	     60751 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         3.000 merged/batch	       100.0 requests/batch	    8935 B/op	     219 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3990	     60697 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.999 merged/batch	       100.0 requests/batch	    8934 B/op	     219 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3948	     60957 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.999 merged/batch	       100.0 requests/batch	    8933 B/op	     219 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    8538	     25753 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    9003	     27277 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8406 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    8506	     27670 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     369	    651305 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5916 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     367	    640040 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5914 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     355	    651372 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5904 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     339	    689697 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58600 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     328	    716154 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58626 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     326	    691444 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58626 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    8262	     27952 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    8181	     28723 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    8026	     29175 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
+PASS
+
+Round 2: before
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     336	    680427 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5931 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     362	    656014 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5945 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     151	   2948636 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    6006 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3770	     65854 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.985 merged/batch	       100.0 requests/batch	    8938 B/op	     219 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3613	     67096 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.945 merged/batch	       100.0 requests/batch	    8936 B/op	     218 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3606	     67047 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.983 merged/batch	       100.0 requests/batch	    8933 B/op	     218 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    7700	     34181 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    7144	     33970 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    7912	     32932 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     349	    678178 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5908 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     356	    665482 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5912 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     372	    693342 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5906 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     312	    730345 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58646 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     354	    686083 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58605 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     354	    722228 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58584 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    7588	     35356 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    7434	     38607 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    7228	     34436 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
+PASS
+
+Round 2: after
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     246	    901472 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    6063 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     270	    802396 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5929 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/NoCache-4         	     325	    703278 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5932 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    3964	     60199 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.990 merged/batch	       100.0 requests/batch	    8940 B/op	     219 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    4231	     58760 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.973 merged/batch	       100.0 requests/batch	    8935 B/op	     219 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4       	    4182	     58152 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.967 merged/batch	       100.0 requests/batch	    8935 B/op	     218 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    8824	     27097 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8404 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    8678	     26994 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/SameKey/CacheHit-4        	    8832	     26554 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     338	    690078 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5904 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     346	    642865 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5906 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/NoCache-4   	     373	    645379 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	    5913 B/op	       9 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     343	    705424 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58618 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     339	    720254 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58629 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/FirstLoad-4 	     346	    792413 ns/op	         4.000 goroutines/batch	       100.0 loads/batch	         0 merged/batch	       100.0 requests/batch	   58620 B/op	     909 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    8052	     28226 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8406 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    8062	     28436 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8405 B/op	     209 allocs/op
+BenchmarkConcurrentFetch/Workers=4/DifferentKeys/CacheHit-4  	    8494	     27701 ns/op	         4.000 goroutines/batch	         0 loads/batch	         0 merged/batch	       100.0 requests/batch	    8406 B/op	     209 allocs/op
+PASS

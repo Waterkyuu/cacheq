@@ -499,12 +499,26 @@ func (c *Client) observedRequestLocked(key any) queryRequest {
 	return queryRequest{}
 }
 
+// entryFreshnessLocked derives a consumer's deadline and cache reuse decision from an already-read entry.
+// Callers hold mu and remove over-age data first; explicit deadlines and invalidation remain authoritative.
+func (c *Client) entryFreshnessLocked(cached entry, staleTime time.Duration) (time.Time, bool) {
+	expiresAt := cached.expiresAt
+	if !cached.hasData {
+		return expiresAt, false
+	}
+	if cached.ordinary && !cached.invalidated {
+		expiresAt = c.limitExpiry(cached.updatedAt, cached.updatedAt.Add(staleTime))
+	}
+	return expiresAt, c.options.Clock().Before(expiresAt)
+}
+
 // withFreshnessLocked applies one consumer's freshness to ordinary, non-invalidated shared data.
 func (c *Client) withFreshnessLocked(key any, state Snapshot[any], options Options) Snapshot[any] {
 	cached := c.entries[key]
-	if cached.ordinary && state.HasData && !cached.invalidated {
-		state.ExpiresAt = c.limitExpiry(cached.updatedAt, cached.updatedAt.Add(options.StaleTime))
-		state.Stale = !options.Clock().Before(state.ExpiresAt)
+	applyPolicy := cached.ordinary && state.HasData && !cached.invalidated
+	if applyPolicy {
+		expiresAt, fresh := c.entryFreshnessLocked(cached, options.StaleTime)
+		state.ExpiresAt, state.Stale = expiresAt, !fresh
 	}
 	return state
 }
