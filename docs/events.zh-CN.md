@@ -1,14 +1,14 @@
-# 按 key 查看诊断事件
+# 诊断事件
 
 [English](events.en-US.md)
 
-`Client.SubscribeEvents` 用来回答：这个商品为什么又加载了？谁发起的？多少次调用加入了同一次加载？最后结果有没有写进缓存？`Stats()` 继续提供整体统计，事件则提供具体 key 的过程。服务端、后台任务、CLI 和查询句柄都能使用。
+`Client.SubscribeEvents` 提供按 key 过滤的诊断事件流，用于记录缓存命中、加载、请求合并、重试、失效和删除过程。该 API 可用于服务端、后台任务、CLI 及使用 `Query` 的应用。
 
-订阅只接收之后发生的事件，不保存历史，也不会改变现有的新鲜度、重试、取消和请求合并规则。
+`Stats()` 提供 Client 的累计统计；诊断事件提供单个 key 的操作来源、加载原因和执行结果。订阅不会改变现有的缓存、请求合并或取消行为。
 
-## 可以直接运行的例子
+## 快速开始
 
-把程序保存成已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。无需服务器或凭据。
+以下示例订阅 `product:42`，执行两次 `Fetch`，然后输出加载与缓存命中事件。将代码保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
 
 ```go
 package main
@@ -21,15 +21,20 @@ import (
 	"github.com/Waterkyuu/cacheq"
 )
 
-// main observes a first load, cache reuse, and client shutdown for one key.
+// main records loading and cache reuse for a single query key.
 func main() {
 	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	defer client.Close()
-	events, err := client.SubscribeEvents(cacheq.EventOptions{Key: "product:42", Buffer: 16})
+
+	events, err := client.SubscribeEvents(cacheq.EventOptions{
+		Key:    "product:42",
+		Buffer: 16,
+	})
 	if err != nil {
 		panic(err)
 	}
 	defer events.Close()
+
 	load := func(context.Context) (string, error) { return "product 42", nil }
 	for range 2 {
 		if _, err := cacheq.Fetch(context.Background(), client, "product:42", load); err != nil {
@@ -37,7 +42,7 @@ func main() {
 		}
 	}
 
-	// This short example fits in the buffer; a running service should consume concurrently.
+	// The example buffers four events; services should consume the stream concurrently.
 	client.Close()
 	for event := range events.Events() {
 		fmt.Printf("%v %s load=%d source=%s reason=%s joined=%d attempts=%d\n",
@@ -47,7 +52,7 @@ func main() {
 }
 ```
 
-预期输出：
+输出：
 
 ```text
 product:42 load_started load=1 source=fetch reason=missing joined=0 attempts=0
@@ -57,97 +62,144 @@ product:42 cache_hit load=0 source=fetch reason=fresh joined=0 attempts=0
 dropped=0
 ```
 
-第一次 `Fetch` 调用加载函数，第二次直接复用缓存。前两行的 `load=1` 表示同一次加载的开始与结束；缓存命中没有关联的加载，所以 ID 为零。开始时 `attempts=0` 表示加载函数还没有执行，结束时为 1，表示实际调用了一次。
+第一次调用启动加载，开始与结束事件共享 `LoadID: 1`；第二次调用命中新鲜缓存，不执行加载函数。`Attempts` 在开始事件中为 0，在结束事件中为 1，表示实际执行了一次加载。
 
-## 看一个 key，或者看全部
+示例在关闭 Client 后读取缓冲事件。持续运行的应用应并发消费事件流，避免缓冲区长期占满。
+
+## 订阅配置
 
 ```go
-events, err := client.SubscribeEvents(cacheq.EventOptions{
+subscription, err := client.SubscribeEvents(cacheq.EventOptions{
 	Key:    "product:42",
 	Buffer: 256,
 })
 ```
 
-- 不填 `Key` 就看所有 key。指定的 key 必须可以比较，而且与自身相等；切片、map、包含 NaN 的 key 返回 `ErrInvalidKey`。
-- `Buffer: 0` 默认预留 128 条事件；负数返回 `ErrInvalidEventOptions`。
-- Client 已关闭时返回 `ErrClosed`。
-- 加载已经开始后才订阅，可以收到后续加入、结束事件，但不会补发开始事件。即使无人订阅，每次加载也有自己的 `LoadID`。
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `Key` | `nil` | `nil` 订阅全部 key；其他值按 key 精确过滤 |
+| `Buffer` | `128` | 未读事件的最大数量；设置为 0 使用默认值 |
 
-持续运行的服务应该边运行边读事件，可以接到已有的日志或监控代码：
+指定的过滤 key 必须可比较且与自身相等。切片、map 和包含 NaN 的 key 返回 `ErrInvalidKey`；负数缓冲区容量返回 `ErrInvalidEventOptions`；Client 已关闭时返回 `ErrClosed`。
+
+订阅仅接收创建后的事件，不补发历史。加载中途订阅时，可能收到加入或结束事件，而没有对应的开始事件。
+
+### 日志接入
+
+以下片段使用标准库 `log` 包，在独立 goroutine 中消费已创建的订阅：
 
 ```go
 go func() {
-	for event := range events.Events() {
-		log.Printf("key=%v event=%s load=%d source=%s reason=%s joined=%d attempts=%d duration=%s applied=%t err=%v",
+	for event := range subscription.Events() {
+		log.Printf("key=%v event=%s load=%d trigger=%s reason=%s joined=%d attempts=%d duration=%s applied=%t err=%v",
 			event.Key, event.Kind, event.LoadID, event.Trigger, event.Reason,
 			event.Joined, event.Attempts, event.Duration, event.Applied, event.Err)
 	}
 }()
 ```
 
-这里的 `log` 是标准库包。退出日志消费时调用 `events.Close()`，只关闭诊断订阅；调用 `client.Close()` 也会关闭全部事件订阅。关闭后仍能读完缓冲区里已收到的事件。
+消费结束时调用 `subscription.Close()`。该操作只关闭诊断订阅，不取消查询或修改缓存。事件包含 key 和错误，不包含缓存值。
 
-## 发生了什么
+## 事件字段
 
-`Kind` 表示发生的事情，`String()` 提供方便记录日志的名称。
-
-| Kind / 日志名称 | 人话解释 |
+| 字段 | 说明 |
 | --- | --- |
-| `EventCacheHit` / `cache_hit` | 这次调用认为缓存还新鲜，直接复用了结果 |
-| `EventLoadStarted` / `load_started` | 登记了一次新的共享加载 |
-| `EventLoadJoined` / `load_joined` | 另一次调用加入正在进行的加载 |
-| `EventRetryStarted` / `retry_started` | 真正开始下一次重试，`Err` 是上次失败的错误 |
-| `EventLoadFinished` / `load_finished` | 加载结束，包括失败、取消 |
-| `EventResultDiscarded` / `result_discarded` | 加载结束了，但结果没有写入共享缓存 |
-| `EventInvalidated` / `invalidated` | 已有 key 被主动标记为需要重新加载 |
-| `EventCacheRemoved` / `cache_removed` | 缓存状态被删除，或数据达到 `MaxAge` |
-| `EventLocalWrite` / `local_write` | `Set` 成功写入本地值 |
-| `EventClientClosed` / `client_closed` | Client 关闭；key 为 nil，只订阅一个 key 也会收到 |
+| `Sequence` | Client 内发出的事件序号；过滤和丢弃可能造成序号不连续 |
+| `Time` | 事件发生时间，使用 `Options.Clock` |
+| `Key` | 查询 key；`EventClientClosed` 的 key 为 `nil` |
+| `Kind` | 事件类型 |
+| `LoadID` | Client 内共享加载的编号；未关联加载时为 0 |
+| `Trigger` | 触发本次操作的 API 来源 |
+| `Reason` | 缓存决策、删除或结果丢弃的原因 |
+| `Joined` | 同一次加载累计的额外加入次数 |
+| `Attempts` | 已执行的加载函数次数，包含首次调用和实际重试 |
+| `Duration` | 加载结束时的总耗时，包含调度等待和重试间隔；计时独立于 `Options.Clock` |
+| `Err` | 命中时保留的错误、重试前的错误或加载最终错误 |
+| `Applied` | 加载结束时，结果是否写入共享缓存 |
 
-`Get` 和 `Snapshot` 只是查看当前状态，不记录缓存命中；但发现数据超过 `MaxAge` 时会记录删除事件。被拒绝的 API 调用、删除不存在的 key 不产生事件。内部释放空的类型记录也不会产生删除事件。
+## 事件类型
 
-## 为什么加载，谁发起的
+`Kind.String()` 返回下表中的日志名称。
 
-`Trigger` 表示来源：`fetch`、`query`、`enable`、`refetch`、`invalidate`、`prefetch`。重试和结束事件保留原发起者；加入事件记录加入者使用的 API。失效事件的来源也是 `invalidate`，即使没有立即刷新。写入、删除、关闭的来源为 `none`。
+| 类型 | 日志名称 | 触发条件 |
+| --- | --- | --- |
+| `EventCacheHit` | `cache_hit` | 查询决策复用了当前消费者认为新鲜的结果 |
+| `EventLoadStarted` | `load_started` | 注册新的共享加载 |
+| `EventLoadJoined` | `load_joined` | 另一个消费者加入正在执行的加载 |
+| `EventRetryStarted` | `retry_started` | 开始额外的加载尝试；`Err` 为上次失败的错误 |
+| `EventLoadFinished` | `load_finished` | 加载结束，包括失败和取消 |
+| `EventResultDiscarded` | `result_discarded` | 加载结果未写入共享缓存 |
+| `EventInvalidated` | `invalidated` | 已有 key 被主动标记为失效 |
+| `EventCacheRemoved` | `cache_removed` | 缓存状态被删除，或数据达到 `MaxAge` |
+| `EventLocalWrite` | `local_write` | `Set` 成功写入本地值 |
+| `EventClientClosed` | `client_closed` | Client 关闭；向所有订阅广播，包括指定 key 的订阅 |
 
-`Reason` 表示当时的原因：
+`Get` 和 `Snapshot` 不产生缓存命中事件，但在发现数据超过 `MaxAge` 时会产生删除事件。被拒绝的 API 调用、删除不存在的 key，以及内部释放空的类型记录，不产生事件。
 
-| 日志名称 | 人话解释 |
+## 操作来源与原因
+
+### 操作来源
+
+| `Trigger` | 对应操作 |
 | --- | --- |
-| `fresh` | 这次调用认为缓存可以继续用 |
-| `missing` | 没有可用缓存 |
-| `expired` | 按这次调用的新鲜时间，缓存已经过期 |
-| `invalidated` | 被主动标记过失效，需要新数据 |
-| `previous_failure` | 上一次加载失败，结果仍需要重新加载 |
-| `refetch` | 调用了句柄的 `Refetch`，要求重新加载 |
-| `capacity` | 超过 `MaxEntries`，被 LRU 淘汰 |
-| `inactive` | 闲置达到 `GCTime`，被自动回收 |
-| `max_age` | 数据达到最大保存时间，不能再提供旧值 |
-| `remove` / `clear` | 主动删除这个 key，或者清空缓存 |
-| `set` | 本地写入覆盖了旧加载，旧结果被丢弃 |
-| `cancel` | 调用取消、超时，或执行了 `Client.Cancel` |
-| `client_closed` | Client 结束了生命周期 |
+| `TriggerFetch` | `Fetch`、`FetchWithOptions`、`FetchWithExpiry` |
+| `TriggerQuery` | 创建启用的 `Query` 时自动加载或复用缓存 |
+| `TriggerEnable` | `SetEnabled(true)` 从禁用切换为启用 |
+| `TriggerRefetch` | `QueryHandle.Refetch` |
+| `TriggerInvalidate` | 主动失效，以及失效引起的自动刷新 |
+| `TriggerPrefetch` | `Prefetch` |
+| `TriggerNone` | 本地写入、缓存删除或 Client 关闭等操作 |
 
-不同调用可以设置不同的 `StaleTime`，因此同一个 key 对一个调用是 `fresh`，对另一个调用是 `expired`，这符合现有规则。`FetchWithExpiry` 失败时如果返回未来的过期时间，可以缓存备用数据和错误：复用时记录带 `Err` 的 `cache_hit`，之后到期记录 `expired`。
+重试和结束事件保留原加载发起者的来源；加入事件记录加入者的来源。失效事件使用 `TriggerInvalidate`，不表示一定启动了刷新。
 
-删除原因保留在事件流里，不会无限保存已经删除的 key。例如先收到 `cache_removed reason=capacity`，下次加载的原因是 `missing`。`MaxAge` 清除数据后，如果还保留这个 key 的类型记录，下一次加载会带 `max_age` 原因。
+### 原因
 
-## 怎么看合并次数和最终结果
+| `Reason` | 日志名称 | 说明 |
+| --- | --- | --- |
+| `ReasonFresh` | `fresh` | 当前消费者可以复用缓存 |
+| `ReasonMissing` | `missing` | 没有可用缓存 |
+| `ReasonExpired` | `expired` | 按当前消费者的新鲜度配置，缓存已过期 |
+| `ReasonInvalidated` | `invalidated` | 缓存被主动标记为失效 |
+| `ReasonPreviousFailure` | `previous_failure` | 上一次加载失败，结果仍需重新加载 |
+| `ReasonRefetch` | `refetch` | 显式调用 `Refetch`，要求重新加载 |
+| `ReasonCapacity` | `capacity` | 因 `MaxEntries` 限制被 LRU 淘汰 |
+| `ReasonInactive` | `inactive` | 闲置达到 `GCTime`，被自动回收 |
+| `ReasonMaxAge` | `max_age` | 数据达到最大可用年龄 |
+| `ReasonRemove` | `remove` | 主动删除单个 key |
+| `ReasonClear` | `clear` | 主动清空缓存 |
+| `ReasonSet` | `set` | 本地写入取代旧加载，旧结果被丢弃 |
+| `ReasonCancel` | `cancel` | 调用取消、超时或 `Client.Cancel` 导致结果丢弃 |
+| `ReasonClientClosed` | `client_closed` | Client 生命周期结束 |
+| `ReasonNone` | `none` | 无适用原因 |
 
-- `LoadID`：同一个 Client 内的一次共享加载编号。开始、加入、重试、结束、丢弃都使用同一个编号。加载中主动失效也带这个编号；其他缓存变化为零。
-- `Joined`：这次加载累计多了多少次加入。结束时为 3，表示除了发起者，又有三次加入。它不表示独立用户数、当前等待人数或旁观的句柄数；加入后取消仍计入。
-- 原发起者取消后，如果剩下的调用重新发起加载，新加载有新的 ID，合并次数重新计算。`Stats().MergedRequests` 保留原来的按调用计数规则。
-- `Attempts`：这个 key 的加载函数真正执行了几次，包括首次和实际重试。使用 `Batcher` 时，两个 key 的加载可能共用一次批量回调，因此不能拿它当 SQL 或 HTTP 请求次数。
-- `Duration`：结束时的整次加载耗时，包含调度等待和重试间隔。`Time` 使用 `Options.Clock`；耗时使用独立的计时来源。
-- `Applied`：结果有没有写入缓存。错误被写入、加载中被失效而仍写入旧状态，也算 true；它不表示加载成功，也不保证值一直保留。
-- 结果不能写入时，先发 `load_finished`，其中 `Applied: false`，再发 `result_discarded`，说明是取消、`Set`、`Remove` 还是 `Clear` 导致。迟到的旧结果不会覆盖新状态。
+普通缓存的新鲜度按消费者配置计算。同一个 key 可以对一个消费者产生 `fresh`，对另一个消费者产生 `expired`。`FetchWithExpiry` 失败时，如果返回未来的过期时间，备用数据与错误仍可复用；命中事件保留 `Err`，到期后原因是 `expired`。
 
-事件包含 key 和错误，不包含缓存数据。记录日志时按业务需要处理 key 和错误信息。
+删除历史只保留在事件流中。例如容量淘汰产生 `cache_removed reason=capacity`，之后重新加载的原因是 `missing`。`MaxAge` 清除数据后，若该 key 的类型记录仍保留，后续加载原因是 `max_age`。
 
-## 读得慢会怎样
+## 加载关联与计数
 
-事件发送不会等日志消费，也不会执行应用的日志回调。缓冲区满了就丢弃新事件，并增加 `events.Dropped()`；已有事件保持顺序。这个计数不为零，表示诊断记录可能不完整，不能作为必须一条不漏的审计记录。
+开始、加入、重试、结束和丢弃事件使用同一个 `LoadID`。加载中的失效事件也携带该编号；其他缓存变化的编号为 0。无人订阅时仍会分配加载编号，因此中途订阅可关联后续事件。
 
-`Sequence` 是 Client 内发出的事件序号。只订阅一个 key、或者缓冲区满了，都可能看到跳号。不同订阅收到同一条事件时，序号和时间戳相同。一次多 key 操作会逐 key 发事件，但按 map 选择 key 时不保证 key 的顺序。
+`Joined` 记录额外加入次数，不包含发起者。结束事件的 `Joined: 3` 表示这次加载累计收到三次额外加入；它不表示独立用户数、当前等待人数或被动观察的句柄数，取消后的加入仍计入。
 
-Client 关闭时会尝试发送 `client_closed`，然后关闭所有事件 channel；如果缓冲区满了，关闭事件也可能被丢弃，但 channel 一定关闭。`Client.Close` 不等待忽略取消信号的加载函数，这些函数迟到的结束结果不会再发到已经关闭的事件流。
+原发起者取消后，如果剩余调用重新发起加载，新加载使用独立编号和加入计数。`Stats().MergedRequests` 保持原有的按调用统计规则。
+
+`Attempts` 统计每个 key 的加载函数调用，不推断数据库或 HTTP 请求次数。使用 `Batcher` 时，多个 key 的加载函数可以共用一次批量回调。
+
+## 结果应用与丢弃
+
+`EventLoadFinished.Applied` 表示结果是否安装到缓存。缓存中安装的错误，以及加载中被失效但仍安装的结果，也算已应用；该字段不表示执行成功或永久保留。
+
+未应用的结果先产生 `EventLoadFinished`，其中 `Applied: false`，随后产生 `EventResultDiscarded`。丢弃原因可为取消、`Set`、`Remove` 或 `Clear`。迟到的旧结果不会覆盖替代状态。
+
+## 投递与关闭规则
+
+- 发送事件不等待消费者，也不执行应用的日志回调。
+- 缓冲区满时丢弃新事件，`Dropped()` 返回累计丢弃数量；已有事件保持顺序。
+- `Sequence` 在 Client 内递增。不同订阅收到同一条事件时，序号和时间戳相同；过滤或丢弃会造成跳号。
+- 多 key 操作逐 key 发事件；按 map 选择 key 时，不保证 key 的顺序。
+- `EventSubscription.Close()` 和 `Client.Close()` 会关闭相应的事件 channel；关闭后仍可读取已缓冲的事件。
+- Client 关闭前尝试发送 `EventClientClosed`；缓冲区满时该事件也可能被丢弃，但 channel 仍会关闭。
+- `Client.Close()` 不等待忽略取消的加载函数，迟到的完成事件不会发送到已关闭的订阅。
+
+诊断事件采用有界投递，适用于日志和问题排查；需要完整记录时，应监控 `Dropped()`。该事件流不提供无损审计保证。

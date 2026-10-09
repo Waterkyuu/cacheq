@@ -158,7 +158,7 @@ go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 | [缓存与生命周期](docs/cache.zh-CN.md) | 所有缓存读写、配置、自动删除、取消、删除、关闭及错误处理 |
 | [缓存失效](docs/invalidation.zh-CN.md) | 单键、批量、条件失效及刷新模式 |
 | [可观测性](docs/observability.zh-CN.md) | 缓存命中、请求合并、加载结果与耗时、重试和清理统计 |
-| [按 key 查看诊断事件](docs/events.zh-CN.md) | 加载原因与来源、共享加载编号、合并次数、重试、结果丢弃和有界订阅 |
+| [诊断事件](docs/events.zh-CN.md) | 按 key 记录加载原因与来源、共享加载编号、合并次数、重试、结果丢弃和有界订阅 |
 | [MCP 资源缓存](docs/mcp.zh-CN.md) | 服务端资源复用、剩余 TTL、变化通知、授权隔离和 e2e |
 
 完整集成程序在 `examples`，API 细节见功能文档。缓存值作为共享只读数据使用；修改切片或映射前先复制。不同类型不能复用同一个键。
