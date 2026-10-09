@@ -7,9 +7,9 @@ and completion summary their own subscriptions to one task query. It demonstrate
 the code that a UI can delegate to cacheq: shared loads, query activity, retained
 data after failure, and refresh notifications.
 
-## Run and observe
+## Running the example
 
-Requires Go 1.26 or later for Bubble Tea v2; the core library still supports Go 1.22.
+The independent example module uses Bubble Tea v2 and requires Go 1.26 or later. The core library supports Go 1.22. The example uses an in-memory backend and needs no external service or credentials.
 
 ```sh
 git clone https://github.com/Waterkyuu/cacheq.git
@@ -17,10 +17,30 @@ cd cacheq/examples/bubbletea
 go run .
 ```
 
-Wait for the initial load. All three views become ready, while the backend load
-count is one. Navigate with `j` / `k` or arrows. Press space to toggle completion,
-`f` to inject one failed refresh, `r` to recover, and `q` to quit. Each refresh
-adds one backend load, regardless of the number of subscribers.
+After the initial load, all three views display the same dataset and the backend
+load count is one. Each refresh adds one backend load, regardless of the number
+of subscribers. Local reads include a cancellable 750 ms delay to expose the
+loading state.
+
+## Keyboard controls
+
+| Key | Action |
+| --- | --- |
+| `j` / down, `k` / up | Select a task without fetching |
+| Space / enter | Toggle the selected task in the backend and invalidate the query |
+| `r` | Invalidate the query and refresh |
+| `f` | Fail the next backend read once and refresh |
+| `q` / `ctrl+c` | Close subscriptions and exit |
+
+Mutation and refresh controls are ignored while the shared query has an active load.
+
+## Example files
+
+| File | Responsibility |
+| --- | --- |
+| [main.go](../examples/bubbletea/main.go) | Own the client and terminal program; clean up on exit or startup failure |
+| [model.go](../examples/bubbletea/model.go) | Subscribe each view and process snapshots in the message loop |
+| [store.go](../examples/bubbletea/store.go) | Own mutable task data and return copies through cancellable reads |
 
 ## Data and ownership
 
@@ -33,7 +53,7 @@ The local backend owns its mutable task slice. Reads return a copy; cached
 slices are immutable. Selecting a task only changes UI state and does not fetch.
 This small dataset does not need a separate query for each task detail.
 
-## Connect updates to the UI loop
+## Message-loop integration
 
 Each view schedules one command waiting for its next `Updates()` notification.
 The message includes the view identity and its snapshot. `Update` stores that
@@ -47,7 +67,7 @@ the loop processes those messages.
 
 ## Mutate and refresh
 
-Space changes the selected record in the local backend, then calls
+Space or enter changes the selected record in the local backend, then calls
 `client.Invalidate("tasks")`. Invalidation marks the shared data stale and starts
 one observed refresh. The list, detail, and summary retain their previous data
 until the refreshed copy arrives.
