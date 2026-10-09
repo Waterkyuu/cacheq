@@ -36,6 +36,7 @@
 - 通过查询与获取配置，按消费者覆盖新鲜时间、重试错误判断和超时。
 - 单键、跨类型批量和按条件失效，可选择延后请求。
 - 本地缓存更新、预加载、请求取消和闲置缓存自动删除。
+- 不同 key 的并发加载可以合成一批，调用业务提供的批量函数。
 
 ## 安装
 
@@ -152,6 +153,7 @@ go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 | --- | --- |
 | [查询与条件请求](docs/queries.zh-CN.md) | `Query`、状态、更新通知、条件开关、刷新、`Fetch` 和 HTTP 加载函数 |
 | [查询配置](docs/query-options.zh-CN.md) | 按消费者覆盖默认配置、独立新鲜度、重试错误判断、超时和共享请求策略 |
+| [自动批量加载](docs/batching.zh-CN.md) | 不同 key 组批、接入现有查询 API、逐 key 结果、取消和可运行示例 |
 | [缓存与生命周期](docs/cache.zh-CN.md) | 所有缓存读写、配置、自动删除、取消、删除、关闭及错误处理 |
 | [缓存失效](docs/invalidation.zh-CN.md) | 单键、批量、条件失效及刷新模式 |
 | [可观测性](docs/observability.zh-CN.md) | 缓存命中、请求合并、加载结果与耗时、重试和清理统计 |

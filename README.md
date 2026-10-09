@@ -39,6 +39,7 @@ consumers keep their own typed handles.
 - Per-consumer freshness, retry filtering, and timeout overrides through query and fetch options.
 - Single-key, mixed-type batch, and predicate invalidation with optional deferred refresh.
 - Local writes, prefetching, cancellation, and inactive cache cleanup.
+- Concurrent loads for different keys can share a business-supplied bulk callback.
 
 ## Install
 
@@ -155,6 +156,7 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | --- | --- |
 | [Queries and conditions](docs/queries.en-US.md) | `Query`, snapshots, updates, enablement, refresh, `Fetch`, and HTTP loaders |
 | [Query options](docs/query-options.en-US.md) | Per-consumer defaults, independent freshness, filtered retries, timeouts, and shared request ownership |
+| [Automatic batch loading](docs/batching.en-US.md) | Different-key batching, existing query API integration, per-key results, cancellation, and a runnable example |
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
 | [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
 | [Observability](docs/observability.en-US.md) | Cache hits, shared requests, load outcomes and duration, retries, and cleanup statistics |
