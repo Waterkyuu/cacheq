@@ -2,7 +2,11 @@
 
 [简体中文](observability.zh-CN.md) · [Cache & lifecycle](cache.en-US.md) · [Queries & conditions](queries.en-US.md)
 
-Use `client.Stats()` to inspect cache reuse, request sharing, load outcomes, and cleanup. Run this complete example to see two reads of the same key execute one load.
+`client.Stats()` reports aggregate cache reuse, request sharing, load outcomes, and cleanup for one client. Use it for application logs and monitoring. For the reason and lifecycle of an individual query, use [key events and diagnostics](events.en-US.md).
+
+## Quick start
+
+Save this complete program as `main.go` in a module importing cacheq and run `go run .`. Two reads of the same fresh key execute one load.
 
 ```go
 package main
@@ -10,7 +14,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	cacheq "github.com/Waterkyuu/cacheq"
@@ -30,7 +33,7 @@ func main() {
 			"greeting",
 			load,
 		); err != nil {
-			log.Fatal(err)
+			panic(err)
 		}
 	}
 	state := client.Stats()
@@ -44,9 +47,15 @@ func main() {
 }
 ```
 
-Output: `hits=1 misses=1 loads=1 entries=1`. Applications can read snapshots periodically for logs or their existing monitoring systems.
+Expected output:
 
-## `Stats`: inspect cache savings and load activity
+```text
+hits=1 misses=1 loads=1 entries=1
+```
+
+## Sampling statistics
+
+The following partial snippet uses an existing `client` and imports `fmt` and `time`.
 
 ```go
 state := client.Stats()
@@ -67,9 +76,11 @@ if completed > 0 {
 
 `Stats()` returns a coherent value snapshot for this client. Counters accumulate from construction and survive `Clear` and `Close`. Reading statistics does not request data, update recency, restart GC timers, or expire old values. Independent clients have independent counters.
 
+## Statistics fields
+
 | Field | Meaning |
 | --- | --- |
-| `CacheHits` | Valid non-forced `Fetch`, `FetchWithExpiry`, and `Prefetch` calls, enabled `Query` construction, or disabled-to-enabled transitions reusing fresh data |
+| `CacheHits` | Valid non-forced `Fetch`, `FetchWithOptions`, `FetchWithExpiry`, and `Prefetch` calls, enabled `Query` construction, or disabled-to-enabled transitions reusing fresh data |
 | `CacheMisses` | Those decisions without fresh data, counted once per call or transition, including `ErrNoFetcher` |
 | `MergedRequests` | Calls or enabled consumers joining existing work, counted once even if owner cancellation requires a replacement load |
 | `Loads` | Shared operations started, including explicit `Refetch` and automatic invalidation refreshes; retries belong to the same operation |
@@ -83,9 +94,15 @@ if completed > 0 {
 | `GCCollections` | Keys removed by inactive-cache timers |
 | `AgeExpirations` | Values cleared when cache operations discover they have reached `MaxAge`, once per installed value |
 
+## Counting boundaries
+
 `Get`, handle `Snapshot()`, disabled query construction, and invalid or already-canceled calls do not count as cache decisions. A fresh fallback containing an error is still a cache hit. Creating an enabled query over stale data counts as a miss even if the old value remains visible. Explicit `Refetch` and invalidation refreshes count as loads but do not add hits or misses.
 
 In-progress work contributes to `Loads`, but its outcome and duration appear only after completion. Detached or canceled operations remain included even when their result is not installed. Already-started work can finish updating counters after `Close`. Manual `Remove` and `Clear` do not increment cleanup-cause counters.
+
+## Batch loading
+
+`Loads` counts per-key cache loads. A [batch loader](batching.en-US.md) can combine several keys into one backend call, so this counter does not measure SQL statements or HTTP requests. Count actual bulk calls inside the application's batch callback when that measurement is needed.
 
 ## Verification
 
