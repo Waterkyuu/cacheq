@@ -2,13 +2,15 @@
 
 [简体中文](batching.zh-CN.md)
 
-`Batcher[K, V]` collects concurrent loads for different keys and calls a business-supplied `BatchFunc` with a list of unique keys. For example, a callback can use one SQL `WHERE id IN (...)` query or a bulk HTTP endpoint. cacheq does not discover backend capabilities or generate SQL. A callback that loops over single-object requests still makes multiple backend calls.
+`Batcher[K, V]` collects concurrent loads for different keys and invokes a business-supplied `BatchFunc`. It supports data sources with bulk operations, such as SQL `WHERE id IN (...)` queries and bulk HTTP endpoints.
 
-`products.Fetcher(id)` binds one batch key into an existing `Fetcher[V]` without starting a query. Pass that function to `Fetch`, `FetchWithOptions`, `Query`, or `Prefetch`. The Client decides whether to reuse fresh data or invoke the function; only required loads enter the batcher's collection window. Each Client key retains its own cache entry and subscriptions. Existing API signatures remain unchanged.
+The application implements the bulk operation. cacheq does not discover backend capabilities or generate SQL. A callback that loops over single-object requests does not reduce backend call counts.
 
-## Complete runnable example
+## Quick start
 
-This program needs no server or credentials. The long collection window deliberately makes the example independent of machine speed: two concurrent keys reach `MaxBatchSize` and dispatch immediately. In an application, choose a short window appropriate for the backend latency budget.
+This example loads two products through separate `Query` handles with one shared bulk callback. Save it as `main.go` in a module importing cacheq, then run `go run .`.
+
+The example uses `Wait: time.Hour` and `MaxBatchSize: 2` so the size limit triggers dispatch without relying on a short timing window. Application settings should use a collection duration that fits the required load latency.
 
 ```go
 package main
@@ -70,7 +72,7 @@ func main() {
 }
 ```
 
-Expected output:
+Output:
 
 ```text
 bulk load: [42 43]
@@ -79,44 +81,83 @@ product 43
 cached: product 42; bulk calls: 1
 ```
 
-The two `Query` handles start loads in the background, allowing IDs 42 and 43 to enter the same batch. The final `Fetch` returns product 42 from the Client's fresh cache without another callback or collection delay. `"product:42"` is the Client cache key; `42` is the key passed to the bulk function.
+The two `Query` handles load in the background, placing IDs 42 and 43 into one batch. The final `Fetch` hits product 42's cache without another bulk callback.
 
-For a standalone load without the Client's cache, use `products.Load(ctx, id)`. Binding a fetcher is equivalent to `func(ctx context.Context) (V, error) { return products.Load(ctx, id) }`.
+## Query API integration
 
-## Scheduling and ownership
+`products.Fetcher(42)` returns a `Fetcher[V]` bound to batch key `42`. Creating the function starts no work. Pass it to `Fetch`, `FetchWithOptions`, `Query`, or `Prefetch`.
 
-- `Wait` starts when the first unique key enters an empty collection window. Zero adds no intentional delay. Sequential calls that each wait for their result cannot form a batch together.
-- `MaxBatchSize` must be positive and counts unique keys. Reaching it dispatches immediately. Distinct batches may run concurrently; this option is not a global concurrency limit.
-- Duplicate keys share queued or running work. A completed result is not cached by the batcher, so a subsequent `Load` starts another operation.
-- Cache freshness, retries, and per-key load timeouts remain Client policies. A failed key may re-enter a later batch through the Client's retry loop; successful keys are not retried with it. Batch collection time is included in that key's timeout. Client statistics count per-key shared loads, not bulk callback invocations.
-- Existing invalidation can refresh multiple observed keys through the same batcher. `Set`, `Remove`, and cancellation retain their existing late-result protection. Invalidating one key does not invalidate other keys merely because they shared a bulk callback.
-- The constructor context owns callback values, deadlines, and cancellation. Individual callers control their own wait, without contributing context values or deadlines to the shared callback.
-- Canceling one caller preserves other callers. A queued key with no remaining callers is removed; an active callback is canceled when all of its keys lose their callers.
-- `Close` is idempotent, releases waiters with `ErrBatcherClosed`, and signals active callbacks to stop. It does not wait for callbacks that ignore their context. Parent cancellation releases waiters with the parent context's error.
-- Use separate batchers for different data sources and authorization scopes. Include all identity and query parameters in keys rather than depending on an individual caller's context. Callbacks must be safe for concurrent batches and treat their returned data as immutable once published.
+The Client first decides whether cached data is reusable. Only required loads invoke the Fetcher and enter the collection window. Each Client key retains independent cached data and subscriptions.
 
-## Results and errors
+| Key type | Example | Responsibility |
+| --- | --- | --- |
+| Client cache key | `"product:42"` | Identifies cached data, subscriptions, and invalidation scope |
+| Batch key | `42` | Identifies the object passed to the bulk callback and matches its result |
 
-Return `map[K]BatchResult[V]` to match values by key, independently of response order. Present map entries with zero-valued `Data` are valid results.
+Use `products.Load(ctx, id)` without Client caching. The batcher shares queued and active work without retaining completed results.
 
-| Condition | Outcome |
+## API and options
+
+| API | Contract |
 | --- | --- |
-| A single-object function is passed as the callback | Go compile-time type mismatch |
-| Nil callback | Constructor returns `ErrNoFetcher` |
-| Negative `Wait` or non-positive `MaxBatchSize` | Constructor returns `ErrInvalidBatchOptions` |
-| Whole callback returns an error | Every requested key receives that error; the map is ignored |
-| One map entry contains `Err` | Only that key receives the entry's data and error |
-| A requested key is absent from a successful map | Its caller receives a wrapped `ErrBatchResultMissing` |
-| An extra key is returned | It is ignored |
-| A caller is canceled or its deadline expires | `context.Canceled` or `context.DeadlineExceeded` |
-| A callback finishes after abandonment or closure | Its result is discarded |
+| `NewBatcher(ctx, load, options)` | Creates a batcher whose lifetime is owned by `ctx`, using the supplied bulk callback |
+| `Load(ctx, key)` | Creates or joins a key's load and waits for its result |
+| `Fetcher(key)` | Returns a loader for existing query APIs without starting work |
+| `Close()` | Releases waiters and cancels active batches; repeated calls are harmless |
 
-Use `errors.Is` to inspect library and application errors. Missing business objects should have explicit per-key application errors; an omitted map entry represents an incomplete callback response. Nil, dynamically non-comparable, and non-reflexive keys (such as NaN) return `ErrInvalidKey`.
+`BatchFunc[K, V]` has the signature `func(context.Context, []K) (map[K]BatchResult[V], error)`. Construction and `Load` require non-nil contexts.
 
-## Verification
+| `BatchOptions` field | Default or constraint | Contract |
+| --- | --- | --- |
+| `Wait` | Zero means 0; cannot be negative | Starts with the first unique key in an empty window; zero adds no intentional collection delay |
+| `MaxBatchSize` | Must be positive; no default | Maximum unique keys per batch; reaching it dispatches immediately |
 
-```sh
-go test -race ./... -run TestBatcher -count=1
-```
+`MaxBatchSize` is not a callback concurrency limit. Distinct batches can run concurrently, so callbacks must support concurrent execution. Sequential requests that each wait for completion cannot form one batch.
 
-[Behavior tests](../batcher_test.go) inject a controlled timer and synchronize callers through channels, covering collection deadlines, size limits, shared work, partial errors, missing results, cancellation, ownership, closure, and late callbacks. [Client integration tests](../batcher_query_test.go) cover mixed Query/Fetch batching, cache-hit bypass, invalidation, per-key retries, cancellation, and scoped cache keys. The [executable API example](../batcher_example_test.go) verifies the output above.
+## Results
+
+The callback returns `map[K]BatchResult[V]`, matching outcomes by key independently of response order.
+
+| `BatchResult[V]` field | Contract |
+| --- | --- |
+| `Data` | Per-key data; zero-valued data is valid |
+| `Err` | Per-key error affecting only that key |
+
+A whole-callback error is returned to every requested key, ignoring the map. On whole-callback success, omitted keys receive a wrapped `ErrBatchResultMissing`; extra keys are ignored.
+
+Missing business objects should return explicit per-key application errors. Omitting an entry indicates an incomplete callback response rather than an absent object.
+
+## Errors
+
+| Condition | Error or outcome |
+| --- | --- |
+| Nil bulk callback | `ErrNoFetcher` |
+| Negative `Wait` or non-positive `MaxBatchSize` | `ErrInvalidBatchOptions` |
+| Parent context canceled before construction | Parent context error |
+| Nil, dynamically non-comparable, or non-reflexive key such as NaN | `ErrInvalidKey` |
+| Successful response omits a requested key | Wrapped `ErrBatchResultMissing` |
+| Caller cancellation or deadline | `context.Canceled` or `context.DeadlineExceeded` |
+| Explicitly closed batcher | `ErrBatcherClosed` |
+| Whole-callback or per-key application failure | Corresponding application error |
+
+Use `errors.Is` to inspect library and application errors. Passing a single-object callback instead of a `BatchFunc` produces a Go compile-time type mismatch. There is no runtime discovery or automatic single-object fallback.
+
+## Cancellation and lifecycle
+
+The constructor context supplies callback values, deadlines, and cancellation. Individual callers control their own wait without passing their values or deadlines into the shared callback.
+
+- Canceling one caller preserves other callers. A queued key is removed once all its waiters leave.
+- An active callback is canceled when every key in its batch loses its waiters.
+- `Close()` releases waiters with `ErrBatcherClosed` and cancels active callbacks without waiting for callbacks that ignore cancellation.
+- Parent cancellation releases waiters with the parent's context error.
+- Results arriving after abandonment or closure are discarded.
+
+Use separate batchers for data sources and authorization scopes. Client and batch keys must include identity and query parameters that affect results, rather than relying on an individual caller's private context. Treat shared results as immutable.
+
+## Cache policy interaction
+
+The Client owns freshness, retries, and per-key load timeouts. Collection waiting counts toward the key's timeout. Failed keys can enter later retry batches without reloading successful keys.
+
+Invalidation can refresh several observed keys through one batcher. Invalidating one key does not invalidate others that shared its batch. `Set`, `Remove`, and cancellation retain protection against late results overwriting newer state.
+
+`Stats()` and [diagnostic events](events.en-US.md) count per-key loads, not bulk callbacks or database calls. Count actual bulk invocations inside the business callback when needed.
