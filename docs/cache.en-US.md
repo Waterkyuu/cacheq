@@ -2,7 +2,11 @@
 
 [简体中文](cache.zh-CN.md) · [Queries and conditions](queries.en-US.md) · [Invalidation](invalidation.en-US.md)
 
-All operations share one `*cacheq.Client`. Snippets belong inside business functions: `ctx` is the caller's context and `client` is created at the application boundary and injected. Import `cacheq "github.com/Waterkyuu/cacheq"`, plus the standard-library packages used by each snippet.
+A `Client` stores typed results, controls their freshness and retention, and owns shared loads. This guide covers local reads and writes, preloading, absolute expiry, eviction, cancellation, and resource release.
+
+## API snippet prerequisites
+
+Unless labeled as a complete program, Go blocks are partial snippets inside business functions. Snippets containing `return err` require a function returning `error`. `ctx` is a non-nil caller context; `client` is created at the application boundary and injected; `users` is a query handle from the [query guide](queries.en-US.md). Import `cacheq "github.com/Waterkyuu/cacheq"` and the standard-library packages used by each snippet.
 
 For cache hits, shared requests, and cleanup counts, see [observability](observability.en-US.md).
 
@@ -32,11 +36,14 @@ One application-owned client can store strings, details, lists, and configuratio
 | `MaxEntries` | Maximum retained results and errors, using LRU eviction | 0: unlimited; negative also disables |
 | `MaxAge` | Maximum data availability since its last installation | 0: unlimited; negative also disables |
 | `Retry` | Additional attempts after initial failure | 0 |
+| `RetryIf` | Selects errors eligible for another attempt | nil: retry all non-cancellation errors while attempts remain |
 | `RetryDelay` | Delay before additional attempt, numbered from 1 | Exponential from 1 second, capped at 30 seconds |
 | `Timeout` | Bounds the entire load, including retries and backoff | 0: no additional timeout; caller cancellation still applies |
 | `Clock` | Freshness and retention comparison clock | `time.Now` |
 
-Policies apply to the client. Cancellation and deadline errors are not retried. Timeout cancels the context; it cannot forcibly terminate a loader that ignores context.
+All duration fields use `time.Duration`. Zero or negative `StaleTime` makes ordinary data immediately stale; non-positive `Retry` disables additional attempts, and non-positive `Timeout` adds no timeout.
+
+These policies provide client defaults. [Per-consumer options](query-options.en-US.md) can override freshness, retries, and timeout; capacity, GC, maximum age, and the clock remain client policies. Cancellation and deadline errors are not retried. Timeout cancels the context; it cannot forcibly terminate a loader that ignores context.
 
 ## `Get[V]`: inspect without requesting
 
@@ -103,7 +110,7 @@ if err != nil {
 _ = value
 ```
 
-`Loader[V]` is `func(context.Context) (V, time.Time, error)`. Its deadline preserves the age of restored data instead of restarting its freshness window. Zero or elapsed deadlines make data immediately stale.
+`Loader[V]` is `func(context.Context) (V, time.Time, error)`. Its deadline preserves the original freshness deadline of restored data instead of restarting its freshness window. `MaxAge` still starts at installation into this client. Zero or elapsed deadlines make data immediately stale.
 
 Ordinary failures do not install new data. Returning both an error and a future deadline explicitly caches the fallback value and that error until the deadline, with `HasData: true` even for a zero value. When `MaxAge` is enabled, it can shorten this deadline. Refresh errors retain earlier successful data only while it remains within `MaxAge`.
 
@@ -114,13 +121,14 @@ client := cacheq.NewClient(cacheq.Options{
 	StaleTime: time.Minute,
 	GCTime:    5 * time.Minute,
 })
+defer client.Close()
 ```
 
 Freshness and retention are separate: data becomes stale after a minute but can still be displayed during refresh. Deletion requires no handles, no active load, and five minutes without use.
 
 Reads and writes restart retention. Any handle, including a disabled handle, suspends cleanup; loads also suspend it. Cleanup resumes after the last handle closes or a load finishes. `Remove`, `Clear`, and `Close` stop corresponding timers. Capacity eviction and maximum data age are separate policies below.
 
-`Clock` replaces comparison time, not real timer scheduling. Internal GC tests inject both comparison time and scheduling to test boundaries deterministically.
+`Clock` replaces comparison time, not real timer scheduling. Changing an injected clock alone does not trigger a GC timer.
 
 ## `MaxEntries`: limit retained results with LRU eviction
 
@@ -155,7 +163,7 @@ Reads, invalidation, and ordinary failed refreshes do not renew this deadline. I
 
 Age is checked on cache operations and state publication. Merely passing time does not send an update or start a request. A read that discovers expired data notifies existing handles; enabled `Query` construction or `Fetch` can load a replacement. Previously returned snapshots are ordinary values and do not change retroactively. Zero or negative `MaxAge` disables this policy.
 
-## Runnable capacity and age example
+## Complete example: capacity and maximum age
 
 Copy this program into an application importing cacheq. The injected clock demonstrates the deadline without sleeping or starting requests.
 
@@ -189,13 +197,19 @@ func main() {
 	if err := cacheq.Set(client, "c", "third"); err != nil {
 		panic(err)
 	}
-	fmt.Println("retained:", cacheq.Get[string](client, "a").HasData,
-		cacheq.Get[string](client, "b").HasData, cacheq.Get[string](client, "c").HasData)
+	fmt.Println(
+		"retained:",
+		cacheq.Get[string](client, "a").HasData,
+		cacheq.Get[string](client, "b").HasData,
+		cacheq.Get[string](client, "c").HasData,
+	)
 	now = now.Add(10 * time.Minute)
 	fmt.Println("over age:", cacheq.Get[string](client, "a").HasData,
 		cacheq.Get[string](client, "c").HasData)
 }
 ```
+
+Expected output:
 
 ```text
 retained: true false true
@@ -232,14 +246,14 @@ client.Clear()
 
 Results, requests, and cleanup timers are cleared. Live handles and their type contracts remain, receive empty state, and can manually refresh. Clearing does not itself initiate requests.
 
-## Handle and client `Close`
+## Closing handles and the client
 
 ```go
 users.Close()  // Release one consumer without canceling shared work.
 client.Close() // Cancel all work and close all query channels permanently.
 ```
 
-Closing a handle does not delete data or cancel a shared load. Closing the client cancels requests, closes update channels, removes data and timers, and rejects further operations. Both are idempotent.
+Closing a handle does not delete data or cancel a shared load. Closing the client cancels requests, closes query updates and [event subscriptions](events.en-US.md), removes data and timers, and rejects further operations. Both are idempotent.
 
 Released handle `Snapshot()` can still inspect a compatible shared cache; `SetEnabled` and `Refetch` return `ErrQueryClosed`. Client closure makes typed operations return `ErrClosed`.
 
