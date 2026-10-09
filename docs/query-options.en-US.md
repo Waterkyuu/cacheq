@@ -2,11 +2,11 @@
 
 [简体中文](query-options.zh-CN.md)
 
-`QueryOptions` overrides Client defaults directly at each `Query` call. There is no policy registry by key. Each handle owns copied values for `StaleTime`, `Retry`, `RetryIf`, `RetryDelay`, and `Timeout`. Use `FetchWithOptions` and `FetchOptions` for an imperative call with the same overrides; existing `Fetch`, `Prefetch`, and `FetchWithExpiry` signatures remain unchanged.
+`QueryOptions` overrides client defaults for an individual `Query` handle. Use it when consumers share a key but need different freshness, retry, or timeout policies. `FetchWithOptions` accepts `FetchOptions` for the same overrides on an imperative read.
 
-## Complete runnable example
+## Quick start
 
-Save this program as `main.go` in an application importing cacheq. It uses no network service and does not sleep. Both consumers share one value, but disagree about freshness. The first load retries once after a transient error.
+Save this program as `main.go` in a module importing cacheq, then run `go run .`. It uses no network service and does not sleep. Both consumers share one value, but disagree about freshness. The first load retries once after a transient error.
 
 ```go
 package main
@@ -42,19 +42,29 @@ func main() {
 
 	hour, immediate, timeout := time.Hour, time.Duration(0), 3*time.Second
 	retries := 1
-	steady := cacheq.Query(client, "greeting", load, cacheq.QueryOptions{
-		StaleTime:  &hour,
-		Retry:      &retries,
-		RetryIf:    func(err error) bool { return errors.Is(err, transient) },
-		RetryDelay: func(int) time.Duration { return 0 },
-		Timeout:    &timeout,
-	})
+	steady := cacheq.Query(
+		client,
+		"greeting",
+		load,
+		cacheq.QueryOptions{
+			StaleTime:  &hour,
+			Retry:      &retries,
+			RetryIf:    func(err error) bool { return errors.Is(err, transient) },
+			RetryDelay: func(int) time.Duration { return 0 },
+			Timeout:    &timeout,
+		},
+	)
 	defer steady.Close()
 
-	live := cacheq.Query(client, "greeting", load, cacheq.QueryOptions{
-		Disable:   true,
-		StaleTime: &immediate,
-	})
+	live := cacheq.Query(
+		client,
+		"greeting",
+		load,
+		cacheq.QueryOptions{
+			Disable:   true,
+			StaleTime: &immediate,
+		},
+	)
 	defer live.Close()
 
 	value, err := cacheq.FetchWithOptions(
@@ -82,7 +92,7 @@ steady stale=false; live stale=true
 loads=1; retries=1
 ```
 
-## Inheritance and explicit zero values
+## Configuration and explicit zero values
 
 | Field | Omitted / nil | Explicit override |
 | --- | --- | --- |
@@ -92,6 +102,8 @@ loads=1; retries=1
 | `Timeout` | Use Client timeout | Pointer to a duration; zero removes the Client timeout, while caller cancellation and deadlines still apply |
 | `RetryIf` | Use the Client predicate | A function deciding which errors permit another attempt |
 | `RetryDelay` | Use Client backoff | A function taking the additional attempt number, starting at one |
+
+`Disable` is available only in `QueryOptions`. The other fields are shared by `QueryOptions` and `FetchOptions`.
 
 Pointer values are copied when a call or handle is created. Later mutation of the source variables does not reconfigure a handle. Callback closures retain their captured state; synchronize it when shared across loads. A handle keeps its policy through enablement changes and `Refetch`.
 
@@ -105,15 +117,15 @@ For ordinary successful loads and `Set`, each consumer uses the shared `UpdatedA
 
 `FetchWithExpiry` supplies an authoritative absolute deadline, including for explicitly cached fallback data and errors. Consumer `StaleTime` cannot shorten or extend this deadline. Client `MaxAge` caps availability and freshness in either case. Capacity, GC, and the clock remain Client policies.
 
-Explicit invalidation and a failed refresh mark retained data stale for every consumer. Passing time alone does not publish updates or start requests; `Snapshot` evaluates current freshness. `Updates` carries consumer-specific snapshots on ordinary state transitions.
+Explicit invalidation and a failed refresh that installs no new data mark retained data stale for every consumer. An explicit fallback with a future absolute deadline still follows that deadline. Passing time alone does not publish updates or start requests; `Snapshot` evaluates current freshness. `Updates` carries consumer-specific snapshots on ordinary state transitions.
 
-## Which request policy wins?
+## Shared load policy
 
 The consumer starting a load supplies its loader, retry count, predicate, backoff, and whole-load timeout. Same-key consumers joining that load reuse it without replacing these settings. A joining call's context still controls its own wait. Its `Timeout` override applies only when it starts a new load.
 
 Automatic invalidation refresh uses the oldest still-enabled handle's loader and policy. Disabling or closing that handle allows the next enabled handle to supply future automatic refreshes. Existing requests keep their initiator's settings. Manual `Refetch` uses the invoking handle when starting a new load.
 
-Same-key loaders must still represent the same data; include parameters, user identity, and tenant scope in the key. The implementation adopts TanStack Query's distinction between shared data and observer-specific options, while preserving cacheq's explicit-expiry, cancellation, and invalidation contracts. See [TanStack's default option merge](https://github.com/TanStack/query/blob/main/packages/query-core/src/queryClient.ts), [observer freshness](https://github.com/TanStack/query/blob/main/packages/query-core/src/queryObserver.ts), and [request reuse](https://github.com/TanStack/query/blob/main/packages/query-core/src/query.ts).
+Same-key loaders must represent the same data. Include parameters, user identity, and tenant scope in the key; policy overrides do not isolate cached results.
 
 ## Migrating enablement configuration
 
