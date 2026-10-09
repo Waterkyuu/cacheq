@@ -27,7 +27,7 @@ loader count.
 
 Measured on 2026-10-07 with Go 1.27.1, macOS / darwin arm64, Apple M3 Pro.
 Durations are medians of five samples, converted from ns/op to microseconds per
-batch. [Raw output](benchmarks-cache-benefit-darwin-arm64.txt) includes every
+batch. [Raw output](../benchmarks/benchmarks-cache-benefit-darwin-arm64.txt) includes every
 sample and allocations.
 
 ## Reproduce
@@ -100,7 +100,7 @@ key's expected digest, and every scenario verifies its exact loader count.
 Measured on 2026-10-09 with Go 1.27.1, macOS / darwin arm64, Apple M3 Pro.
 Durations are medians of six optimized samples from two rounds, each collecting
 three samples of the original version followed by three of the optimization.
-[Raw output](benchmarks-concurrent-darwin-arm64.txt) includes both versions,
+[Raw output](../benchmarks/benchmarks-concurrent-darwin-arm64.txt) includes both versions,
 allocations, commands, and source identification.
 
 ### Reproduce
@@ -176,6 +176,6 @@ The identified optimization target was the freshness calculation inside
 reads also update hit counters and may expire data, update LRU state, or reset
 cleanup timers. Control timings are not additive, and overlapping trace waits
 are not batch elapsed time. See the
-[diagnostic record](benchmarks-read-diagnosis-darwin-arm64.txt) for all samples,
+[diagnostic record](../benchmarks/benchmarks-read-diagnosis-darwin-arm64.txt) for all samples,
 profile output, the temporary benchmark source and freshness patch, trace
 extraction code, and reproduction commands.
