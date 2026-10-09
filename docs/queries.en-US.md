@@ -2,11 +2,11 @@
 
 [简体中文](queries.zh-CN.md) · [Cache and lifecycle](cache.en-US.md) · [Invalidation](invalidation.en-US.md)
 
-One `Client` manages different result types. `cacheq.Query` is the primary subscription API, and its result type is inferred from the fetcher. Go cannot declare type parameters on individual methods, so typed operations are package functions; shared cache controls remain client methods.
+One `Client` manages different result types. `Query` subscribes to cached state and background loading; `Fetch` waits for fresh data without retaining a subscription. Both infer their result type from the loader and share data and active requests for the same key.
 
-## One client, different result types
+## Quick start: multiple result types
 
-This complete program can be copied into `main.go`. The fixed loaders demonstrate typing; an actual HTTP loader appears below.
+Save this complete program as `main.go` in a module importing cacheq, then run `go run .`. The fixed loaders demonstrate typing; an actual HTTP loader appears below.
 
 ```go
 package main
@@ -55,7 +55,7 @@ func main() {
 	defer users.Close()
 	defer settings.Close()
 
-	// Fetch waits for the same load already started by Query.
+	// Fetch reuses fresh data or joins the active load started by Query.
 	user, err := cacheq.Fetch(
 		context.Background(),
 		client,
@@ -73,7 +73,17 @@ func main() {
 }
 ```
 
+Expected output:
+
+```text
+Alice
+```
+
 Each key has one static result type: `"user:42"` stores `User`; `"users"` stores `[]User`. Include all parameters, tenants, and identities affecting a result in its key. Strings, integers, and comparable structs are supported. Nil keys, slices, and maps are rejected. Sharing is in-process; this is not automatic cross-service synchronization.
+
+## API snippet prerequisites
+
+The following partial snippets use `client`, `getUser`, and `getUsers` from the quick start and a non-nil `ctx`. Place snippets containing `return err` inside a function returning `error`. Each snippet is independent; add the imports it uses.
 
 ## `Query`: current data and background loading
 
@@ -150,7 +160,7 @@ if err != nil {
 _ = users // []User
 ```
 
-Fresh cached results return immediately; stale or missing results wait for a load. Use this in HTTP handlers, jobs, or business steps requiring the result. It shares data and in-flight work with `Query`. `Fetcher[V]` is your `func(context.Context) (V, error)` loader. Create the client once at the application boundary, rather than once per request.
+Fresh cached results return immediately; stale or missing results wait for a load. Use this in HTTP handlers, jobs, or business steps requiring the result. It shares data and in-flight work with `Query`. `Fetcher[V]` is a `func(context.Context) (V, error)` business loader. Create the client once at the application boundary and inject it into request handlers.
 
 ## Snapshot fields
 
@@ -200,22 +210,17 @@ getUsers := func(ctx context.Context) ([]User, error) {
 
 Automatic `Query` work belongs to the client. Loads started by `Fetch` or manual `Refetch` belong to the starting caller's context. A waiting caller's cancellation ends only its wait. If the owner cancels, remaining callers may start a replacement request. Closing a handle releases its subscription without canceling shared work; `client.Cancel` and `client.Close` cancel requests. Loaders must honor their context. `Options.Timeout` bounds the complete load, including retries and backoff.
 
-## Bubble Tea: connect subscriptions to the message loop
+## Bubble Tea integration
 
-The complete runnable code lives in `examples/bubbletea`. It uses Bubble Tea v2 and requires Go 1.26+. Its independent Go module keeps TUI dependencies separate from the core library, which still supports Go 1.22.
+The [Bubble Tea guide](bubbletea.en-US.md) documents the runnable task board,
+keyboard controls, message-loop integration, and cleanup. It uses Bubble Tea v2
+in an independent module requiring Go 1.26; the core library supports Go 1.22.
 
-```sh
-cd examples/bubbletea
-go run .
-```
+The [model](../examples/bubbletea/model.go) waits for one `Updates()` notification
+in a `tea.Cmd`, sends the snapshot to `Update`, then schedules the next wait.
+Only the message loop mutates display state.
 
-The [model](../examples/bubbletea/model.go) starts a `tea.Cmd` in `Init` to wait for one notification from `Updates()`. It returns that snapshot as a message; `Update` applies it and schedules the next wait. Only the message loop mutates display state. Slow consumers may skip intermediate notifications and receive the latest snapshot.
-
-Press `r` to invalidate the query and refresh in the background while keeping previous data visible. Every third load simulates a failure; press `r` again to recover. Press `q` or `ctrl+c` to close the subscription and release its waiting command. The [entry point](../examples/bubbletea/main.go) closes the client after normal exit or startup failure, canceling remaining work; closing only a query handle does not cancel shared loads.
-
-From the example directory, run `go test -race ./... -count=1` to verify refresh, failure, recovery, and exit cleanup through the actual Bubble Tea message loop.
-
-## Run real HTTP workflows
+## Verification
 
 ```sh
 go test -race ./e2e -run 'Test(SharedClientMutation|ConditionalConsumers|HTTPSharedBackgroundLoad)' -count=1
