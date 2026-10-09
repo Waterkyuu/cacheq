@@ -138,13 +138,13 @@ go run .
 
 ## 可复现的 benchmark
 
-对同一份数据**串行读取 100 次**，比较**无缓存、首次加载和缓存命中**，见 [benchmark 文档](docs/benchmarks.zh-CN.md)。主表展示总耗时和实际加载次数，内部开销与并发诊断单独说明。
+对同一份数据**串行读取 100 次**，比较**无缓存、首次加载和缓存命中**，见 [benchmark 文档](benchmarks/benchmarks.zh-CN.md)。主表展示总耗时和实际加载次数，内部开销与并发诊断单独说明。
 
 ```sh
 go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 ```
 
-[独立并发测试](docs/benchmarks.zh-CN.md#独立并发请求测试)固定每批 100 次读取、GOMAXPROCS=4、4 个请求 goroutine，每个读取 25 次，比较同一个 key 与不同 key 的缓存表现。
+[独立并发测试](benchmarks/benchmarks.zh-CN.md#独立并发请求测试)固定每批 100 次读取、GOMAXPROCS=4、4 个请求 goroutine，每个读取 25 次，比较同一个 key 与不同 key 的缓存表现。
 
 ## 功能文档
 

@@ -141,13 +141,13 @@ go run .
 
 ## Reproducible benchmarks
 
-Compare **no cache, first load, and cache hits** for **100 sequential reads** of the same data in the [benchmark guide](docs/benchmarks.en-US.md). The main table reports total time and actual loader calls; internal cost and concurrency diagnostics are documented separately.
+Compare **no cache, first load, and cache hits** for **100 sequential reads** of the same data in the [benchmark guide](benchmarks/benchmarks.en-US.md). The main table reports total time and actual loader calls; internal cost and concurrency diagnostics are documented separately.
 
 ```sh
 go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 ```
 
-The [concurrent request scenarios](docs/benchmarks.en-US.md#concurrent-request-scenarios) compare cache behavior for shared and distinct keys with 100 reads, GOMAXPROCS=4, and four request goroutines performing 25 reads each.
+The [concurrent request scenarios](benchmarks/benchmarks.en-US.md#concurrent-request-scenarios) compare cache behavior for shared and distinct keys with 100 reads, GOMAXPROCS=4, and four request goroutines performing 25 reads each.
 
 ## Feature guides
 

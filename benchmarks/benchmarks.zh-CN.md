@@ -16,7 +16,7 @@
 
 “首次加载”包含第一次未命中和后续 99 次命中，衡量从空缓存开始服务重复请求的成本。“缓存命中”在单独预热后读取 100 次，预热的一次加载和耗时不计入这一行。每批之间清空冷缓存的准备成本也不计时。所有场景检查返回摘要，并验证实际加载次数必须符合预期。
 
-测量日期为 2026-10-07，环境是 Go 1.27.1、macOS / darwin arm64、Apple M3 Pro。耗时取五次样本的中位数，从 ns/op 转换为每批微秒数。[原始输出](../benchmarks/benchmarks-cache-benefit-darwin-arm64.txt) 包含全部样本和内存分配数据。
+测量日期为 2026-10-07，环境是 Go 1.27.1、macOS / darwin arm64、Apple M3 Pro。耗时取五次样本的中位数，从 ns/op 转换为每批微秒数。[原始输出](benchmarks-cache-benefit-darwin-arm64.txt) 包含全部样本和内存分配数据。
 
 ## 复现
 
@@ -59,7 +59,7 @@ go test -race -run '^$' -bench '^BenchmarkCacheBenefit$' -benchtime=1x
 
 100 个不同 key 首次加载仍需要 100 次 loader。这一行没有省掉后端加载，用于衡量缓存查询、写入和同步增加的成本。同 key 和不同 key 的预热缓存都无需再次加载，其耗时衡量直接返回缓存结果的成本。
 
-预热和每批之间清空冷缓存的准备成本不计时。每次读取检查对应 key 的摘要，并验证所有场景的实际加载次数。测量日期为 2026-10-09，环境是 Go 1.27.1、macOS / darwin arm64、Apple M3 Pro。耗时取六次优化后样本的中位数，分两轮采集，每轮先测优化前三次，再测优化后三次。[原始输出](../benchmarks/benchmarks-concurrent-darwin-arm64.txt) 包含两个版本的样本、分配数据、命令和源码标识。
+预热和每批之间清空冷缓存的准备成本不计时。每次读取检查对应 key 的摘要，并验证所有场景的实际加载次数。测量日期为 2026-10-09，环境是 Go 1.27.1、macOS / darwin arm64、Apple M3 Pro。耗时取六次优化后样本的中位数，分两轮采集，每轮先测优化前三次，再测优化后三次。[原始输出](benchmarks-concurrent-darwin-arm64.txt) 包含两个版本的样本、分配数据、命令和源码标识。
 
 ### 复现
 
@@ -107,4 +107,4 @@ go test -race -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchtime=1x -cpu=4
 
 执行 trace 记录到每批缓存命中约 20.43 次 Client 锁阻塞。首次加载每批约有 4 个调用者等待同一次加载，被唤醒到恢复执行的中位耗时为 5.82 微秒。18,927 次 Client 锁阻塞中，18,623 次发生在调用者被加载完成唤醒后。已完成的 pending 读取直接返回结果，后续缓存读取才引起这些锁等待。因此首次加载这一行同时承担唤醒调度和后续缓存命中的竞争成本。
 
-排查定位的优化位置是 `Client.fetch` 临界区内的新鲜度计算。不能直接把锁换成 `RLock`：读取还会更新命中计数，也可能删除过龄数据、更新 LRU 或重置清理定时器。控制实验的耗时差不能相加，多个 goroutine 重叠的 trace 等待也不能当成整批耗时。[诊断记录](../benchmarks/benchmarks-read-diagnosis-darwin-arm64.txt) 包含全部样本、profile 输出、临时 benchmark 源码和新鲜度判断补丁、trace 提取代码与复现命令。
+排查定位的优化位置是 `Client.fetch` 临界区内的新鲜度计算。不能直接把锁换成 `RLock`：读取还会更新命中计数，也可能删除过龄数据、更新 LRU 或重置清理定时器。控制实验的耗时差不能相加，多个 goroutine 重叠的 trace 等待也不能当成整批耗时。[诊断记录](benchmarks-read-diagnosis-darwin-arm64.txt) 包含全部样本、profile 输出、临时 benchmark 源码和新鲜度判断补丁、trace 提取代码与复现命令。
