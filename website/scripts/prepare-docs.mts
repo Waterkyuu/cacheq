@@ -71,6 +71,16 @@ export const chapters: Chapter[] = [
 		},
 	},
 	{
+		id: "events",
+		zh: "诊断事件",
+		en: "Diagnostic events",
+		description: {
+			en: "Subscribe to cacheq diagnostic events in Go. Filter by key, trace load causes and shared requests, inspect retries and removals, and monitor bounded event delivery.",
+			"zh-CN":
+				"订阅 cacheq 的 Go 诊断事件，按 key 过滤，记录加载来源与原因、请求合并、重试及缓存删除，并监控有界事件投递。",
+		},
+	},
+	{
 		id: "versioning",
 		zh: "版本与升级规则",
 		en: "Versioning & upgrades",
@@ -88,6 +98,26 @@ export const chapters: Chapter[] = [
 			en: "Override cacheq Client defaults per query or fetch in Go. Configure independent freshness, filtered retries, and timeouts while sharing same-key data and requests.",
 			"zh-CN":
 				"在 Go 中通过 cacheq 的每次查询或获取调用覆盖客户端默认配置，独立判断新鲜度，设置重试错误判断和超时，同时共享同键数据与请求。",
+		},
+	},
+	{
+		id: "batching",
+		zh: "自动批量加载",
+		en: "Automatic batch loading",
+		description: {
+			en: "Group concurrent cacheq loads for different keys into bulk callbacks in Go. Configure collection windows, handle per-key results, and integrate batching with cached queries.",
+			"zh-CN":
+				"使用 cacheq 在 Go 中合并不同 key 的并发加载，配置批量收集窗口，处理逐 key 结果，并与查询缓存、重试及取消策略集成。",
+		},
+	},
+	{
+		id: "bubbletea",
+		zh: "Bubble Tea 示例",
+		en: "Bubble Tea example",
+		description: {
+			en: "Run the cacheq Bubble Tea task board in Go. Share query data across views, connect updates to the UI loop, refresh after mutations, and retain data when loads fail.",
+			"zh-CN":
+				"运行 cacheq 的 Go Bubble Tea 任务看板示例，跨视图共享查询，将更新接入界面消息循环，并处理修改后刷新、加载失败和资源清理。",
 		},
 	},
 ];
@@ -120,9 +150,10 @@ export function prepareMarkdown(
 			const route = name === "getting-started" ? "" : `${name}/`;
 			return `](${prefix}${route}${anchor ?? ""})`;
 		})
+		.replace(/\]\(\.\.\/([^)]*\.go)\)/g, `](https://github.com/Waterkyuu/cacheq/blob/${branch}/$1)`)
 		.replace(
-			/\]\(\.\.\/([^)]*\.go)\)/g,
-			`](https://github.com/Waterkyuu/cacheq/blob/${branch}/$1)`,
+			/\]\(\.\.\/(examples\/[^)]*\/)\)/g,
+			`](https://github.com/Waterkyuu/cacheq/tree/${branch}/$1)`,
 		);
 	return header.join("\n") + body;
 }

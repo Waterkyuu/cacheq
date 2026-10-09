@@ -40,6 +40,14 @@ const guides = [
 		api: "StaleTime · GCTime · Prefetch",
 	},
 	{
+		slug: "batching",
+		title: chinese ? "自动批量加载" : "Automatic batch loading",
+		description: chinese
+			? "合并不同 key 的并发加载，保留独立缓存。"
+			: "Group concurrent key loads while caching each result separately.",
+		api: "NewBatcher · BatchOptions · Fetcher",
+	},
+	{
 		slug: "invalidation",
 		title: chinese ? "缓存失效" : "Invalidation",
 		description: chinese
@@ -62,6 +70,22 @@ const guides = [
 			? "共享资源读取，保留有效期，接收变化通知。"
 			: "Share resource reads, preserve TTL, and notify on changes.",
 		api: "FetchWithExpiry · Invalidate · Stats",
+	},
+	{
+		slug: "events",
+		title: chinese ? "诊断事件" : "Diagnostic events",
+		description: chinese
+			? "按 key 记录加载原因、请求合并和缓存删除。"
+			: "Trace load causes, shared requests, and removals by key.",
+		api: "SubscribeEvents · LoadID · Dropped",
+	},
+	{
+		slug: "bubbletea",
+		title: chinese ? "Bubble Tea 示例" : "Bubble Tea example",
+		description: chinese
+			? "运行任务看板，验证多视图共享、刷新和错误恢复。"
+			: "Run a task board with shared views, refreshes, and error recovery.",
+		api: "Query · Updates · Invalidate",
 	},
 ];
 ---
