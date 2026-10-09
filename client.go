@@ -422,7 +422,7 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 	close(pending.done)
 }
 
-// run applies bounded retries and stops immediately for cancellation or deadline errors.
+// run applies bounded retries and stops for cancellation, deadline errors, or a closed batcher.
 func (c *Client) run(ctx context.Context, key any, pending *flight) (any, time.Time, error) {
 	options := pending.request.options
 	var previousErr error
@@ -441,6 +441,11 @@ func (c *Client) run(ctx context.Context, key any, pending *flight) (any, time.T
 		c.mu.Unlock()
 		value, expiresAt, err := pending.request.load(ctx)
 		previousErr = err
+		// Batcher closure is permanent, including when wrapped by an application fetcher.
+		// Do not spend retry delays or invoke predicates for work that cannot recover.
+		if errors.Is(err, ErrBatcherClosed) {
+			return value, expiresAt, err
+		}
 		stopped := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 		shouldRetry := err != nil && attempt < options.Retry && !stopped
 		if !shouldRetry {

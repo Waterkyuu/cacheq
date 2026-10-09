@@ -14,6 +14,7 @@ var ErrInvalidBatchOptions = errors.New("invalid batch options")
 var ErrBatchResultMissing = errors.New("batch result missing")
 
 // ErrBatcherClosed indicates an operation attempted after the batcher was explicitly closed.
+// Client loads treat this error as terminal, even when wrapped or RetryIf permits retries.
 var ErrBatcherClosed = errors.New("batcher is closed")
 
 // BatchOptions controls the collection window and the number of unique keys per callback.

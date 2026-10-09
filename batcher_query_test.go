@@ -3,6 +3,7 @@ package cacheq
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -14,6 +15,66 @@ import (
 type batchProductKey struct {
 	// ID identifies a product in this test's single authorization scope.
 	ID int
+}
+
+// TestBatcherFetcherClosedStopsRetries treats closure as terminal before admission and during a callback.
+func TestBatcherFetcherClosedStopsRetries(t *testing.T) {
+	for _, active := range []bool{false, true} {
+		for _, customPredicate := range []bool{false, true} {
+			t.Run(fmt.Sprintf("active=%t/predicate=%t", active, customPredicate), func(t *testing.T) {
+				var attempts, predicates, delays atomic.Int32
+				options := Options{Retry: 3, RetryDelay: func(int) time.Duration {
+					delays.Add(1)
+					return 0
+				}}
+				if customPredicate {
+					options.RetryIf = func(error) bool { predicates.Add(1); return true }
+				}
+				client := NewClient(options)
+				t.Cleanup(client.Close)
+				started := make(chan struct{})
+				b, _ := newTestBatcher(
+					t,
+					context.Background(),
+					func(ctx context.Context, _ []int) (map[int]BatchResult[int], error) {
+						close(started)
+						<-ctx.Done()
+						return nil, ctx.Err()
+					},
+					BatchOptions{MaxBatchSize: 1},
+				)
+				if !active {
+					b.Close()
+				}
+				result := make(chan error, 1)
+				go func() {
+					_, err := Fetch(context.Background(), client, "a", func(ctx context.Context) (int, error) {
+						attempts.Add(1)
+						value, err := b.Fetcher(1)(ctx)
+						if err != nil {
+							return value, fmt.Errorf("load batch: %w", err)
+						}
+						return value, nil
+					})
+					result <- err
+				}()
+				if active {
+					receiveBatchValue(t, started)
+					b.Close()
+				}
+				if err := receiveBatchValue(t, result); !errors.Is(err, ErrBatcherClosed) {
+					t.Fatalf("closed batch outcome = %v", err)
+				}
+				if attempts.Load() != 1 || predicates.Load() != 0 || delays.Load() != 0 {
+					t.Fatalf("closed batch attempts=%d predicates=%d delays=%d",
+						attempts.Load(), predicates.Load(), delays.Load())
+				}
+				if stats := client.Stats(); stats.Retries != 0 || stats.LoadFailures != 1 {
+					t.Fatalf("closed batch stats = %+v", stats)
+				}
+			})
+		}
+	}
 }
 
 // batchReleaseContext pauses a departing caller before its deferred batch cleanup.
