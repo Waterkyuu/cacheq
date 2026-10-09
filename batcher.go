@@ -228,15 +228,10 @@ func (b *Batcher[K, V]) run(ctx context.Context, group *batchGroup[K, V]) {
 	if err == nil {
 		results, err = b.load(ctx, keys)
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if ctx.Err() != nil {
-		err = ctx.Err()
-	}
-	for _, item := range group.loads {
-		if item.finished {
-			continue
-		}
+	// Formatting a missing key can invoke an application's String or Format method.
+	// Match outcomes outside mu so those methods can safely reenter the scheduler.
+	outcomes := make([]BatchResult[V], len(group.loads))
+	for index, item := range group.loads {
 		result := BatchResult[V]{Err: err}
 		if err == nil {
 			var exists bool
@@ -244,6 +239,19 @@ func (b *Batcher[K, V]) run(ctx context.Context, group *batchGroup[K, V]) {
 			if !exists {
 				result.Err = fmt.Errorf("%w: %v", ErrBatchResultMissing, item.key)
 			}
+		}
+		outcomes[index] = result
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	canceled := ctx.Err()
+	for index, item := range group.loads {
+		if item.finished {
+			continue
+		}
+		result := outcomes[index]
+		if canceled != nil {
+			result = BatchResult[V]{Err: canceled}
 		}
 		b.finishLocked(item, result)
 	}
