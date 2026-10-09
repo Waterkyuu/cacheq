@@ -139,6 +139,13 @@ func (b *Batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 	}
 }
 
+// Fetcher binds key for use with Fetch, FetchWithOptions, Query, and Prefetch.
+// Creating the function starts no work; the Client invokes it only when a load is needed.
+// Use a scoped Client cache key separately from this batch key to avoid sharing unrelated data.
+func (b *Batcher[K, V]) Fetcher(key K) Fetcher[V] {
+	return func(ctx context.Context) (V, error) { return b.Load(ctx, key) }
+}
+
 // Close releases pending callers with ErrBatcherClosed and cancels active callbacks.
 // It is idempotent and does not wait for callbacks that ignore their context.
 func (b *Batcher[K, V]) Close() {
