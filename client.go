@@ -18,8 +18,8 @@ type Client struct {
 	mu sync.Mutex
 	// stats accumulates this client's cache decisions, load outcomes, and cleanup activity under mu.
 	stats Stats
-	// eventSubscriptions owns optional bounded diagnostic streams under mu.
-	eventSubscriptions map[*EventSubscription]struct{}
+	// eventSubscriptions indexes diagnostic streams by exact key; nil owns all-key subscriptions under mu.
+	eventSubscriptions map[any]map[*EventSubscription]struct{}
 	// eventSequence orders emitted diagnostic records without retaining history.
 	eventSequence uint64
 	// nextLoadID assigns operation identities even without active diagnostic subscriptions.
@@ -319,8 +319,10 @@ func (c *Client) Close() {
 	clear(c.recencyEntries)
 	c.clearGCLocked()
 	c.emitEventLocked(Event{Kind: EventClientClosed, Reason: ReasonClientClosed})
-	for subscription := range c.eventSubscriptions {
-		close(subscription.events)
+	for _, subscriptions := range c.eventSubscriptions {
+		for subscription := range subscriptions {
+			close(subscription.events)
+		}
 	}
 	clear(c.eventSubscriptions)
 }
