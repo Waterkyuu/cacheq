@@ -2,11 +2,11 @@
 
 [简体中文](versioning.zh-CN.md)
 
-These rules tell users whether upgrading cacheq requires changing their code.
+This guide defines release compatibility, deprecation, and upgrade requirements.
 cacheq follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and is
 currently in the `v0` development phase.
 
-## What the version number means
+## Version numbers
 
 For `v0.1.0`, the three numbers are the major, minor, and patch versions.
 
@@ -22,12 +22,14 @@ Patch releases preserve compatibility in every stage and do not introduce new
 public features. Prefer compatible changes during `v0` too; any breaking release
 must explain the affected APIs or behavior and how to migrate in its release notes.
 
+## Deprecation policy
+
 From `v1`, mark deprecated declarations with Go's `Deprecated:` comments and
 provide a replacement. Keep them for at least one minor release before removal
 in a later major version. During `v0`, advance deprecation is preferred when
 practical; removals require a minor release and migration instructions.
 
-## What compatibility covers
+## Compatibility scope
 
 The promise covers the root `cacheq` package's exported declarations and behavior
 specified in its source comments and guides, including option defaults, cache
@@ -46,18 +48,20 @@ stable Go on Linux, macOS, and Windows. Raising the minimum Go version requires
 a `v0` minor or, from `v1`, a major release and release notes. Example modules
 may require newer Go versions independently.
 
-## How to upgrade
+## Upgrade procedure
 
-Pin a published version, for example:
+Read the target release notes before upgrading, especially across `v0` minor
+versions. Pin a published target version, for example v0.1.0:
 
 ```sh
 go get github.com/Waterkyuu/cacheq@v0.1.0
 ```
 
-Before upgrading, read the target release's notes and run your application's
-tests, especially across `v0` minor versions. Read source comments and guides
+After upgrading, run your application's tests. Read source comments and guides
 at the installed version's Git tag; `main` and the website may contain unreleased
 changes.
+
+## Published releases
 
 Published tags and module contents are immutable. Fix a bad release with a new
 version instead of moving, deleting, or reusing its tag. Ordinary commits do not
