@@ -22,6 +22,8 @@ type Client struct {
 	eventSubscriptions map[*EventSubscription]struct{}
 	// eventSequence orders emitted diagnostic records without retaining history.
 	eventSequence uint64
+	// nextLoadID assigns operation identities even without active diagnostic subscriptions.
+	nextLoadID uint64
 	// loadNow measures elapsed load time independently of the freshness clock; tests may replace it.
 	loadNow func() time.Time
 	// entries contains completed query state, including expired data for background refresh.
@@ -68,6 +70,8 @@ type entry struct {
 	updatedAt time.Time
 	// err records the most recent failure while earlier data can remain available.
 	err error
+	// staleReason records the latest explicit stale cause without keeping removed-key history.
+	staleReason EventReason
 }
 
 // queryRequest owns an erased loader and the initiating consumer's copied request policy.
@@ -78,10 +82,22 @@ type queryRequest struct {
 	options Options
 	// ordinary distinguishes fetchers from loaders with authoritative absolute deadlines.
 	ordinary bool
+	// trigger identifies the API decision initiating or joining this request.
+	trigger EventTrigger
 }
 
 // flight shares one loader's completion with all waiting callers.
 type flight struct {
+	// id identifies this shared operation within its Client.
+	id uint64
+	// reason describes the initiating consumer's stale decision or forced refresh.
+	reason EventReason
+	// joined counts additional joins independently of current waiter count.
+	joined uint64
+	// attempts counts actual loader invocations under the Client lock.
+	attempts int
+	// discardReason identifies an explicit operation that detached this load.
+	discardReason EventReason
 	// request preserves the initiator's policy while other consumers join the load.
 	request queryRequest
 	// startedAt marks the beginning of shared work, including scheduling and retry waits.
@@ -217,11 +233,14 @@ func (c *Client) invalidateLocked(key any, refetch RefetchMode) {
 	cached := c.entries[key]
 	cached.expiresAt = time.Time{}
 	cached.invalidated = true
+	cached.staleReason = ReasonInvalidated
 	c.entries[key] = cached
+	c.emitEventLocked(Event{Key: key, Kind: EventInvalidated, Trigger: TriggerInvalidate, Reason: ReasonInvalidated})
 	if pending := c.pending[key]; pending != nil {
 		pending.invalidated = true
 	} else if refetch == RefetchObserved {
 		if request := c.observedRequestLocked(key); request.load != nil {
+			request.trigger = TriggerInvalidate
 			c.startLocked(c.ctx, key, request)
 		}
 	}
@@ -237,7 +256,7 @@ func (c *Client) Cancel(key any) error {
 	if err := c.checkLocked(key, nil); err != nil {
 		return err
 	}
-	c.cancelLocked(key)
+	c.cancelLocked(key, ReasonCancel)
 	c.touchGCLocked(key)
 	c.notifyLocked(key)
 	return nil
@@ -250,7 +269,7 @@ func (c *Client) Remove(key any) error {
 	if err := c.checkLocked(key, nil); err != nil {
 		return err
 	}
-	c.cancelLocked(key)
+	c.cancelLocked(key, ReasonRemove)
 	c.discardLocked(key)
 	c.stopGCLocked(key)
 	c.notifyLocked(key)
@@ -262,7 +281,7 @@ func (c *Client) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for key := range c.pending {
-		c.cancelLocked(key)
+		c.cancelLocked(key, ReasonClear)
 	}
 	for key := range c.entries {
 		c.discardLocked(key)
@@ -283,7 +302,7 @@ func (c *Client) Close() {
 	c.closed = true
 	c.cancel()
 	for key := range c.pending {
-		c.cancelLocked(key)
+		c.cancelLocked(key, ReasonClientClosed)
 	}
 	for _, observers := range c.observers {
 		for observer := range observers {
@@ -313,7 +332,10 @@ func (c *Client) startLocked(ctx context.Context, key any, request queryRequest)
 		previousCancel := cancel
 		cancel = func() { timeoutCancel(); previousCancel() }
 	}
+	c.nextLoadID++
 	pending := &flight{
+		id:        c.nextLoadID,
+		reason:    loadReason(c.entries[key]),
 		done:      make(chan struct{}),
 		cancel:    cancel,
 		owner:     owner,
@@ -322,6 +344,7 @@ func (c *Client) startLocked(ctx context.Context, key any, request queryRequest)
 	}
 	c.pending[key] = pending
 	c.stats.Loads++
+	c.emitEventLocked(pending.event(key, EventLoadStarted))
 	c.notifyLocked(key)
 	go c.execute(ctx, key, pending)
 	return pending
@@ -330,13 +353,14 @@ func (c *Client) startLocked(ctx context.Context, key any, request queryRequest)
 // execute publishes a completed load only while it still owns the key's active request.
 func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 	defer pending.cancel()
-	value, expiresAt, err := c.run(ctx, pending.request)
+	value, expiresAt, err := c.run(ctx, key, pending)
 	if ctx.Err() != nil {
 		value, expiresAt, err = nil, time.Time{}, ctx.Err()
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.stats.TotalLoadDuration += c.loadNow().Sub(pending.startedAt)
+	duration := c.loadNow().Sub(pending.startedAt)
+	c.stats.TotalLoadDuration += duration
 	switch {
 	case err == nil:
 		c.stats.LoadSuccesses++
@@ -345,12 +369,14 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 	default:
 		c.stats.LoadFailures++
 	}
+	var applied bool
 	if c.pending[key] == pending {
 		delete(c.pending, key)
 		if !c.closed && ctx.Err() == nil {
 			c.expireDataLocked(key)
 			cached := c.entries[key]
-			if err == nil || c.options.Clock().Before(expiresAt) {
+			installsData := err == nil || c.options.Clock().Before(expiresAt)
+			if installsData {
 				cached.value, cached.hasData, cached.updatedAt = value, true, c.options.Clock()
 				cached.ordinary = pending.request.ordinary
 				if cached.ordinary {
@@ -362,30 +388,53 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 				expiresAt = time.Time{}
 			}
 			cached.invalidated = pending.invalidated || err != nil
+			cached.staleReason = ReasonNone
+			if pending.invalidated {
+				cached.staleReason = ReasonInvalidated
+			} else if err != nil && !installsData {
+				cached.staleReason = ReasonPreviousFailure
+			}
 			cached.err, cached.expiresAt = err, expiresAt
 			c.entries[key] = cached
+			applied = true
 			c.touchCapacityLocked(key)
 		}
 		c.touchGCLocked(key)
 	}
 	pending.value, pending.err = value, err
+	event := pending.event(key, EventLoadFinished)
+	event.Err, event.Duration, event.Applied = err, duration, applied
+	c.emitEventLocked(event)
+	if !applied {
+		event.Kind, event.Reason = EventResultDiscarded, pending.discardReason
+		if event.Reason == ReasonNone {
+			event.Reason = ReasonCancel
+		}
+		c.emitEventLocked(event)
+	}
 	c.notifyLocked(key)
 	close(pending.done)
 }
 
 // run applies bounded retries and stops immediately for cancellation or deadline errors.
-func (c *Client) run(ctx context.Context, request queryRequest) (any, time.Time, error) {
-	options := request.options
+func (c *Client) run(ctx context.Context, key any, pending *flight) (any, time.Time, error) {
+	options := pending.request.options
+	var previousErr error
 	for attempt := 0; ; attempt++ {
 		if ctx.Err() != nil {
 			return nil, time.Time{}, ctx.Err()
 		}
+		c.mu.Lock()
+		pending.attempts++
 		if attempt > 0 {
-			c.mu.Lock()
 			c.stats.Retries++
-			c.mu.Unlock()
+			event := pending.event(key, EventRetryStarted)
+			event.Err = previousErr
+			c.emitEventLocked(event)
 		}
-		value, expiresAt, err := request.load(ctx)
+		c.mu.Unlock()
+		value, expiresAt, err := pending.request.load(ctx)
+		previousErr = err
 		stopped := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 		shouldRetry := err != nil && attempt < options.Retry && !stopped
 		if !shouldRetry {
@@ -443,9 +492,10 @@ func (c *Client) notifyLocked(key any) {
 }
 
 // cancelLocked detaches the active load so canceled or obsolete results cannot overwrite current data.
-func (c *Client) cancelLocked(key any) {
+func (c *Client) cancelLocked(key any, reason EventReason) {
 	if pending := c.pending[key]; pending != nil {
 		pending.detached = true
+		pending.discardReason = reason
 		pending.cancel()
 		delete(c.pending, key)
 	}

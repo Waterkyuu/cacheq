@@ -63,9 +63,11 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOpt
 	}
 	// Bind before registering a typed publisher so no concurrent writer can install another type.
 	_ = client.bindLocked(key, reflect.TypeFor[V]())
+	request := eraseFetcher(fetch, policy)
+	request.trigger = TriggerQuery
 	observer := &subscription{
 		enabled: enabled,
-		request: eraseFetcher(fetch, policy),
+		request: request,
 		order:   client.nextObserver,
 		publish: func(state Snapshot[any]) { publishLatest(handle.updates, typedSnapshot[V](state)) },
 		close:   func() { close(handle.updates) },
@@ -114,7 +116,9 @@ func (h *QueryHandle[V]) SetEnabled(enabled bool) error {
 	}
 	h.observer.enabled = enabled
 	if enabled {
-		c.loadObservedLocked(h.key, h.observer.request)
+		request := h.observer.request
+		request.trigger = TriggerEnable
+		c.loadObservedLocked(h.key, request)
 	}
 	return nil
 }
@@ -126,11 +130,13 @@ func (h *QueryHandle[V]) Refetch(ctx context.Context) (V, error) {
 		var zero V
 		return zero, h.err
 	}
+	request := h.observer.request
+	request.trigger = TriggerRefetch
 	value, err := h.client.fetch(
 		ctx,
 		h.key,
 		reflect.TypeFor[V](),
-		h.observer.request,
+		request,
 		true,
 		h.observer,
 	)
@@ -220,7 +226,7 @@ func FetchWithExpiry[V any](ctx context.Context, client *Client, key any, load L
 		ctx,
 		key,
 		reflect.TypeFor[V](),
-		queryRequest{load: erased, options: client.options},
+		queryRequest{load: erased, options: client.options, trigger: TriggerFetch},
 		false,
 		nil,
 	)
@@ -229,11 +235,15 @@ func FetchWithExpiry[V any](ctx context.Context, client *Client, key any, load L
 
 // Prefetch warms a typed key without returning its data; unlike browser prefetch APIs it returns errors.
 func Prefetch[V any](ctx context.Context, client *Client, key any, fetch Fetcher[V]) error {
-	_, err := Fetch(
+	request := eraseFetcher(fetch, client.options)
+	request.trigger = TriggerPrefetch
+	_, err := client.fetch(
 		ctx,
-		client,
 		key,
-		fetch,
+		reflect.TypeFor[V](),
+		request,
+		false,
+		nil,
 	)
 	return err
 }
@@ -267,7 +277,7 @@ func Set[V any](client *Client, key any, value V) error {
 	if err := client.bindLocked(key, reflect.TypeFor[V]()); err != nil {
 		return err
 	}
-	client.cancelLocked(key)
+	client.cancelLocked(key, ReasonSet)
 	now := client.options.Clock()
 	client.entries[key] = entry{
 		typ: reflect.TypeFor[V](), value: value, hasData: true, updatedAt: now,
@@ -290,6 +300,7 @@ func (c *Client) fetch(
 ) (any, error) {
 	useCache := !force
 	var countedLookup, countedMerge bool
+	var joinedFlight *flight
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -320,6 +331,9 @@ func (c *Client) fetch(
 			countedLookup = true
 		}
 		if !force && fresh {
+			c.emitEventLocked(
+				Event{Key: key, Kind: EventCacheHit, Trigger: request.trigger, Reason: ReasonFresh, Err: cached.err},
+			)
 			c.touchCapacityLocked(key)
 			c.touchGCLocked(key)
 			c.mu.Unlock()
@@ -337,6 +351,7 @@ func (c *Client) fetch(
 			cached = c.entries[key]
 			cached.expiresAt = time.Time{}
 			cached.invalidated = true
+			cached.staleReason = ReasonRefetch
 			c.entries[key] = cached
 			c.notifyLocked(key)
 			force = false
@@ -344,10 +359,16 @@ func (c *Client) fetch(
 		pending := c.pending[key]
 		if pending == nil {
 			pending = c.startLocked(ctx, key, request)
-		} else if !countedMerge {
-			// Owner cancellation can repeat this loop, but one caller still represents one shared request.
-			c.stats.MergedRequests++
-			countedMerge = true
+		} else {
+			if !countedMerge {
+				// Owner cancellation can repeat this loop, but one caller still represents one shared request.
+				c.stats.MergedRequests++
+				countedMerge = true
+			}
+			if joinedFlight != pending {
+				c.joinLoadLocked(key, pending, request)
+				joinedFlight = pending
+			}
 		}
 		c.mu.Unlock()
 		select {
@@ -373,10 +394,13 @@ func (c *Client) loadObservedLocked(key any, request queryRequest) {
 	_, fresh := c.entryFreshnessLocked(c.entries[key], request.options.StaleTime)
 	c.recordLookupLocked(fresh)
 	if fresh {
+		c.emitEventLocked(Event{Key: key, Kind: EventCacheHit, Trigger: request.trigger, Reason: ReasonFresh,
+			Err: c.entries[key].err})
 		return
 	}
-	if c.pending[key] != nil {
+	if pending := c.pending[key]; pending != nil {
 		c.stats.MergedRequests++
+		c.joinLoadLocked(key, pending, request)
 		return
 	}
 	c.startLocked(c.ctx, key, request)
@@ -384,7 +408,7 @@ func (c *Client) loadObservedLocked(key any, request queryRequest) {
 
 // eraseFetcher copies an ordinary fetcher's policy and retains static typing at the API boundary.
 func eraseFetcher[V any](fetch Fetcher[V], options Options) queryRequest {
-	request := queryRequest{options: options, ordinary: true}
+	request := queryRequest{options: options, ordinary: true, trigger: TriggerFetch}
 	if fetch == nil {
 		return request
 	}
