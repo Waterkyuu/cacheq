@@ -33,7 +33,7 @@ const (
 	EventResultDiscarded
 	// EventInvalidated indicates a key was explicitly marked stale.
 	EventInvalidated
-	// EventCacheRemoved indicates retained state was removed or data exceeded MaxAge.
+	// EventCacheRemoved indicates retained data or an error was removed, including data exceeding MaxAge.
 	EventCacheRemoved
 	// EventLocalWrite indicates Set installed a typed local value.
 	EventLocalWrite

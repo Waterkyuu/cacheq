@@ -8,6 +8,56 @@ import (
 	"time"
 )
 
+// TestEventsEmptyRemoval reports only actual data or error removal, not retained type bindings.
+func TestEventsEmptyRemoval(t *testing.T) {
+	for _, state := range []string{"empty", "data", "error"} {
+		for _, action := range []string{"remove", "clear"} {
+			t.Run(state+"/"+action, func(t *testing.T) {
+				c := NewClient(Options{StaleTime: time.Hour})
+				t.Cleanup(c.Close)
+				load := func(context.Context) (int, error) { return 0, errors.New("unavailable") }
+				h := Query(c, "a", load, QueryOptions{Disable: true})
+				t.Cleanup(h.Close)
+				switch state {
+				case "data":
+					Set(c, "a", 0)
+				case "error":
+					Fetch(context.Background(), c, "a", load)
+				}
+				s := subscribeTestEvents(t, c, EventOptions{})
+				remove := func() {
+					if action == "clear" {
+						c.Clear()
+						return
+					}
+					if err := c.Remove("a"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				remove()
+				if state != "empty" {
+					event := receiveTestEvent(t, s.Events())
+					if event.Kind != EventCacheRemoved || event.Reason.String() != action {
+						t.Fatalf("retained result removal = %+v", event)
+					}
+				}
+				remove()
+				select {
+				case event := <-s.Events():
+					t.Fatalf("empty binding removal emitted %+v", event)
+				default:
+				}
+				if snapshot := h.Snapshot(); snapshot.HasData || snapshot.Err != nil {
+					t.Fatalf("removed state = %+v", snapshot)
+				}
+				if err := Set(c, "a", "wrong type"); !errors.Is(err, ErrTypeMismatch) {
+					t.Fatalf("live type binding was released: %v", err)
+				}
+			})
+		}
+	}
+}
+
 // TestEventsLocalWrite records successful updates without emitting events for rejected types or absent removals.
 func TestEventsLocalWrite(t *testing.T) {
 	c := NewClient(Options{StaleTime: time.Hour})

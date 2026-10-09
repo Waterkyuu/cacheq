@@ -543,14 +543,16 @@ func (c *Client) bindLocked(key any, typ reflect.Type) error {
 // discardLocked clears retained state, preserves active type bindings, and records an explicit removal cause.
 // ReasonNone suppresses events for internal cleanup of empty, unowned type metadata.
 func (c *Client) discardLocked(key any, reason EventReason) {
-	_, exists := c.entries[key]
+	cached := c.entries[key]
 	c.forgetCapacityLocked(key)
 	if len(c.observers[key]) > 0 || c.pending[key] != nil {
 		c.entries[key] = entry{typ: c.entries[key].typ}
 	} else {
 		delete(c.entries, key)
 	}
-	if exists && reason != ReasonNone {
+	// Live handles keep empty type bindings after removal. Repeated Remove or Clear
+	// must not report another deletion when neither data nor an error was retained.
+	if (cached.hasData || cached.err != nil) && reason != ReasonNone {
 		c.emitEventLocked(Event{Key: key, Kind: EventCacheRemoved, Reason: reason})
 	}
 }
