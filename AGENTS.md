@@ -114,6 +114,11 @@ meaning, contract, or reason for existing instead of translating its syntax.
 
 ## Document
 
-Upon completing a feature, create example documents (`xxxx.en-US.md` and `xxxx.zh-CN.md`) in the `docs` folder.
-
-If it is a fix, there is no need to add new documentation.
+- New features require matching `docs/xxxx.en-US.md` and `docs/xxxx.zh-CN.md` guides;
+  fixes update existing guides when needed.
+- Use formal technical documentation: purpose, runnable examples, API contracts,
+  and limitations. Avoid conversational wording.
+- Keep both languages aligned and verify example output.
+- Use `docs` as the website source. Register new guides in generation, navigation,
+  homepage, and README links. Build the website and verify both locales, links,
+  and search coverage.
