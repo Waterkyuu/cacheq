@@ -16,6 +16,90 @@ type batchProductKey struct {
 	ID int
 }
 
+// batchReleaseContext pauses a departing caller before its deferred batch cleanup.
+type batchReleaseContext struct {
+	// Context supplies the real cancellation state, including to later joining callers.
+	context.Context
+	// departed signals that the first canceled Err call is waiting for release.
+	departed chan struct{}
+	// release lets the canceled caller finish after replacement work is admitted.
+	release <-chan struct{}
+	// paused ensures only the departing caller waits, leaving later Err checks available.
+	paused atomic.Bool
+}
+
+// Err exposes cancellation while delaying the original caller's deferred waiter release.
+func (c *batchReleaseContext) Err() error {
+	err := c.Context.Err()
+	if err != nil && c.paused.CompareAndSwap(false, true) {
+		close(c.departed)
+		<-c.release
+	}
+	return err
+}
+
+// TestBatcherFetcherReplacement prevents detached work from supplying a replacement Client load.
+func TestBatcherFetcherReplacement(t *testing.T) {
+	for _, action := range []string{"remove", "clear", "cancel", "set"} {
+		t.Run(action, func(t *testing.T) {
+			client := NewClient(Options{StaleTime: time.Hour})
+			t.Cleanup(client.Close)
+			started, releaseBatch := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(releaseBatch) }) }
+			t.Cleanup(unblock)
+			releaseCaller := make(chan struct{})
+			defer close(releaseCaller)
+			departed, admitted := make(chan struct{}), make(chan struct{})
+			var calls, attempts atomic.Int32
+			b, _ := newTestBatcher(t, context.Background(),
+				func(context.Context, []int) (map[int]BatchResult[int], error) {
+					version := int(calls.Add(1))
+					if version == 1 {
+						close(started)
+						<-releaseBatch
+					}
+					return map[int]BatchResult[int]{1: {Data: version}}, nil
+				}, BatchOptions{MaxBatchSize: 1})
+			fetch := func(ctx context.Context) (int, error) {
+				if attempts.Add(1) == 1 {
+					return b.Load(&batchReleaseContext{
+						Context: ctx, departed: departed, release: releaseCaller,
+					}, 1)
+				}
+				return b.Load(&batchWaitContext{Context: ctx, ready: admitted}, 1)
+			}
+			handle := Query(client, "product:1", fetch)
+			t.Cleanup(handle.Close)
+			receiveBatchValue(t, started)
+			switch action {
+			case "remove":
+				client.Remove("product:1")
+			case "clear":
+				client.Clear()
+			case "cancel":
+				client.Cancel("product:1")
+			case "set":
+				Set(client, "product:1", 99)
+			}
+			receiveBatchValue(t, departed)
+			result := make(chan BatchResult[int], 1)
+			go func() {
+				value, err := handle.Refetch(context.Background())
+				result <- BatchResult[int]{Data: value, Err: err}
+			}()
+			receiveBatchValue(t, admitted)
+			unblock()
+			if got := receiveBatchValue(t, result); got.Data != 2 || got.Err != nil {
+				t.Fatalf("replacement reused detached batch: %+v; callbacks = %d", got, calls.Load())
+			}
+			if state := handle.Snapshot(); state.Data != 2 || state.Stale || state.Fetching {
+				t.Fatalf("replacement cache = %+v", state)
+			}
+		})
+	}
+}
+
 // TestBatcherFetcherIntegration combines Query and Fetch misses while keeping fresh cache hits outside the scheduler.
 func TestBatcherFetcherIntegration(t *testing.T) {
 	client := NewClient(Options{StaleTime: time.Hour})
