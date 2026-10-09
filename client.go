@@ -18,6 +18,10 @@ type Client struct {
 	mu sync.Mutex
 	// stats accumulates this client's cache decisions, load outcomes, and cleanup activity under mu.
 	stats Stats
+	// eventSubscriptions owns optional bounded diagnostic streams under mu.
+	eventSubscriptions map[*EventSubscription]struct{}
+	// eventSequence orders emitted diagnostic records without retaining history.
+	eventSequence uint64
 	// loadNow measures elapsed load time independently of the freshness clock; tests may replace it.
 	loadNow func() time.Time
 	// entries contains completed query state, including expired data for background refresh.
@@ -291,6 +295,11 @@ func (c *Client) Close() {
 	c.recency.Init()
 	clear(c.recencyEntries)
 	c.clearGCLocked()
+	c.emitEventLocked(Event{Kind: EventClientClosed, Reason: ReasonClientClosed})
+	for subscription := range c.eventSubscriptions {
+		close(subscription.events)
+	}
+	clear(c.eventSubscriptions)
 }
 
 // startLocked publishes pending state before starting one asynchronous load.
