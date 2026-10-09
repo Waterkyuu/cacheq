@@ -2,8 +2,11 @@
 
 [English](mcp.en-US.md) · [缓存与生命周期](cache.zh-CN.md) · [可观测性](observability.zh-CN.md)
 
-完整可运行实现放在 `examples/mcp`，使用官方 MCP Go SDK v1.8.0，需要 Go 1.25+。
-示例使用独立模块，核心 cacheq 库继续支持 Go 1.22，且不增加依赖。
+[可运行的 MCP 示例](../examples/mcp/)在服务端处理函数中缓存私有资源读取，展示跨连接复用、凭证范围隔离、剩余 TTL、修改后失效及资源通知。
+
+## 运行条件
+
+独立示例模块固定使用官方 MCP Go SDK v1.8.0，需要 Go 1.25 及以上版本。核心 cacheq 库仍支持 Go 1.22，且没有外部依赖。示例无需外部服务或真实凭证。
 
 ## 运行示例
 
@@ -18,12 +21,21 @@ go run .
 Bob 用相同 URI 读取自己的私有配置。后端只读取两次。随后 Alice 通过工具修改配置，
 收到资源变化通知，再次读取新值。
 
-最终统计为 `backend reads=3 cache hits=1 cache misses=3 loads=3`。
-不需要外部服务或真实凭证。
+预期输出：
 
-## cacheq 放在哪里
+```text
+alice: theme=light
+alice: theme=light
+bob: theme=blue
+backend reads after three connections: 2
+resource changed: config://app/settings
+alice after update: theme=dark
+backend reads=3 cache hits=1 cache misses=3 loads=3
+```
 
-官方 SDK 已支持客户端 TTL 缓存。示例把 cacheq 放在服务端资源处理函数中，
+## 服务端集成
+
+示例所用 SDK 版本支持客户端 TTL 缓存。示例把 cacheq 放在服务端资源处理函数中，
 负责跨连接复用后端结果、合并并发读取。SDK 本地命中不会到达服务端，
 因此不会增加服务端 cacheq 的统计。
 
@@ -46,6 +58,8 @@ Bob 用相同 URI 读取自己的私有配置。后端只读取两次。随后 A
 
 如果读取期间发生修改，失效标记也会作用于正在进行的加载。该请求之前取得的旧值
 可能继续返回给原调用者，但会标记为立即过期，不阻止下一次读取加载新数据。
+
+## 错误与取消
 
 后端错误作为 MCP 错误返回，不转换为成功的资源内容。
 HTTP/MCP 请求取消会传递给加载函数。
