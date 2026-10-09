@@ -235,10 +235,14 @@ func (c *Client) invalidateLocked(key any, refetch RefetchMode) {
 	cached.invalidated = true
 	cached.staleReason = ReasonInvalidated
 	c.entries[key] = cached
-	c.emitEventLocked(Event{Key: key, Kind: EventInvalidated, Trigger: TriggerInvalidate, Reason: ReasonInvalidated})
-	if pending := c.pending[key]; pending != nil {
+	event := Event{Key: key, Kind: EventInvalidated, Trigger: TriggerInvalidate, Reason: ReasonInvalidated}
+	pending := c.pending[key]
+	if pending != nil {
 		pending.invalidated = true
-	} else if refetch == RefetchObserved {
+		event.LoadID = pending.id
+	}
+	c.emitEventLocked(event)
+	if pending == nil && refetch == RefetchObserved {
 		if request := c.observedRequestLocked(key); request.load != nil {
 			request.trigger = TriggerInvalidate
 			c.startLocked(c.ctx, key, request)
@@ -270,7 +274,7 @@ func (c *Client) Remove(key any) error {
 		return err
 	}
 	c.cancelLocked(key, ReasonRemove)
-	c.discardLocked(key)
+	c.discardLocked(key, ReasonRemove)
 	c.stopGCLocked(key)
 	c.notifyLocked(key)
 	return nil
@@ -284,7 +288,7 @@ func (c *Client) Clear() {
 		c.cancelLocked(key, ReasonClear)
 	}
 	for key := range c.entries {
-		c.discardLocked(key)
+		c.discardLocked(key, ReasonClear)
 	}
 	c.clearGCLocked()
 	for key := range c.observers {
@@ -534,14 +538,19 @@ func (c *Client) bindLocked(key any, typ reflect.Type) error {
 	return nil
 }
 
-// discardLocked preserves active type bindings while clearing completed data and capacity bookkeeping.
-func (c *Client) discardLocked(key any) {
+// discardLocked clears retained state, preserves active type bindings, and records an explicit removal cause.
+// ReasonNone suppresses events for internal cleanup of empty, unowned type metadata.
+func (c *Client) discardLocked(key any, reason EventReason) {
+	_, exists := c.entries[key]
 	c.forgetCapacityLocked(key)
 	if len(c.observers[key]) > 0 || c.pending[key] != nil {
 		c.entries[key] = entry{typ: c.entries[key].typ}
-		return
+	} else {
+		delete(c.entries, key)
 	}
-	delete(c.entries, key)
+	if exists && reason != ReasonNone {
+		c.emitEventLocked(Event{Key: key, Kind: EventCacheRemoved, Reason: reason})
+	}
 }
 
 // observedRequestLocked selects an enabled handle deterministically by subscription order.

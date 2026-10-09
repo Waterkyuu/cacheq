@@ -26,10 +26,12 @@ func (c *Client) expireDataLocked(key any) bool {
 	// A failed refresh changes the error and freshness deadline, but not UpdatedAt.
 	// Checking the installation time prevents retries or repeated reads from extending old data's life.
 	cached.value, cached.hasData, cached.expiresAt = nil, false, time.Time{}
+	cached.staleReason = ReasonMaxAge
 	c.entries[key] = cached
 	c.stats.AgeExpirations++
 	if cached.err == nil {
 		c.forgetCapacityLocked(key)
 	}
+	c.emitEventLocked(Event{Key: key, Kind: EventCacheRemoved, Reason: ReasonMaxAge})
 	return true
 }

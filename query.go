@@ -283,6 +283,7 @@ func Set[V any](client *Client, key any, value V) error {
 		typ: reflect.TypeFor[V](), value: value, hasData: true, updatedAt: now,
 		expiresAt: client.limitExpiry(now, now.Add(client.options.StaleTime)), ordinary: true,
 	}
+	client.emitEventLocked(Event{Key: key, Kind: EventLocalWrite, Reason: ReasonSet})
 	client.touchCapacityLocked(key)
 	client.touchGCLocked(key)
 	client.notifyLocked(key)
