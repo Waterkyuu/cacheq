@@ -18,8 +18,8 @@ type Client struct {
 	mu sync.Mutex
 	// stats accumulates this client's cache decisions, load outcomes, and cleanup activity under mu.
 	stats Stats
-	// eventSubscriptions owns optional bounded diagnostic streams under mu.
-	eventSubscriptions map[*EventSubscription]struct{}
+	// eventSubscriptions indexes diagnostic streams by exact key; nil owns all-key subscriptions under mu.
+	eventSubscriptions map[any]map[*EventSubscription]struct{}
 	// eventSequence orders emitted diagnostic records without retaining history.
 	eventSequence uint64
 	// nextLoadID assigns operation identities even without active diagnostic subscriptions.
@@ -319,8 +319,10 @@ func (c *Client) Close() {
 	clear(c.recencyEntries)
 	c.clearGCLocked()
 	c.emitEventLocked(Event{Kind: EventClientClosed, Reason: ReasonClientClosed})
-	for subscription := range c.eventSubscriptions {
-		close(subscription.events)
+	for _, subscriptions := range c.eventSubscriptions {
+		for subscription := range subscriptions {
+			close(subscription.events)
+		}
 	}
 	clear(c.eventSubscriptions)
 }
@@ -420,7 +422,7 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 	close(pending.done)
 }
 
-// run applies bounded retries and stops immediately for cancellation or deadline errors.
+// run applies bounded retries and stops for cancellation, deadline errors, or a closed batcher.
 func (c *Client) run(ctx context.Context, key any, pending *flight) (any, time.Time, error) {
 	options := pending.request.options
 	var previousErr error
@@ -439,6 +441,11 @@ func (c *Client) run(ctx context.Context, key any, pending *flight) (any, time.T
 		c.mu.Unlock()
 		value, expiresAt, err := pending.request.load(ctx)
 		previousErr = err
+		// Batcher closure is permanent, including when wrapped by an application fetcher.
+		// Do not spend retry delays or invoke predicates for work that cannot recover.
+		if errors.Is(err, ErrBatcherClosed) {
+			return value, expiresAt, err
+		}
 		stopped := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 		shouldRetry := err != nil && attempt < options.Retry && !stopped
 		if !shouldRetry {
@@ -541,14 +548,16 @@ func (c *Client) bindLocked(key any, typ reflect.Type) error {
 // discardLocked clears retained state, preserves active type bindings, and records an explicit removal cause.
 // ReasonNone suppresses events for internal cleanup of empty, unowned type metadata.
 func (c *Client) discardLocked(key any, reason EventReason) {
-	_, exists := c.entries[key]
+	cached := c.entries[key]
 	c.forgetCapacityLocked(key)
 	if len(c.observers[key]) > 0 || c.pending[key] != nil {
 		c.entries[key] = entry{typ: c.entries[key].typ}
 	} else {
 		delete(c.entries, key)
 	}
-	if exists && reason != ReasonNone {
+	// Live handles keep empty type bindings after removal. Repeated Remove or Clear
+	// must not report another deletion when neither data nor an error was retained.
+	if (cached.hasData || cached.err != nil) && reason != ReasonNone {
 		c.emitEventLocked(Event{Key: key, Kind: EventCacheRemoved, Reason: reason})
 	}
 }

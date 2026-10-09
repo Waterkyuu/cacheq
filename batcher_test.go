@@ -12,6 +12,59 @@ import (
 	"time"
 )
 
+// batchFormattingKey supplies application code through a comparable key's string representation.
+type batchFormattingKey struct {
+	// format points to the callback invoked when an omitted key is included in an error.
+	format *func()
+}
+
+// String exercises application-owned formatting before returning a stable label.
+func (key batchFormattingKey) String() string {
+	(*key.format)()
+	return "formatted-key"
+}
+
+// TestBatcherMissingResultFormatting allows a missing key's formatter to close its scheduler.
+func TestBatcherMissingResultFormatting(t *testing.T) {
+	for _, closeBatcher := range []bool{false, true} {
+		t.Run(fmt.Sprintf("close=%t", closeBatcher), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			b, err := NewBatcher(ctx,
+				func(context.Context, []batchFormattingKey) (map[batchFormattingKey]BatchResult[int], error) {
+					return nil, nil
+				}, BatchOptions{MaxBatchSize: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			formatted := make(chan struct{})
+			format := func() {
+				if closeBatcher {
+					b.Close()
+				}
+				close(formatted)
+			}
+			result := make(chan error, 1)
+			go func() {
+				_, err := b.Load(ctx, batchFormattingKey{format: &format})
+				result <- err
+			}()
+			receiveBatchValue(t, formatted)
+			err = receiveBatchValue(t, result)
+			b.Close()
+			if closeBatcher {
+				if !errors.Is(err, ErrBatcherClosed) {
+					t.Fatalf("reentrant closure = %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrBatchResultMissing) || err.Error() != "batch result missing: formatted-key" {
+				t.Fatalf("formatted missing result = %v", err)
+			}
+		})
+	}
+}
+
 // batchTestTimer exposes a collection deadline without depending on elapsed wall-clock time.
 type batchTestTimer struct {
 	// delay records the requested collection window.

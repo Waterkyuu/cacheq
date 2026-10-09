@@ -43,12 +43,18 @@ type batchLoad[K comparable, V any] struct {
 	done chan struct{}
 	// result is immutable after done closes.
 	result BatchResult[V]
-	// waiters counts callers that have not released their wait.
-	waiters int
+	// waiters retains caller lifetimes until their waits return or this item finishes.
+	waiters map[*batchWaiter]struct{}
 	// finished prevents canceled or detached work from publishing another outcome.
 	finished bool
 	// group owns this item's collection window and eventual shared callback context.
 	group *batchGroup[K, V]
+}
+
+// batchWaiter identifies one caller independently of the comparability of its context.
+type batchWaiter struct {
+	// ctx determines whether this caller can still keep shared work alive.
+	ctx context.Context
 }
 
 // batchGroup owns the keys collected for one callback and its cancellation resources.
@@ -121,13 +127,20 @@ func (b *Batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 		return zero, err
 	}
 	item := b.pending[key]
+	// Client cancellation can precede the old Load goroutine's deferred cleanup.
+	// Check caller lifetimes before joining so replacement work cannot revive that old result.
+	if item != nil && !item.hasActiveWaiterLocked() {
+		b.finishLocked(item, BatchResult[V]{Err: context.Canceled})
+		item = nil
+	}
+	waiter := &batchWaiter{ctx: ctx}
 	if item == nil {
-		item = b.enqueueLocked(key)
+		item = b.enqueueLocked(key, waiter)
 	} else {
-		item.waiters++
+		item.waiters[waiter] = struct{}{}
 	}
 	b.mu.Unlock()
-	defer b.releaseWaiter(item)
+	defer b.releaseWaiter(item, waiter)
 	select {
 	case <-ctx.Done():
 		return zero, ctx.Err()
@@ -161,13 +174,16 @@ func (b *Batcher[K, V]) lifecycleErrorLocked() error {
 }
 
 // enqueueLocked registers a unique key and starts or fills its collection window.
-func (b *Batcher[K, V]) enqueueLocked(key K) *batchLoad[K, V] {
+func (b *Batcher[K, V]) enqueueLocked(key K, waiter *batchWaiter) *batchLoad[K, V] {
 	group := b.queued
 	if group == nil {
 		group = &batchGroup[K, V]{loads: make([]*batchLoad[K, V], 0)}
 		b.queued = group
 	}
-	item := &batchLoad[K, V]{key: key, done: make(chan struct{}), waiters: 1, group: group}
+	item := &batchLoad[K, V]{
+		key: key, done: make(chan struct{}), group: group,
+		waiters: map[*batchWaiter]struct{}{waiter: {}},
+	}
 	b.pending[key] = item
 	group.loads = append(group.loads, item)
 	group.remaining++
@@ -212,15 +228,10 @@ func (b *Batcher[K, V]) run(ctx context.Context, group *batchGroup[K, V]) {
 	if err == nil {
 		results, err = b.load(ctx, keys)
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if ctx.Err() != nil {
-		err = ctx.Err()
-	}
-	for _, item := range group.loads {
-		if item.finished {
-			continue
-		}
+	// Formatting a missing key can invoke an application's String or Format method.
+	// Match outcomes outside mu so those methods can safely reenter the scheduler.
+	outcomes := make([]BatchResult[V], len(group.loads))
+	for index, item := range group.loads {
 		result := BatchResult[V]{Err: err}
 		if err == nil {
 			var exists bool
@@ -229,19 +240,42 @@ func (b *Batcher[K, V]) run(ctx context.Context, group *batchGroup[K, V]) {
 				result.Err = fmt.Errorf("%w: %v", ErrBatchResultMissing, item.key)
 			}
 		}
+		outcomes[index] = result
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	canceled := ctx.Err()
+	for index, item := range group.loads {
+		if item.finished {
+			continue
+		}
+		result := outcomes[index]
+		if canceled != nil {
+			result = BatchResult[V]{Err: canceled}
+		}
 		b.finishLocked(item, result)
 	}
 }
 
+// hasActiveWaiterLocked distinguishes live callers from canceled waits awaiting deferred cleanup.
+func (item *batchLoad[K, V]) hasActiveWaiterLocked() bool {
+	for waiter := range item.waiters {
+		if waiter.ctx.Err() == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // releaseWaiter abandons a key only when its last caller leaves before completion.
-func (b *Batcher[K, V]) releaseWaiter(item *batchLoad[K, V]) {
+func (b *Batcher[K, V]) releaseWaiter(item *batchLoad[K, V], waiter *batchWaiter) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if item.finished {
 		return
 	}
-	item.waiters--
-	if item.waiters == 0 {
+	delete(item.waiters, waiter)
+	if len(item.waiters) == 0 {
 		b.finishLocked(item, BatchResult[V]{Err: context.Canceled})
 	}
 }
@@ -250,6 +284,7 @@ func (b *Batcher[K, V]) releaseWaiter(item *batchLoad[K, V]) {
 func (b *Batcher[K, V]) finishLocked(item *batchLoad[K, V], result BatchResult[V]) {
 	item.finished = true
 	item.result = result
+	clear(item.waiters)
 	delete(b.pending, item.key)
 	group := item.group
 	group.remaining--

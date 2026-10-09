@@ -130,11 +130,11 @@ Call `subscription.Close()` when the consumer leaves. This closes only diagnosti
 | `EventLoadFinished` | `load_finished` | A load completed, including failure and cancellation |
 | `EventResultDiscarded` | `result_discarded` | A completed outcome was not applied to shared cache state |
 | `EventInvalidated` | `invalidated` | An existing key was explicitly marked stale |
-| `EventCacheRemoved` | `cache_removed` | Retained state was cleared, or data reached `MaxAge` |
+| `EventCacheRemoved` | `cache_removed` | Retained data or an error was cleared, or data reached `MaxAge` |
 | `EventLocalWrite` | `local_write` | `Set` successfully installed a local value |
 | `EventClientClosed` | `client_closed` | The Client closed; broadcast to every subscription, including exact-key filters |
 
-`Get` and `Snapshot` do not emit cache-hit events. They can emit removal when they discover data beyond `MaxAge`. Rejected API calls, removal of an absent key, and internal cleanup of empty type metadata emit no event.
+`Get` and `Snapshot` do not emit cache-hit events. They can emit removal when they discover data beyond `MaxAge`. Rejected API calls and removal of an absent key or an empty type binding emit no event. A live handle can preserve its type binding after `Remove` or `Clear`; repeating either operation emits no additional removal event until data or an error is installed again.
 
 ## Operation sources and reasons
 

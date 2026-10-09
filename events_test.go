@@ -175,3 +175,49 @@ func TestEventsConcurrentClosure(t *testing.T) {
 	for range s.Events() {
 	}
 }
+
+// TestEventsSameKeySubscriptions preserves independent ownership when exact-key subscribers share an index.
+func TestEventsSameKeySubscriptions(t *testing.T) {
+	c := NewClient(Options{})
+	t.Cleanup(c.Close)
+	all := subscribeTestEvents(t, c, EventOptions{})
+	first := subscribeTestEvents(t, c, EventOptions{Key: "a"})
+	second := subscribeTestEvents(t, c, EventOptions{Key: "a"})
+	other := subscribeTestEvents(t, c, EventOptions{Key: "b"})
+	Set(c, "a", 1)
+	for _, subscription := range []*EventSubscription{all, first, second} {
+		if event := receiveTestEvent(t, subscription.Events()); event.Sequence != 1 || event.Key != "a" {
+			t.Fatalf("shared-key delivery = %+v", event)
+		}
+	}
+	first.Close()
+	Set(c, "a", 2)
+	for _, subscription := range []*EventSubscription{all, second} {
+		if event := receiveTestEvent(t, subscription.Events()); event.Sequence != 2 || event.Key != "a" {
+			t.Fatalf("remaining subscriber = %+v", event)
+		}
+	}
+	second.Close()
+	replacement := subscribeTestEvents(t, c, EventOptions{Key: "a"})
+	Set(c, "a", 3)
+	for _, subscription := range []*EventSubscription{all, replacement} {
+		if event := receiveTestEvent(t, subscription.Events()); event.Sequence != 3 || event.Key != "a" {
+			t.Fatalf("replacement subscriber = %+v", event)
+		}
+	}
+	select {
+	case event := <-other.Events():
+		t.Fatalf("unrelated subscriber received %+v", event)
+	default:
+	}
+	c.Close()
+	for _, subscription := range []*EventSubscription{all, replacement, other} {
+		event := receiveTestEvent(t, subscription.Events())
+		if event.Kind != EventClientClosed || event.Sequence != 4 || subscription.Dropped() != 0 {
+			t.Fatalf("indexed closure = %+v; dropped = %d", event, subscription.Dropped())
+		}
+		if _, open := <-subscription.Events(); open {
+			t.Fatal("indexed subscription remained open")
+		}
+	}
+}

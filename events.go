@@ -33,7 +33,7 @@ const (
 	EventResultDiscarded
 	// EventInvalidated indicates a key was explicitly marked stale.
 	EventInvalidated
-	// EventCacheRemoved indicates retained state was removed or data exceeded MaxAge.
+	// EventCacheRemoved indicates retained data or an error was removed, including data exceeding MaxAge.
 	EventCacheRemoved
 	// EventLocalWrite indicates Set installed a typed local value.
 	EventLocalWrite
@@ -257,9 +257,12 @@ func (c *Client) SubscribeEvents(options EventOptions) (*EventSubscription, erro
 	}
 	s := &EventSubscription{client: c, key: options.Key, events: make(chan Event, capacity)}
 	if c.eventSubscriptions == nil {
-		c.eventSubscriptions = make(map[*EventSubscription]struct{})
+		c.eventSubscriptions = make(map[any]map[*EventSubscription]struct{})
 	}
-	c.eventSubscriptions[s] = struct{}{}
+	if c.eventSubscriptions[s.key] == nil {
+		c.eventSubscriptions[s.key] = make(map[*EventSubscription]struct{})
+	}
+	c.eventSubscriptions[s.key][s] = struct{}{}
 	return s, nil
 }
 
@@ -275,10 +278,14 @@ func (s *EventSubscription) Close() {
 	c := s.client
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, exists := c.eventSubscriptions[s]; !exists {
+	subscriptions := c.eventSubscriptions[s.key]
+	if _, exists := subscriptions[s]; !exists {
 		return
 	}
-	delete(c.eventSubscriptions, s)
+	delete(subscriptions, s)
+	if len(subscriptions) == 0 {
+		delete(c.eventSubscriptions, s.key)
+	}
 	close(s.events)
 }
 
@@ -289,15 +296,30 @@ func (c *Client) emitEventLocked(event Event) {
 	}
 	c.eventSequence++
 	event.Sequence, event.Time = c.eventSequence, c.options.Clock()
-	for subscription := range c.eventSubscriptions {
-		filtered := subscription.key != nil && event.Kind != EventClientClosed
-		if filtered && subscription.key != event.Key {
-			continue
+	if event.Kind == EventClientClosed {
+		for _, subscriptions := range c.eventSubscriptions {
+			for subscription := range subscriptions {
+				subscription.publishLocked(event)
+			}
 		}
-		select {
-		case subscription.events <- event:
-		default:
-			subscription.dropped.Add(1)
+		return
+	}
+	// Exact-key observers must not extend the global critical section for unrelated queries.
+	for subscription := range c.eventSubscriptions[nil] {
+		subscription.publishLocked(event)
+	}
+	if event.Key != nil {
+		for subscription := range c.eventSubscriptions[event.Key] {
+			subscription.publishLocked(event)
 		}
+	}
+}
+
+// publishLocked delivers one matching event while the Client lock excludes subscription closure.
+func (s *EventSubscription) publishLocked(event Event) {
+	select {
+	case s.events <- event:
+	default:
+		s.dropped.Add(1)
 	}
 }

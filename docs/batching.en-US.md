@@ -158,6 +158,8 @@ Use separate batchers for data sources and authorization scopes. Client and batc
 
 The Client owns freshness, retries, and per-key load timeouts. Collection waiting counts toward the key's timeout. Failed keys can enter later retry batches without reloading successful keys.
 
+`ErrBatcherClosed` is terminal for Client loads, including wrapped errors. Closing a batcher ends affected loads without retry attempts, backoff, or calls to `RetryIf`. Further backend work requires a new batcher; retrying a closed scheduler cannot recover.
+
 Invalidation can refresh several observed keys through one batcher. Invalidating one key does not invalidate others that shared its batch. `Set`, `Remove`, and cancellation retain protection against late results overwriting newer state.
 
 `Stats()` and [diagnostic events](events.en-US.md) count per-key loads, not bulk callbacks or database calls. Count actual bulk invocations inside the business callback when needed.

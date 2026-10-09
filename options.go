@@ -51,7 +51,8 @@ type Options struct {
 	// Retry limits additional attempts after the initial load; zero disables retries.
 	Retry int
 	// RetryIf permits another attempt for an error, subject to Retry and cancellation.
-	// Nil retries every error except cancellation and deadline expiration; it runs outside the client lock.
+	// Cancellation, deadline expiration, and ErrBatcherClosed never retry.
+	// Nil permits every other error; the predicate runs outside the client lock.
 	RetryIf func(error) bool
 	// RetryDelay supplies the delay before each additional attempt, numbered from one.
 	// Nil uses exponential backoff capped at thirty seconds.
@@ -73,7 +74,7 @@ type FetchOptions struct {
 	// Retry overrides the number of additional attempts; zero disables retries.
 	Retry *int
 	// RetryIf overrides which errors permit another attempt within the retry limit.
-	// To allow every non-cancellation error despite a Client predicate, supply a function returning true.
+	// To allow every retryable error despite a Client predicate, supply a function returning true.
 	RetryIf func(error) bool
 	// RetryDelay overrides the delay before each additional attempt, numbered from one.
 	RetryDelay func(attempt int) time.Duration
