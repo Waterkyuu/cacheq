@@ -36,14 +36,14 @@ One application-owned client can store strings, details, lists, and configuratio
 | `MaxEntries` | Maximum retained results and errors, using LRU eviction | 0: unlimited; negative also disables |
 | `MaxAge` | Maximum data availability since its last installation | 0: unlimited; negative also disables |
 | `Retry` | Additional attempts after initial failure | 0 |
-| `RetryIf` | Selects errors eligible for another attempt | nil: retry all non-cancellation errors while attempts remain |
+| `RetryIf` | Selects errors eligible for another attempt | nil: retry eligible errors while attempts remain |
 | `RetryDelay` | Delay before additional attempt, numbered from 1 | Exponential from 1 second, capped at 30 seconds |
 | `Timeout` | Bounds the entire load, including retries and backoff | 0: no additional timeout; caller cancellation still applies |
 | `Clock` | Freshness and retention comparison clock | `time.Now` |
 
 All duration fields use `time.Duration`. Zero or negative `StaleTime` makes ordinary data immediately stale; non-positive `Retry` disables additional attempts, and non-positive `Timeout` adds no timeout.
 
-These policies provide client defaults. [Per-consumer options](query-options.en-US.md) can override freshness, retries, and timeout; capacity, GC, maximum age, and the clock remain client policies. Cancellation and deadline errors are not retried. Timeout cancels the context; it cannot forcibly terminate a loader that ignores context.
+These policies provide client defaults. [Per-consumer options](query-options.en-US.md) can override freshness, retries, and timeout; capacity, GC, maximum age, and the clock remain client policies. Cancellation, deadline errors, and `ErrBatcherClosed` are not retried, even when `RetryIf` returns true. Timeout cancels the context; it cannot forcibly terminate a loader that ignores context.
 
 ## `Get[V]`: inspect without requesting
 
