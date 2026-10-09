@@ -1,0 +1,32 @@
+name: Daily release branch
+
+on:
+  schedule:
+    # 16:00 UTC is midnight in Asia/Shanghai.
+    - cron: '0 16 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: daily-release-branch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  create:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Create today's release branch
+        run: sh .github/scripts/release_branch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
