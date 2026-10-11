@@ -51,6 +51,12 @@ h3 {
 .sidebar-content a {
 	border-radius: 999px;
 }
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+	background-color: var(--sl-color-accent-low);
+	color: var(--color-ink);
+}
 .sl-markdown-content {
 	font-size: 15px;
 	line-height: 1.8;
