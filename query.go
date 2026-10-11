@@ -47,7 +47,7 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOpt
 	for _, option := range options {
 		// A freshness-only override must not disable loading just because enablement was omitted.
 		enabled = !option.Disable
-		policy = resolvePolicy(client.options, option.fetchOptions())
+		policy = resolvePolicy(client.options, option)
 	}
 	handle := &QueryHandle[V]{client: client, key: key, updates: make(chan Snapshot[V], 1)}
 	client.mu.Lock()
@@ -179,6 +179,7 @@ func (h *QueryHandle[V]) activeLocked() error {
 // Fetch waits for fresh data without owning a long-lived subscription.
 // The result type is inferred from fetch, allowing one client to serve unrelated data types.
 // Optional per-call overrides are copied; only the last options value overrides Client defaults.
+// Disable controls automatic subscriptions only and does not suppress this explicit read.
 // Ordinary freshness is evaluated independently; explicit loader deadlines stay authoritative.
 // Joining in-flight work preserves its initiator's loader, retries, and timeout.
 // Canceling ctx stops this caller's wait; a configured timeout applies only to loads it starts.
@@ -187,7 +188,7 @@ func Fetch[V any](
 	client *Client,
 	key any,
 	fetch Fetcher[V],
-	options ...FetchOptions,
+	options ...QueryOptions,
 ) (V, error) {
 	policy := client.options
 	for _, option := range options {
@@ -206,13 +207,13 @@ func Fetch[V any](
 
 // FetchWithOptions is a compatibility wrapper for callers predating optional Fetch arguments.
 //
-// Deprecated: pass FetchOptions directly to Fetch instead.
+// Deprecated: pass QueryOptions directly to Fetch instead.
 func FetchWithOptions[V any](
 	ctx context.Context,
 	client *Client,
 	key any,
 	fetch Fetcher[V],
-	options FetchOptions,
+	options QueryOptions,
 ) (V, error) {
 	return Fetch(ctx, client, key, fetch, options)
 }
@@ -239,8 +240,19 @@ func FetchWithExpiry[V any](ctx context.Context, client *Client, key any, load L
 }
 
 // Prefetch warms a typed key without returning its data; unlike browser prefetch APIs it returns errors.
-func Prefetch[V any](ctx context.Context, client *Client, key any, fetch Fetcher[V]) error {
-	request := eraseFetcher(fetch, client.options)
+// It uses the same loading policy as Fetch, ignores Disable, and applies only the last options value.
+func Prefetch[V any](
+	ctx context.Context,
+	client *Client,
+	key any,
+	fetch Fetcher[V],
+	options ...QueryOptions,
+) error {
+	policy := client.options
+	for _, option := range options {
+		policy = resolvePolicy(client.options, option)
+	}
+	request := eraseFetcher(fetch, policy)
 	request.trigger = TriggerPrefetch
 	_, err := client.fetch(
 		ctx,
