@@ -1,10 +1,10 @@
-# Single-key, batch, and predicate invalidation
+# Invalidation and awaitable refresh
 
 [简体中文](invalidation.zh-CN.md) · [Queries and conditions](queries.en-US.md) · [Cache and lifecycle](cache.en-US.md)
 
 Invalidation retains data but marks it stale. After updating a user, detail and list results can become stale together even though they return `User` and `[]User` respectively.
 
-`Invalidate` is the single entry point: pass one key for an exact match, a `[]any` list for explicit keys, or a `func(any) bool` predicate to select existing keys. Options are optional; when multiple options are supplied, the last one wins. Only `[]any` is treated as a batch, so convert other slice types explicitly. Nil targets and invalid keys return `ErrInvalidKey`; empty or nil `[]any` batches do nothing.
+`Invalidate` accepts three target forms: pass one key for an exact match, a `[]any` list for explicit keys, or a `func(any) bool` predicate to select existing keys. Options are optional; when multiple options are supplied, the last one wins. Only `[]any` is treated as a batch, so convert other slice types explicitly. Nil targets and invalid keys return `ErrInvalidKey`; empty or nil `[]any` batches do nothing.
 
 ## Quick start
 
@@ -48,18 +48,10 @@ func main() {
 	fmt.Println("before:", before)
 
 	backend.Store("updated")
-	if err := client.Invalidate("message"); err != nil {
+	if _, err := client.InvalidateAndWait(ctx, "message"); err != nil {
 		panic(err)
 	}
-	after, err := cacheq.Fetch(
-		ctx,
-		client,
-		"message",
-		load,
-	)
-	if err != nil {
-		panic(err)
-	}
+	after := query.Snapshot().Data
 	fmt.Println("after:", after)
 }
 ```
@@ -93,7 +85,7 @@ if err := client.Invalidate("user:42"); err != nil {
 
 Data remains available, `Stale` becomes true, and handles are notified. An enabled handle supplies its fetcher for background refresh; keys without enabled handles are only marked stale.
 
-Invalidation does not wait for refresh completion. Observe results through `Updates()`. Use handle `Refetch(ctx)` when a manual refresh must return its result.
+Invalidation does not wait for refresh completion. Observe results through `Updates()`, use handle `Refetch(ctx)` for a single query, or use `InvalidateAndWait` to wait for associated post-invalidation refreshes.
 
 ## Batch invalidation
 
@@ -195,9 +187,58 @@ String prefixes have no built-in semantics. Match prefixes yourself, or use comp
 
 ## Invalidation during a request
 
-An active same-key request is neither canceled nor duplicated. Its result remains stale, preventing pre-invalidation work from being treated as current. Completion does not automatically start a second request. Use the next `Fetch`, new `Query`, or `Refetch` when freshness is required.
+By default, an active same-key request is neither canceled nor duplicated. Its result remains stale, preventing pre-invalidation work from being treated as current. Completion does not automatically start a second request. A `Fetch` or `Refetch` made while that request is running shares its result; a call after completion can start a new load.
 
 `RefetchNone` does not cancel work already running; it only suppresses new work. Use `client.Cancel` to cancel, and `client.Remove` to discard data.
+
+## `RefetchAfterLoad`: bounded background follow-up
+
+Opt in without waiting:
+
+```go
+if err := client.Invalidate("users", cacheq.InvalidateOptions{
+	RefetchAfterLoad: true,
+}); err != nil {
+	return err
+}
+```
+
+An enabled observer is required. When no load is active, invalidation starts the ordinary background refresh. When a load is active, multiple opted-in invalidations coalesce into one follow-up after it finishes, including when the old load fails or its caller cancels. The follow-up is owned by Client, uses the oldest currently enabled observer's loader and policy, and applies the normal retry, timeout, and execution budget rules.
+
+A load chain permits at most one automatic follow-up. Invalidating that follow-up leaves its result stale without scheduling a third load. Subsequent explicit operations may start another chain. This bound prevents continuous writes from causing an unlimited sequence of refreshes. The old result may appear as stale data while the follow-up runs.
+
+If all observers close or become disabled before dispatch, the follow-up is skipped. `Set`, `Update`, `Cancel`, `Remove`, `Clear`, and Client closure discard scheduled work. `RefetchNone` takes precedence for the current call, but does not cancel a follow-up requested earlier.
+
+## `InvalidateAndWait`: wait for associated refreshes
+
+```go
+results, err := client.InvalidateAndWait(ctx, []any{"user:42", "users"})
+for _, result := range results {
+	fmt.Printf("key=%v refreshed=%t err=%v\n", result.Key, result.Refreshed, result.Err)
+}
+if err != nil {
+	return err
+}
+```
+
+Import `fmt` for this snippet. This entry enables `RefetchAfterLoad` automatically and accepts the same single key, `[]any`, predicate, and optional configuration as `Invalidate`. Only keys with enabled observers and loaders refresh. Unobserved or disabled keys, and keys selected with `RefetchNone`, are only marked stale and return skipped results. It does not retain loaders for Fetch-only keys.
+
+All selected refreshes are scheduled before waiting; individual failures do not stop other keys. Explicit batches retain first-occurrence order and remove duplicates. Predicate order is unspecified; keys removed during matching are excluded. Invalid selections cause no changes and return no results. Empty selections return an empty result slice.
+
+| `RefreshResult` | Meaning |
+| --- | --- |
+| `Key` | Selected query key with its original dynamic type |
+| `Refreshed: true`, `Err: nil` | A post-invalidation load completed successfully without further invalidation or replacement |
+| `Refreshed: false`, `Err: nil` | Refresh skipped because no enabled observer remained, or `RefetchNone` was selected |
+| `Refreshed: false`, non-nil `Err` | Load failure, further invalidation, local replacement, or waiting cancellation |
+
+The returned error joins per-key errors with key context; `errors.Is` and `errors.As` retain the original causes. If the awaited load is invalidated again, its receipt reports `ErrRefreshInvalidated`. A later opted-in operation may independently schedule a follow-up, but does not change the earlier receipt. Coalesced waiters awaiting the same follow-up receive its outcome.
+
+`Refreshed` describes completion, not a promise that data remains fresh at return time. For example, zero `StaleTime` makes successfully refreshed data immediately stale. Results are not an atomic multi-key snapshot, and no server-side consistency guarantee is added.
+
+The caller context limits the overall wait, including the old request and follow-up. A pre-canceled context performs no invalidation. Cancellation after scheduling ends only this caller's wait; Client-owned loads and other waiters continue. Completed and skipped results are preserved; remaining targets report the context error. Explicit `Cancel`, `Remove`, or `Clear` returns `context.Canceled` for affected waits; `Set` or `Update` returns `ErrRefreshSuperseded`; Client closure returns `ErrClosed`, without waiting for detached callbacks to finish.
+
+Waiting through a callback context that already holds the selected observer's Executor returns `ErrExecutionReentry` for that key without scheduling additional work. Avoid waiting on your own active query or circular backend dependencies. Detection relies on the supplied context and the selected Client-layer budget; it cannot infer hidden Batcher budgets or application dependency cycles.
 
 ## Errors
 
@@ -205,6 +246,11 @@ An active same-key request is neither canceled nor duplicated. Its result remain
 | --- | --- |
 | `ErrInvalidKey` | Nil target, nil predicate, or a nil or non-comparable key in a batch |
 | `ErrClosed` | Client has been closed, including when the target would match no keys |
+| `ErrRefreshInvalidated` | The awaited refresh was invalidated again while running |
+| `ErrRefreshSuperseded` | A local `Set` or `Update` replaced the awaited refresh |
+| `ErrExecutionReentry` | A waiting callback already holds the selected refresh budget |
+
+The last three errors belong to `InvalidateAndWait`. Load and context errors are also returned through its per-key results. `Invalidate` remains non-waiting and reports selection errors only.
 
 A nil or empty `[]any` batch succeeds on an open client. Other slice types are
 not interpreted as batches and return `ErrInvalidKey`. Invalid batch keys are

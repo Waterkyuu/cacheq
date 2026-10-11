@@ -168,6 +168,9 @@ const (
 type InvalidateOptions struct {
 	// Refetch selects background refresh behavior; the zero value uses RefetchObserved.
 	Refetch RefetchMode
+	// RefetchAfterLoad coalesces in-flight invalidations into one follow-up for enabled observers.
+	// A follow-up never schedules another follow-up; RefetchNone disables scheduling.
+	RefetchAfterLoad bool
 }
 
 // Snapshot exposes a query's data, freshness, request activity, and latest error.

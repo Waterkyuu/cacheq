@@ -120,6 +120,12 @@ type flight struct {
 	err error
 	// invalidated prevents a refresh invalidated in flight from being marked fresh.
 	invalidated bool
+	// refresh reports the outcome to callers waiting for this invalidation-triggered load.
+	refresh *refreshCompletion
+	// followup coalesces invalidations requiring a load after this one finishes.
+	followup *refreshCompletion
+	// followupLoad prevents a chain of automatic follow-ups from growing without bound.
+	followupLoad bool
 }
 
 // NewClient constructs an independently owned client with optional freshness and retry policies.
@@ -143,62 +149,86 @@ func NewClient(options Options) *Client {
 }
 
 // Invalidate marks a key, a []any batch, or keys matching func(any) bool stale while retaining data.
-// By default it refreshes queries with enabled observers and loaders; the last option wins.
-// Batches are validated before any changes, and duplicate keys are invalidated once.
-// Predicates run outside the client lock against a snapshot of cached or loading keys.
-// Newly added keys are excluded, and keys removed before invalidation are skipped.
-// Nil targets and predicates return ErrInvalidKey; empty batches do nothing.
-// Closed clients return ErrClosed without evaluating predicates.
+// By default it refreshes enabled observed queries only when no load is active; the last option wins.
+// RefetchAfterLoad optionally coalesces in-flight invalidations into one bounded follow-up.
+// Batches are validated before changes; predicates run outside the lock against existing keys.
+// Newly added keys are excluded, removed keys are skipped, and nil targets or predicates are invalid.
+// Empty batches succeed; closed clients return ErrClosed without evaluating predicates.
 func (c *Client) Invalidate(target any, options ...InvalidateOptions) error {
-	mode := RefetchObserved
-	for _, option := range options {
-		mode = option.Refetch
+	_, err := c.invalidate(target, lastInvalidateOptions(options), nil)
+	return err
+}
+
+// lastInvalidateOptions applies the existing last-option-wins convention.
+func lastInvalidateOptions(options []InvalidateOptions) InvalidateOptions {
+	if len(options) == 0 {
+		return InvalidateOptions{}
 	}
+	return options[len(options)-1]
+}
+
+// invalidate selects exact keys or a predicate snapshot using the same mutation path.
+func (c *Client) invalidate(
+	target any,
+	options InvalidateOptions,
+	waitCtx context.Context,
+) ([]*refreshCompletion, error) {
 	switch selected := target.(type) {
 	case []any:
-		return c.invalidateKeys(selected, mode)
+		return c.invalidateKeys(selected, options, waitCtx)
 	case func(any) bool:
-		return c.invalidateMatching(selected, mode)
+		return c.invalidateMatching(selected, options, waitCtx)
 	default:
-		return c.invalidateKeys([]any{target}, mode)
+		return c.invalidateKeys([]any{target}, options, waitCtx)
 	}
 }
 
 // invalidateKeys validates the entire selection before invalidating each distinct key.
-func (c *Client) invalidateKeys(keys []any, mode RefetchMode) error {
+func (c *Client) invalidateKeys(
+	keys []any,
+	options InvalidateOptions,
+	waitCtx context.Context,
+) ([]*refreshCompletion, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return ErrClosed
+		return nil, ErrClosed
 	}
 	for _, key := range keys {
 		if err := c.checkLocked(key, nil); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	seen := make(map[any]struct{}, len(keys))
+	var refreshes []*refreshCompletion
 	for _, key := range keys {
-		// Repeating a key would invalidate the refresh just started for its
-		// first occurrence, leaving an otherwise current result stale.
+		// Duplicates would invalidate the refresh started by their first occurrence.
 		if _, exists := seen[key]; exists {
 			continue
 		}
 		seen[key] = struct{}{}
-		c.invalidateLocked(key, mode)
+		refresh := c.invalidateLocked(key, options, waitCtx)
+		if waitCtx != nil {
+			refreshes = append(refreshes, refresh)
+		}
 	}
-	return nil
+	return refreshes, nil
 }
 
 // invalidateMatching evaluates user code outside the lock and invalidates surviving selected keys.
-func (c *Client) invalidateMatching(matches func(any) bool, mode RefetchMode) error {
+func (c *Client) invalidateMatching(
+	matches func(any) bool,
+	options InvalidateOptions,
+	waitCtx context.Context,
+) ([]*refreshCompletion, error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return ErrClosed
+		return nil, ErrClosed
 	}
 	if matches == nil {
 		c.mu.Unlock()
-		return fmt.Errorf("%w: nil invalidation predicate", ErrInvalidKey)
+		return nil, fmt.Errorf("%w: nil invalidation predicate", ErrInvalidKey)
 	}
 	keys := make([]any, 0, len(c.entries)+len(c.pending))
 	for key := range c.entries {
@@ -219,21 +249,24 @@ func (c *Client) invalidateMatching(matches func(any) bool, mode RefetchMode) er
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return ErrClosed
+		return nil, ErrClosed
 	}
+	var refreshes []*refreshCompletion
 	for _, key := range selected {
-		// A predicate or concurrent cleanup can remove state while matching
-		// runs outside the lock. Do not recreate that removed cache entry.
+		// Matching outside the lock must not recreate a concurrently removed key.
 		if _, cached := c.entries[key]; !cached && c.pending[key] == nil {
 			continue
 		}
-		c.invalidateLocked(key, mode)
+		refresh := c.invalidateLocked(key, options, waitCtx)
+		if waitCtx != nil {
+			refreshes = append(refreshes, refresh)
+		}
 	}
-	return nil
+	return refreshes, nil
 }
 
-// invalidateLocked applies one key's invalidation and refresh policy while the client lock is held.
-func (c *Client) invalidateLocked(key any, refetch RefetchMode) {
+// invalidateLocked marks stale state and captures the exact refresh required by this invalidation.
+func (c *Client) invalidateLocked(key any, options InvalidateOptions, waitCtx context.Context) *refreshCompletion {
 	cached := c.entries[key]
 	cached.expiresAt = time.Time{}
 	cached.invalidated = true
@@ -247,15 +280,15 @@ func (c *Client) invalidateLocked(key any, refetch RefetchMode) {
 		event.LoadID = pending.id
 	}
 	c.emitEventLocked(event)
-	if pending == nil && refetch == RefetchObserved {
-		if request := c.observedRequestLocked(key); request.load != nil {
-			request.trigger = TriggerInvalidate
-			c.startLocked(c.ctx, key, request)
-		}
+	refresh := c.scheduleRefreshLocked(key, pending, options, waitCtx)
+	if refresh == nil && waitCtx != nil {
+		refresh = newRefreshCompletion(key)
+		refresh.finish(false, nil)
 	}
 	c.touchCapacityLocked(key)
 	c.touchGCLocked(key)
 	c.notifyLocked(key)
+	return refresh
 }
 
 // Cancel stops an active load while retaining previously completed data.
@@ -424,6 +457,7 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 		}
 		c.emitEventLocked(event)
 	}
+	c.finishRefreshLocked(key, pending, applied)
 	c.notifyLocked(key)
 	close(pending.done)
 }
@@ -530,6 +564,7 @@ func (c *Client) cancelLocked(key any, reason EventReason) {
 		pending.detached = true
 		pending.discardReason = reason
 		pending.cancel()
+		c.cancelRefreshLocked(pending, reason)
 		delete(c.pending, key)
 	}
 }
