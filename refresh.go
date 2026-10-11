@@ -50,10 +50,11 @@ func (r *refreshCompletion) finish(refreshed bool, err error) {
 }
 
 // InvalidateAndWait invalidates targets and waits for their post-invalidation refresh outcomes.
-// It enables RefetchAfterLoad and selects the same targets as Invalidate; the last option wins.
+// It accepts the same exact keys, batches, predicates, and QueryFilter as Invalidate.
+// It enables RefetchAfterLoad; the last option wins.
 // Only enabled observed queries refresh; RefetchNone and unobserved targets return skipped results.
-// All selected refreshes are scheduled before waiting. Results retain explicit key order and exclude duplicates;
-// predicate order is unspecified. Per-key errors are wrapped and joined in the returned error.
+// All selected refreshes are scheduled before waiting. Results retain explicit key order and exclude duplicates.
+// Selection without explicit keys has unspecified order. Per-key errors are wrapped and joined in the returned error.
 // Canceling ctx ends only this wait, not Client-owned refreshes. A pre-canceled ctx makes no changes.
 // Success describes load completion, not time-based freshness or an atomic multi-key snapshot.
 func (c *Client) InvalidateAndWait(

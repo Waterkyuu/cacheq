@@ -148,11 +148,13 @@ func NewClient(options Options) *Client {
 	}
 }
 
-// Invalidate marks a key, a []any batch, or keys matching func(any) bool stale while retaining data.
+// Invalidate marks targets selected by an exact key, []any, func(any) bool, or QueryFilter stale.
+// Completed data is retained while selected queries become stale.
 // By default it refreshes enabled observed queries only when no load is active; the last option wins.
 // RefetchAfterLoad optionally coalesces in-flight invalidations into one bounded follow-up.
 // Batches are validated before changes; predicates run outside the lock against existing keys.
-// Newly added keys are excluded, removed keys are skipped, and nil targets or predicates are invalid.
+// Filter and predicate selection use existing keys only, exclude additions, and skip removed keys.
+// Nil targets or direct predicates are invalid; a nil QueryFilter.Predicate imposes no restriction.
 // Empty batches succeed; closed clients return ErrClosed without evaluating predicates.
 func (c *Client) Invalidate(target any, options ...InvalidateOptions) error {
 	_, err := c.invalidate(target, lastInvalidateOptions(options), nil)
@@ -167,100 +169,21 @@ func lastInvalidateOptions(options []InvalidateOptions) InvalidateOptions {
 	return options[len(options)-1]
 }
 
-// invalidate selects exact keys or a predicate snapshot using the same mutation path.
+// invalidate applies shared target selection and records the scheduled refresh for each selected key.
 func (c *Client) invalidate(
 	target any,
 	options InvalidateOptions,
 	waitCtx context.Context,
 ) ([]*refreshCompletion, error) {
-	switch selected := target.(type) {
-	case []any:
-		return c.invalidateKeys(selected, options, waitCtx)
-	case func(any) bool:
-		return c.invalidateMatching(selected, options, waitCtx)
-	default:
-		return c.invalidateKeys([]any{target}, options, waitCtx)
-	}
-}
-
-// invalidateKeys validates the entire selection before invalidating each distinct key.
-func (c *Client) invalidateKeys(
-	keys []any,
-	options InvalidateOptions,
-	waitCtx context.Context,
-) ([]*refreshCompletion, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return nil, ErrClosed
-	}
-	for _, key := range keys {
-		if err := c.checkLocked(key, nil); err != nil {
-			return nil, err
-		}
-	}
-	seen := make(map[any]struct{}, len(keys))
-	var refreshes []*refreshCompletion
-	for _, key := range keys {
-		// Duplicates would invalidate the refresh started by their first occurrence.
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
+	refreshes := make([]*refreshCompletion, 0)
+	err := c.withQueryTargets(target, func(key any) {
 		refresh := c.invalidateLocked(key, options, waitCtx)
 		if waitCtx != nil {
 			refreshes = append(refreshes, refresh)
 		}
-	}
-	return refreshes, nil
-}
-
-// invalidateMatching evaluates user code outside the lock and invalidates surviving selected keys.
-func (c *Client) invalidateMatching(
-	matches func(any) bool,
-	options InvalidateOptions,
-	waitCtx context.Context,
-) ([]*refreshCompletion, error) {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return nil, ErrClosed
-	}
-	if matches == nil {
-		c.mu.Unlock()
-		return nil, fmt.Errorf("%w: nil invalidation predicate", ErrInvalidKey)
-	}
-	keys := make([]any, 0, len(c.entries)+len(c.pending))
-	for key := range c.entries {
-		keys = append(keys, key)
-	}
-	for key := range c.pending {
-		if _, cached := c.entries[key]; !cached {
-			keys = append(keys, key)
-		}
-	}
-	c.mu.Unlock()
-	selected := keys[:0]
-	for _, key := range keys {
-		if matches(key) {
-			selected = append(selected, key)
-		}
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return nil, ErrClosed
-	}
-	var refreshes []*refreshCompletion
-	for _, key := range selected {
-		// Matching outside the lock must not recreate a concurrently removed key.
-		if _, cached := c.entries[key]; !cached && c.pending[key] == nil {
-			continue
-		}
-		refresh := c.invalidateLocked(key, options, waitCtx)
-		if waitCtx != nil {
-			refreshes = append(refreshes, refresh)
-		}
+	})
+	if err != nil {
+		return nil, err
 	}
 	return refreshes, nil
 }
@@ -291,31 +214,25 @@ func (c *Client) invalidateLocked(key any, options InvalidateOptions, waitCtx co
 	return refresh
 }
 
-// Cancel stops an active load while retaining previously completed data.
-func (c *Client) Cancel(key any) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.checkLocked(key, nil); err != nil {
-		return err
-	}
-	c.cancelLocked(key, ReasonCancel)
-	c.touchGCLocked(key)
-	c.notifyLocked(key)
-	return nil
+// Cancel stops selected active loads while retaining previously completed data and subscriptions.
+// Targets accept an exact key, []any, func(any) bool, or QueryFilter with the same rules as Invalidate.
+func (c *Client) Cancel(target any) error {
+	return c.withQueryTargets(target, func(key any) {
+		c.cancelLocked(key, ReasonCancel)
+		c.touchGCLocked(key)
+		c.notifyLocked(key)
+	})
 }
 
-// Remove discards a key's result and prevents its active loader from restoring removed data.
-func (c *Client) Remove(key any) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.checkLocked(key, nil); err != nil {
-		return err
-	}
-	c.cancelLocked(key, ReasonRemove)
-	c.discardLocked(key, ReasonRemove)
-	c.stopGCLocked(key)
-	c.notifyLocked(key)
-	return nil
+// Remove discards selected results and prevents their active loaders from restoring removed data.
+// Targets accept an exact key, []any, func(any) bool, or QueryFilter; live subscriptions remain usable.
+func (c *Client) Remove(target any) error {
+	return c.withQueryTargets(target, func(key any) {
+		c.cancelLocked(key, ReasonRemove)
+		c.discardLocked(key, ReasonRemove)
+		c.stopGCLocked(key)
+		c.notifyLocked(key)
+	})
 }
 
 // Clear removes all results and cancels active loads while retaining live subscriptions.
