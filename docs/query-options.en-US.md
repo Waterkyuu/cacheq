@@ -2,7 +2,7 @@
 
 [简体中文](query-options.zh-CN.md)
 
-`QueryOptions` configures one `Query` handle; `FetchOptions` configures one `Fetch` call. Both override Client defaults for freshness, retries, and timeouts. `QueryOptions` additionally provides `Disable` to control automatic loading.
+`QueryOptions` configures one `Query` handle; `FetchOptions` configures one `Fetch` call. Both override Client defaults for freshness, retries, timeouts, and execution budgets. `QueryOptions` additionally provides `Disable` to control automatic loading.
 
 ## Quick start
 
@@ -101,30 +101,44 @@ Pass `options` as the final argument to `Fetch`. `FetchOptions` has no `Disable`
 
 The following fields apply to both `QueryOptions` and `FetchOptions`.
 
-| Field | Type | When nil | When set |
+| Field | Type | Default | When set |
 | --- | --- | --- | --- |
 | `StaleTime` | `*time.Duration` | Inherit Client freshness | Calculate freshness from the data's `UpdatedAt`; zero means immediately stale |
 | `Retry` | `*int` | Inherit Client retry count | Additional attempts after the first failure; zero or negative disables retries |
 | `RetryIf` | `func(error) bool` | Inherit Client error filter | True permits an additional attempt, subject to the retry count and terminal errors |
 | `RetryDelay` | `func(int) time.Duration` | Inherit Client retry delay | Return the delay before an additional attempt; numbering starts at 1 |
 | `Timeout` | `*time.Duration` | Inherit Client load timeout | Bound the entire load, including queuing, execution, and retry delays; zero or negative adds no timeout |
+| `Executor` | `*Executor` | nil, inherit Client budget | Use this shared budget for new loader attempts |
+| `DisableExecutor` | `bool` | false | Skip the outer Client budget; takes precedence over `Executor` |
 
 Pointer fields distinguish inheritance from explicit zero values. For example, `Retry: nil` inherits the default retry count; a pointer to 0 disables retries. Caller context deadlines and cancellation remain effective even with a zero `Timeout`.
 
-Cancellation, deadline errors, `ErrQueueFull`, and `ErrBatcherClosed` never retry, including wrapped errors, and bypass `RetryIf`. The predicate runs only when attempts remain and the error is retryable. A predicate always returning true can override the Client filter but cannot bypass terminal errors.
+Cancellation, deadline errors, `ErrQueueFull`, `ErrBatcherClosed`, and `ErrExecutionReentry` never retry, including wrapped errors, and bypass `RetryIf`. The predicate runs only when attempts remain and the error is retryable. A predicate always returning true can override the Client filter but cannot bypass terminal errors.
 
 `RetryIf` and `RetryDelay` run outside the Client lock and may call Client APIs. Applications must synchronize shared mutable state captured by callbacks.
+
+## Execution budget overrides
+
+Use `Executor` to select a different backend budget for one query, or `DisableExecutor: true` when its Batcher already budgets the actual bulk callback. A nil Executor inherits the Client budget unless disabling is explicit. Disabling outer acquisition does not disable the Batcher's own budget.
+
+```go
+options := cacheq.QueryOptions{
+	DisableExecutor: true,
+}
+```
+
+Apply this configuration to a handle using `Batcher.Fetcher`. For an imperative call, use `FetchOptions{DisableExecutor: true}`. Applying the same budget at both layers returns `ErrExecutionReentry` when the callback context is propagated. See [execution budgets](execution.en-US.md) for a complete configuration example and detection limitations.
 
 ## Defaults and overrides
 
 - Omitting options or passing an empty value uses Client defaults. `QueryOptions.Disable` defaults to false.
 - If several options values are supplied, only the last applies; their fields are not merged. Nil fields in the last value inherit Client defaults.
-- Pointed-to values are copied when creating `Query` or calling `Fetch`. Later changes to the original variables do not alter existing configuration.
+- Duration and retry pointer values are copied when creating `Query` or calling `Fetch`. Later changes to the original variables do not alter existing configuration. Executor references are shared; capacity is not copied.
 - The same key still shares data and requests. Different options do not create separate caches or replace query parameters and identity scope in the key.
 
 ## Configuration for shared requests
 
-A new load uses its initiator's loader, retry settings, and timeout. Later same-key calls do not replace them. A joiner's context can end its own wait, but its `Timeout` setting applies only to new loads it initiates.
+A new load uses its initiator's loader, retry settings, timeout, and execution budget. Later same-key calls do not replace them. A joiner's context can end its own wait, but its `Timeout` setting applies only to new loads it initiates.
 
 Automatic refresh after invalidation uses the oldest still-enabled handle's configuration. After that handle closes or is disabled, the next enabled handle supplies future automatic refreshes. Manual `Refetch` uses the current handle's configuration when starting a new load.
 
@@ -147,3 +161,4 @@ The old `QueryOptions.Enabled *bool` is replaced by `Disable bool`. Omit `Disabl
 - [Queries and conditions](queries.en-US.md): `Query`, `Fetch`, state subscriptions, and enablement.
 - [Cache and lifecycle](cache.en-US.md): Client defaults, expiration, and resource management.
 - [Invalidation](invalidation.en-US.md): invalidate and refresh associated queries.
+- [Execution budgets](execution.en-US.md): share backend capacity and configure batched query overrides.

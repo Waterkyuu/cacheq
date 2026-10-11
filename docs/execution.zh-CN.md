@@ -132,10 +132,14 @@ defer second.Close()
 | 配置字段 | 限制范围 | 默认行为 |
 | --- | --- | --- |
 | `Options.Executor` | Client 每一次加载尝试 | nil，不限制执行 |
+| `FetchOptions.Executor` / `QueryOptions.Executor` | 本次调用或查询对象发起的加载 | nil，继承 Client 的 Executor |
+| `FetchOptions.DisableExecutor` / `QueryOptions.DisableExecutor` | 跳过外层 Client 加载预算 | false，保留继承或覆盖配置 |
 | `MutationOptions.Executor` | Mutation 的业务写入回调 | nil，继承 Client 的 Executor |
 | `BatchOptions.Executor` | 收集完成后的实际批量回调 | nil，不限制执行 |
 
 缓存命中不执行加载函数，不占用名额。同键的多个调用共用一次加载，只占用一个名额。不同键的加载分别获取名额。
+
+`DisableExecutor: true` 优先于 `Executor`，只影响外层加载，不会禁用 Batcher 自身的预算。共享加载保留发起者的预算，后加入者禁用自己的外层预算不会改变正在执行的加载。查询对象的自动加载、启用、失效和手动刷新均保留这一配置。
 
 Mutation 在业务写入回调结束后释放名额，再执行本地缓存同步和关联失效。显式设置 `MutationOptions.Executor` 可以让写入使用独立预算；nil 表示继承，不能用来禁用 Client 已配置的预算。
 
@@ -156,9 +160,11 @@ if err != nil {
 }
 defer products.Close()
 
-client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute, Executor: budget})
 defer client.Close()
-value, err := cacheq.Fetch(ctx, client, "product:42", products.Fetcher(42))
+value, err := cacheq.Fetch(ctx, client, "product:42", products.Fetcher(42), cacheq.FetchOptions{
+	DisableExecutor: true,
+})
 if err != nil {
 	return err
 }
@@ -167,7 +173,20 @@ fmt.Println(value)
 
 `MaxBatchSize` 限制一批包含多少个唯一键，Executor 限制多少个批量回调同时执行。一个批次被拒绝时，其中所有键收到 `ErrQueueFull`，不会执行批量函数。
 
-不要给外层 Client 和它使用的 Batcher 配置同一个 Executor。外层加载可能已经占满名额，却又等待内部批量回调获得同一预算的名额，导致相互等待。加载或写入回调内部再调用使用同一预算的查询，也存在这个问题。优先在实际访问后端的一层设置预算；限制外层逐键加载还可能使收集到的批次变小。
+此 Client 的普通查询与实际批量回调可以共用同一个预算。批量 Fetch 跳过外层准入，不占用逐键名额等待收集；未覆盖配置的普通查询仍使用 Client 预算。
+
+通过查询对象订阅批量数据时，在对应对象上配置：
+
+```go
+query := cacheq.Query(client, "product:43", products.Fetcher(43), cacheq.QueryOptions{
+	DisableExecutor: true,
+})
+defer query.Close()
+```
+
+如果外层回调已经持有 Batcher 的 Executor，`Load` 在收集或加入键之前返回 `ErrExecutionReentry`。Client 不重试这一错误，包括包装后的错误，也不会调用 `RetryIf`。通过回调 context 再次获取同一预算的嵌套查询和 Mutation 同样被拒绝。这种拒绝不会增加 `Stats().Rejected`，该计数只记录过载。
+
+检测依赖传递回调收到的 context。替换为 `context.Background()` 或启动独立拥有生命周期的后台工作会丢失预算所有权信息。应避免嵌套依赖已持有的预算，在实际后端边界配置容量。不同预算仍各自生效；在多个相互等待的层配置预算仍可能形成依赖环。
 
 ## 过载与重试
 
@@ -207,6 +226,7 @@ Client 的 `Stats().Loads` 统计逐键逻辑加载，包括排队或被拒绝�
 | --- | --- |
 | `MaxConcurrent` 非正数或 `MaxQueued` 为负数 | `ErrInvalidExecutionOptions` |
 | 执行名额与排队容量均已满 | `ErrQueueFull` |
+| 回调 context 已持有所请求的预算 | `ErrExecutionReentry` |
 | 排队期间 context 取消或超时 | `context.Canceled` 或 `context.DeadlineExceeded` |
 
 Executor 限制回调的同时执行数量和等待数量，不限制每秒请求数。它不提供持久化任务队列，也不限制缓存字节数、订阅数量、批量收集窗口中的键数或瞬时 goroutine 数。缓存容量和保留时间仍由 Client 配置管理。

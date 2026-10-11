@@ -2,7 +2,7 @@
 
 [English](query-options.en-US.md)
 
-`QueryOptions` 配置一个 `Query` 查询对象，`FetchOptions` 配置一次 `Fetch` 调用。两者都用于覆盖 Client 默认的新鲜期、重试和超时设置；`QueryOptions` 额外提供 `Disable`，控制是否自动加载。
+`QueryOptions` 配置一个 `Query` 查询对象，`FetchOptions` 配置一次 `Fetch` 调用。两者都用于覆盖 Client 默认的新鲜期、重试、超时和执行预算设置；`QueryOptions` 额外提供 `Disable`，控制是否自动加载。
 
 ## 快速开始
 
@@ -101,30 +101,44 @@ options := cacheq.FetchOptions{
 
 以下字段同时适用于 `QueryOptions` 和 `FetchOptions`。
 
-| 字段 | 类型 | nil 时 | 设置后的行为 |
+| 字段 | 类型 | 默认行为 | 设置后的行为 |
 | --- | --- | --- | --- |
 | `StaleTime` | `*time.Duration` | 继承 Client 新鲜期 | 从数据的 `UpdatedAt` 计算新鲜期；零值表示立即过期 |
 | `Retry` | `*int` | 继承 Client 重试次数 | 首次失败后的追加尝试次数；零值或负数不重试 |
 | `RetryIf` | `func(error) bool` | 继承 Client 错误筛选函数 | 返回 true 才允许追加尝试，仍受次数和终止错误约束 |
 | `RetryDelay` | `func(int) time.Duration` | 继承 Client 重试等待策略 | 返回追加尝试前的等待时间；参数从 1 开始 |
 | `Timeout` | `*time.Duration` | 继承 Client 加载超时 | 限制整次加载，包括排队、执行和重试等待；零值或负数不额外设置超时 |
+| `Executor` | `*Executor` | nil，继承 Client 预算 | 新的加载尝试使用这个共享预算 |
+| `DisableExecutor` | `bool` | false | 跳过外层 Client 预算，优先于 `Executor` |
 
 指针字段用于区分“继承默认值”和“显式设置零值”。例如 `Retry: nil` 继承默认重试次数，指向 0 则关闭重试。即使 `Timeout` 为零，调用者 context 的截止时间和取消仍然有效。
 
-取消、截止时间错误、`ErrQueueFull` 和 `ErrBatcherClosed` 不重试，包括包装后的错误，也不会调用 `RetryIf`。`RetryIf` 仅在还有重试次数且错误可重试时执行。传入始终返回 true 的函数可以覆盖 Client 的筛选条件，但不能绕过终止错误。
+取消、截止时间错误、`ErrQueueFull`、`ErrBatcherClosed` 和 `ErrExecutionReentry` 不重试，包括包装后的错误，也不会调用 `RetryIf`。`RetryIf` 仅在还有重试次数且错误可重试时执行。传入始终返回 true 的函数可以覆盖 Client 的筛选条件，但不能绕过终止错误。
 
 `RetryIf` 和 `RetryDelay` 在 Client 锁外执行，可以调用 Client API。应用需自行同步回调捕获的共享可变数据。
+
+## 执行预算覆盖
+
+使用 `Executor` 为单个查询选择其他后端预算；如果 Batcher 已经限制实际批量回调，则使用 `DisableExecutor: true`。Executor 为 nil 时继承 Client 预算，除非显式禁用。禁用外层准入不会禁用 Batcher 自身的预算。
+
+```go
+options := cacheq.QueryOptions{
+	DisableExecutor: true,
+}
+```
+
+将此配置传给使用 `Batcher.Fetcher` 的查询对象。命令式调用使用 `FetchOptions{DisableExecutor: true}`。在两层使用相同预算且传递回调 context 时，会返回 `ErrExecutionReentry`。完整配置示例与检测限制见[执行并发预算](execution.zh-CN.md)。
 
 ## 默认值与覆盖规则
 
 - 不传配置或传空配置时，使用 Client 默认值；`QueryOptions.Disable` 默认为 false。
 - 传入多份配置时，仅最后一份生效，不合并各份字段。最后一份中为 nil 的字段继承 Client 默认值。
-- 创建 `Query` 或调用 `Fetch` 时会复制指针指向的值。之后修改原变量不会改变已有配置。
+- 创建 `Query` 或调用 `Fetch` 时会复制时间与重试次数指针指向的值。之后修改原变量不会改变已有配置。Executor 引用保持共享，不复制预算容量。
 - 同一个键仍共享数据和请求。不同配置不创建独立缓存，也不替代键中的查询参数或身份范围。
 
 ## 共享请求的配置
 
-新加载使用发起者的加载函数、重试配置和超时。后加入的同键调用不会覆盖这些设置；加入者的 context 可以结束自己的等待，但其 `Timeout` 配置只用于自己发起的新加载。
+新加载使用发起者的加载函数、重试配置、超时和执行预算。后加入的同键调用不会覆盖这些设置；加入者的 context 可以结束自己的等待，但其 `Timeout` 配置只用于自己发起的新加载。
 
 失效触发自动刷新时，使用最早创建且仍启用的查询对象配置。该对象关闭或禁用后，由下一个启用对象负责后续自动刷新。手动 `Refetch` 发起新加载时使用当前查询对象配置。
 
@@ -147,3 +161,4 @@ options := cacheq.FetchOptions{
 - [查询与条件请求](queries.zh-CN.md)：`Query`、`Fetch`、状态订阅和启用控制。
 - [缓存与生命周期](cache.zh-CN.md)：Client 默认配置、过期和资源管理。
 - [缓存失效](invalidation.zh-CN.md)：关联查询的失效与刷新。
+- [执行并发预算](execution.zh-CN.md)：共享后端容量并配置批量查询覆盖。
