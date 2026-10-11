@@ -2,28 +2,31 @@
 
 [简体中文](execution.zh-CN.md) · [Batch loading](batching.en-US.md) · [Mutations](mutations.en-US.md)
 
-`Executor` limits concurrently executing callbacks and queued work. Share an instance across clients, mutation handles, or batchers that access the same backend. It does not impose a requests-per-second rate, persist jobs, or create a background worker pool.
+`Executor` limits concurrent loads or writes and bounds the queue of work waiting to execute. Use it to protect databases or HTTP services with limited concurrency. Multiple Clients, Mutations, or Batchers accessing one data source can share an Executor.
 
-## Runnable example
+## Quick start
 
-Save this program in a Go module that imports cacheq and run `go run .`.
+This example permits one running load and no queued work. While product 42's load holds the slot, product 43's load is rejected. Completing the first load releases the slot.
+
+Save the complete program as `main.go` in a module importing cacheq, then run `go run .`. Channels control when the first load completes, requiring no external service or short timing-dependent waits.
 
 ```go
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/Waterkyuu/cacheq"
 )
 
-// main shares a bounded executor with cached query loads.
+// main rejects a second product load while the only execution slot is occupied.
 func main() {
 	budget, err := cacheq.NewExecutor(cacheq.ExecutionOptions{
-		MaxConcurrent: 4,
-		MaxQueued:     16,
+		MaxConcurrent: 1,
+		MaxQueued:     0,
 	})
 	if err != nil {
 		panic(err)
@@ -33,70 +36,183 @@ func main() {
 		StaleTime: time.Minute,
 	})
 	defer client.Close()
-	value, err := cacheq.Fetch(
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	loadFirst := func(ctx context.Context) (string, error) {
+		close(started)
+		select {
+		case <-release:
+			return "product 42", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	first := cacheq.Query(client, "product:42", loadFirst)
+	defer first.Close()
+	<-started
+
+	_, err = cacheq.Fetch(
 		context.Background(),
 		client,
-		"answer",
-		func(context.Context) (int, error) { return 42, nil },
+		"product:43",
+		func(context.Context) (string, error) { return "product 43", nil },
 	)
+	fmt.Println("second rejected:", errors.Is(err, cacheq.ErrQueueFull))
+	fmt.Println("active:", budget.Stats().Active)
+
+	close(release)
+	value, err := cacheq.Fetch(context.Background(), client, "product:42", loadFirst)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(value)
-	fmt.Println(budget.Stats().Active, budget.Stats().Queued)
+	fmt.Println("first:", value)
+	stats := budget.Stats()
+	fmt.Printf("finished: active=%d queued=%d rejected=%d\n", stats.Active, stats.Queued, stats.Rejected)
 }
 ```
 
 Expected output:
 
 ```text
-42
-0 0
+second rejected: true
+active: 1
+first: product 42
+finished: active=0 queued=0 rejected=1
 ```
 
-## Configuration and ownership
+`Options.Executor` applies the budget to Client loaders. The first `Query` loads in the background; `started` ensures it already holds the only slot. Another key then needs loading, but `MaxQueued: 0` permits no waiting. `Fetch` returns `ErrQueueFull` without invoking product 43's loader.
 
-| Configuration | Contract |
+Closing `release` allows the first load to complete. The final `Fetch` shares product 42's request or cached data without another loader invocation. `Rejected` retains the cumulative count, so it remains 1 afterward.
+
+## Snippet prerequisites
+
+Place these snippets inside a business function returning `error`, importing the standard library packages they use. `budget` is an Executor created by `NewExecutor`, and `ctx` is a non-nil caller context. The batch example also needs an application-supplied `loadProducts` function whose signature is described in that section. Configuration snippets are independent.
+
+## `NewExecutor`: concurrency and queue capacity
+
+Set a positive `MaxQueued` to allow some requests to wait:
+
+```go
+budget, err := cacheq.NewExecutor(cacheq.ExecutionOptions{
+	MaxConcurrent: 4,
+	MaxQueued:     16,
+})
+if err != nil {
+	return err
+}
+```
+
+This permits up to 4 executing callbacks and 16 waiting tasks. When running slots are occupied, new work enters the queue. A full queue immediately returns `ErrQueueFull`. Waiters receive released slots in the order they entered the queue.
+
+| `ExecutionOptions` field | Constraint | Purpose |
+| --- | --- | --- |
+| `MaxConcurrent` | Must be positive | Maximum callbacks executing at once |
+| `MaxQueued` | Must be non-negative | Waiting capacity; zero rejects work when no slot is free |
+
+Construct budgets with `NewExecutor`; do not use an unconfigured zero value. Capacity cannot change after construction. An Executor owns no background goroutines or timers and needs no `Close`.
+
+## Sharing a budget across Clients
+
+Pass the same `budget` to multiple Clients:
+
+```go
+first := cacheq.NewClient(cacheq.Options{Executor: budget})
+second := cacheq.NewClient(cacheq.Options{Executor: budget})
+defer first.Close()
+defer second.Close()
+```
+
+Each Client keeps its own cache, but both acquire slots from the same budget. With the quick start's one-slot budget, both Clients together can execute only one callback. Creating two Executors instead gives two independent limits.
+
+Create and inject budgets per data source at the application boundary. Closing one Client cancels work it owns without closing the shared Executor or other Clients.
+
+## Configuration placement
+
+| Configuration field | Scope | Default behavior |
+| --- | --- | --- |
+| `Options.Executor` | Each Client loader attempt | nil, unrestricted execution |
+| `MutationOptions.Executor` | Mutation business write callback | nil, inherits the Client Executor |
+| `BatchOptions.Executor` | Actual bulk callback after collection | nil, unrestricted execution |
+
+Cache hits invoke no loader and consume no slot. Multiple same-key calls share one load and one slot. Different-key loads acquire slots independently.
+
+Mutation releases capacity when its business callback returns, before local cache synchronization and associated invalidation. Set `MutationOptions.Executor` explicitly to give writes a separate budget. Nil means inheritance and cannot disable an already-configured Client budget.
+
+## Using budgets with batch loading
+
+When a Client loads through `Batcher.Fetcher`, prefer configuring `BatchOptions.Executor`. Different keys can then collect into batches before actual backend calls acquire capacity.
+
+The snippet's application-supplied `loadProducts` has the signature `func(context.Context, []int) (map[int]cacheq.BatchResult[string], error)`. See [automatic batch loading](batching.en-US.md) for a complete bulk callback example.
+
+```go
+products, err := cacheq.NewBatcher(ctx, loadProducts, cacheq.BatchOptions{
+	Wait:         2 * time.Millisecond,
+	MaxBatchSize: 100,
+	Executor:     budget,
+})
+if err != nil {
+	return err
+}
+defer products.Close()
+
+client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+defer client.Close()
+value, err := cacheq.Fetch(ctx, client, "product:42", products.Fetcher(42))
+if err != nil {
+	return err
+}
+fmt.Println(value)
+```
+
+`MaxBatchSize` limits unique keys per batch; Executor limits concurrently executing bulk callbacks. A rejected batch returns `ErrQueueFull` to every key without invoking the bulk callback.
+
+Do not configure the same Executor on an outer Client and its Batcher. Outer loads can hold all slots while waiting for inner bulk callbacks to acquire the same capacity, causing them to wait on each other. A loader or mutator calling another query with the same budget has the same risk. Prefer applying the budget at the layer that actually accesses the backend. Limiting outer per-key loaders can also reduce batch sizes.
+
+## Overload and retries
+
+Use `errors.Is(err, cacheq.ErrQueueFull)` to detect a full budget. The callback at this boundary has not executed. The application can report that it is busy or arrange a later call at a higher layer.
+
+The Client does not retry `ErrQueueFull` or call `RetryIf` for it, including wrapped errors returned by batch or application loaders.
+
+Other retryable query errors retain the existing retry policy. Each attempt acquires capacity again. Capacity is released after the callback, before retry decisions and delays, so backoff consumes no execution slot.
+
+## Cancellation and timeouts
+
+Queue time counts toward the query's overall timeout. Cancellation by the caller owning the load, `Client.Cancel`, or Client closure cancels the corresponding queued work. A caller that only joined an existing shared load cancels its own wait without canceling that shared load.
+
+Once a callback starts, it retains its slot until it returns. Context cancellation cannot force an uncooperative callback to stop, so business loaders and mutators must still honor context cancellation.
+
+Mutation uses the caller's context deadline and does not inherit Client query timeouts. Batch loading keeps its cancellation rules: closing the Batcher or canceling all waiters for a batch cancels that batch's queue wait. Canceling one waiter preserves other waiters.
+
+Queued queries still report `Fetching`; Mutations report `Pending`. Snapshots do not expose a separate queued status.
+
+## `Stats`: active and queued work
+
+`budget.Stats()` reports the entire shared budget rather than one Client's usage.
+
+| Field | Meaning |
 | --- | --- |
-| `ExecutionOptions.MaxConcurrent` | Positive maximum concurrently executing callbacks |
-| `ExecutionOptions.MaxQueued` | Non-negative waiting capacity; zero rejects work immediately when all slots are occupied |
-| `Options.Executor` | Optional shared query budget; nil preserves unrestricted execution |
-| `BatchOptions.Executor` | Optional budget around each actual bulk callback, after collection |
-| `MutationOptions.Executor` | Optional write budget; nil inherits the Client budget |
+| `Active` | Allocated slots, including callbacks that have not returned after cancellation |
+| `Queued` | Current waiters; briefly includes canceled work until cleanup finishes |
+| `Rejected` | Cumulative arrivals rejected with `ErrQueueFull` because capacity was full |
 
-Invalid capacities return `ErrInvalidExecutionOptions` from `NewExecutor`. Construct budgets with this constructor; the zero value is not a configured budget. Options are copied and capacities are immutable. An Executor owns no timers or goroutines and needs no `Close`. Clients and caller contexts retain lifecycle ownership.
+A slot handed to a waiter already counts as `Active`. In the quick start, `Active` is 1 while the first load is running and 0 after it finishes.
 
-## Admission, cancellation, and retries
+Client `Stats().Loads` counts logical per-key loads, including waiting or rejected loads. `Retries` and diagnostic `Attempts` count Client loader callbacks actually entered; rejection before the first invocation has zero attempts. Per-key Fetcher calls do not equal bulk backend calls. Mutations are not included in Client query statistics.
 
-- Fresh cache hits and same-key request joiners consume no additional slot.
-- Waiting callers receive slots in FIFO order. If both running and queue capacity are exhausted, admission returns `ErrQueueFull` without invoking the callback. Applications can detect it with `errors.Is`.
-- Client retries do not retry `ErrQueueFull`, including wrapped errors returned by batchers or application fetchers. `RetryIf` is not called for this error.
-- Each query loader attempt acquires a slot. The slot is released before retry predicates and backoff; a subsequent attempt competes for capacity again.
-- Queue time counts toward the query's existing overall timeout or caller deadline. Queued caller cancellation, `Client.Cancel`, and Client shutdown remove waiting query work.
-- Cancellation does not release a running slot until its callback actually returns. Otherwise an uncooperative callback could let actual concurrency exceed the budget.
-- Mutation holds capacity only for its write callback. It releases capacity before local synchronization and invalidation. Caller context deadlines apply; Client query timeout and retry defaults do not apply to writes.
-- Waiting work is visible as `Fetching` for queries and `Pending` for mutations. No additional queue status is introduced into existing snapshots.
+## Errors and limits
 
-## Batch placement and nested calls
+| Condition | Error |
+| --- | --- |
+| Non-positive `MaxConcurrent` or negative `MaxQueued` | `ErrInvalidExecutionOptions` |
+| Running and queue capacity both full | `ErrQueueFull` |
+| Context canceled or expired while queued | `context.Canceled` or `context.DeadlineExceeded` |
 
-When Client fetchers call `Batcher.Fetcher`, prefer configuring only `BatchOptions.Executor`. This allows independent keys to enter the collection window while limiting actual backend batch calls. `MaxBatchSize` continues to limit unique keys per batch, not callback concurrency.
+Executor limits simultaneous callbacks and waiting work, not requests per second. It provides no persistent job queue and does not bound cached bytes, subscriptions, keys in batch collection windows, or transient goroutines. Client settings still control cache capacity and retention.
 
-Multiple batchers can share one Executor. A rejected batch returns `ErrQueueFull` to all its keys. Closing a batcher or canceling all of a batch's waiters cancels that batch's queue wait.
+## Related guides
 
-Do not install the same Executor on both the outer Client and its Batcher: outer loads could hold all slots while waiting for an inner callback to acquire one. The same rule applies to recursive fetches inside a loader or mutator using the same budget. Put the budget at the backend boundary, or use independent budgets with an explicit dependency order. Limiting outer per-key fetchers can also reduce batch sizes.
-
-## Statistics and resource boundaries
-
-`Executor.Stats()` reports `Active`, `Queued`, and cumulative `Rejected` counts. Active includes acquired slots handed to queued callers and callbacks that have not returned after cancellation. Queued can briefly include canceled callers until cleanup executes. Counts belong to the shared Executor, not an individual Client.
-
-Client `Stats().Loads` still counts logical shared loads, including those waiting or rejected. `Retries` and diagnostic `Attempts` count callbacks actually entered at the Client boundary; a query rejected before its first attempt has zero attempts. A batch-fetcher invocation is not a bulk backend call. Mutation execution is not included in Client query statistics.
-
-The budget bounds callback concurrency and its admission queue. It does not bound cached bytes, subscriptions, the batch collection window, transient goroutines, or the cost of an individual callback. Continue configuring cache retention and honoring context cancellation.
-
-## Verification
-
-```sh
-go test -race ./... -run 'Test(Executor|Execution|BatcherExecution|MutationExecution)' -count=1
-```
-
-[Executor tests](../executor_test.go), [query integration](../execution_test.go), [batch integration](../batcher_execution_test.go), and [mutation integration](../mutation_execution_test.go) verify overload, FIFO order, cancellation races, shared budgets, batch placement, and release before synchronization or retry backoff.
+- [Cache and lifecycle](cache.en-US.md): load timeouts, retries, cache capacity, and cancellation.
+- [Automatic batch loading](batching.en-US.md): collect different keys into bulk backend calls.
+- [Mutations](mutations.en-US.md): apply write budgets and synchronize associated queries after success.

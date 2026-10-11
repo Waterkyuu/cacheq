@@ -2,28 +2,31 @@
 
 [English](execution.en-US.md) · [批量加载](batching.zh-CN.md) · [写入与关联失效](mutations.zh-CN.md)
 
-`Executor` 限制同时执行的回调数量和排队数量。访问同一后端的多个 Client、Mutation 句柄或 Batcher 可以共享一个实例。它不提供每秒请求速率限制、任务持久化或后台工作池。
+`Executor` 限制同时执行的加载或写入数量，并为等待执行的任务设置队列上限。它适用于保护数据库、HTTP 服务等并发容量有限的数据源。访问同一数据源的多个 Client、Mutation 或 Batcher 可以共享同一个 Executor。
 
-## 可运行示例
+## 快速开始
 
-在已导入 cacheq 的 Go 模块中保存以下程序，运行 `go run .`。
+以下示例只允许一个加载执行，不保留排队位置。商品 42 的加载占用名额期间，商品 43 的加载被拒绝；第一个加载完成后，名额被释放。
+
+将完整程序保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。示例通过 channel 控制第一个加载的完成时间，无需外部服务或依赖短暂的计时等待。
 
 ```go
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/Waterkyuu/cacheq"
 )
 
-// main shares a bounded executor with cached query loads.
+// main rejects a second product load while the only execution slot is occupied.
 func main() {
 	budget, err := cacheq.NewExecutor(cacheq.ExecutionOptions{
-		MaxConcurrent: 4,
-		MaxQueued:     16,
+		MaxConcurrent: 1,
+		MaxQueued:     0,
 	})
 	if err != nil {
 		panic(err)
@@ -33,70 +36,183 @@ func main() {
 		StaleTime: time.Minute,
 	})
 	defer client.Close()
-	value, err := cacheq.Fetch(
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	loadFirst := func(ctx context.Context) (string, error) {
+		close(started)
+		select {
+		case <-release:
+			return "product 42", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	first := cacheq.Query(client, "product:42", loadFirst)
+	defer first.Close()
+	<-started
+
+	_, err = cacheq.Fetch(
 		context.Background(),
 		client,
-		"answer",
-		func(context.Context) (int, error) { return 42, nil },
+		"product:43",
+		func(context.Context) (string, error) { return "product 43", nil },
 	)
+	fmt.Println("second rejected:", errors.Is(err, cacheq.ErrQueueFull))
+	fmt.Println("active:", budget.Stats().Active)
+
+	close(release)
+	value, err := cacheq.Fetch(context.Background(), client, "product:42", loadFirst)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(value)
-	fmt.Println(budget.Stats().Active, budget.Stats().Queued)
+	fmt.Println("first:", value)
+	stats := budget.Stats()
+	fmt.Printf("finished: active=%d queued=%d rejected=%d\n", stats.Active, stats.Queued, stats.Rejected)
 }
 ```
 
 预期输出：
 
 ```text
-42
-0 0
+second rejected: true
+active: 1
+first: product 42
+finished: active=0 queued=0 rejected=1
 ```
 
-## 配置与归属
+`Options.Executor` 将预算应用到 Client 的加载函数。第一个 `Query` 在后台加载，`started` 确保它已占用唯一名额。此时另一个键需要加载，但 `MaxQueued: 0` 不允许等待，所以 `Fetch` 返回 `ErrQueueFull`，不会调用商品 43 的加载函数。
 
-| 配置 | 契约 |
+关闭 `release` 后，第一个加载可以完成。最后的 `Fetch` 共用商品 42 的请求或缓存，不额外执行加载函数。`Rejected` 保留累计拒绝次数，因此结束后仍为 1。
+
+## API 片段前提
+
+以下片段放在返回 `error` 的业务函数中，并导入所用的标准库包。`budget` 是通过 `NewExecutor` 创建的预算；`ctx` 是非 nil 的调用者 context。批量示例还需要业务提供的 `loadProducts`，其签名在对应章节说明。各配置片段独立使用。
+
+## `NewExecutor`：设置并发与排队上限
+
+允许少量请求等待时，设置正数 `MaxQueued`：
+
+```go
+budget, err := cacheq.NewExecutor(cacheq.ExecutionOptions{
+	MaxConcurrent: 4,
+	MaxQueued:     16,
+})
+if err != nil {
+	return err
+}
+```
+
+这个配置最多允许 4 个回调同时执行，另外 16 个等待。运行名额用完后，新任务进入队列；队列也满时立即返回 `ErrQueueFull`。等待者按进入队列的顺序获得释放的名额。
+
+| `ExecutionOptions` 字段 | 约束 | 说明 |
+| --- | --- | --- |
+| `MaxConcurrent` | 必须大于 0 | 同时执行回调的数量上限 |
+| `MaxQueued` | 不能为负数 | 等待位置上限；0 表示没有名额时立即拒绝 |
+
+通过 `NewExecutor` 创建预算，不能使用未配置的零值。容量创建后不可修改。Executor 不拥有后台 goroutine 或定时器，无需调用 `Close`。
+
+## 多个 Client 共享预算
+
+将同一个 `budget` 传入多个 Client：
+
+```go
+first := cacheq.NewClient(cacheq.Options{Executor: budget})
+second := cacheq.NewClient(cacheq.Options{Executor: budget})
+defer first.Close()
+defer second.Close()
+```
+
+两个 Client 仍有各自的缓存，但执行名额来自同一个预算。快速开始的预算只有一个名额，因此两个 Client 合计也只能执行一个回调。分别创建两个 Executor 则会得到两组独立上限。
+
+应在应用入口按数据源创建并注入预算。关闭一个 Client 会取消它拥有的工作，不会关闭共享 Executor 或其他 Client。
+
+## 配置位置
+
+| 配置字段 | 限制范围 | 默认行为 |
+| --- | --- | --- |
+| `Options.Executor` | Client 每一次加载尝试 | nil，不限制执行 |
+| `MutationOptions.Executor` | Mutation 的业务写入回调 | nil，继承 Client 的 Executor |
+| `BatchOptions.Executor` | 收集完成后的实际批量回调 | nil，不限制执行 |
+
+缓存命中不执行加载函数，不占用名额。同键的多个调用共用一次加载，只占用一个名额。不同键的加载分别获取名额。
+
+Mutation 在业务写入回调结束后释放名额，再执行本地缓存同步和关联失效。显式设置 `MutationOptions.Executor` 可以让写入使用独立预算；nil 表示继承，不能用来禁用 Client 已配置的预算。
+
+## 与批量加载一起使用
+
+Client 通过 `Batcher.Fetcher` 加载时，应优先把预算配置在 `BatchOptions.Executor`，让不同键先收集成批次，再限制实际的后端调用。
+
+以下片段中的 `loadProducts` 由业务实现，签名为 `func(context.Context, []int) (map[int]cacheq.BatchResult[string], error)`。完整批量函数示例见[自动批量加载](batching.zh-CN.md)。
+
+```go
+products, err := cacheq.NewBatcher(ctx, loadProducts, cacheq.BatchOptions{
+	Wait:         2 * time.Millisecond,
+	MaxBatchSize: 100,
+	Executor:     budget,
+})
+if err != nil {
+	return err
+}
+defer products.Close()
+
+client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+defer client.Close()
+value, err := cacheq.Fetch(ctx, client, "product:42", products.Fetcher(42))
+if err != nil {
+	return err
+}
+fmt.Println(value)
+```
+
+`MaxBatchSize` 限制一批包含多少个唯一键，Executor 限制多少个批量回调同时执行。一个批次被拒绝时，其中所有键收到 `ErrQueueFull`，不会执行批量函数。
+
+不要给外层 Client 和它使用的 Batcher 配置同一个 Executor。外层加载可能已经占满名额，却又等待内部批量回调获得同一预算的名额，导致相互等待。加载或写入回调内部再调用使用同一预算的查询，也存在这个问题。优先在实际访问后端的一层设置预算；限制外层逐键加载还可能使收集到的批次变小。
+
+## 过载与重试
+
+通过 `errors.Is(err, cacheq.ErrQueueFull)` 判断预算已满。该错误意味着此层回调尚未执行，应用可以向调用者报告繁忙，或由上层安排稍后再次调用。
+
+Client 不自动重试 `ErrQueueFull`，也不会为它调用 `RetryIf`，包括批量函数或业务加载函数返回的包装错误。
+
+其他允许重试的查询错误仍遵循原有重试配置。每次尝试重新获取名额；一次回调结束后，在判断是否重试和等待重试之前释放名额，因此退避期间不会占用执行容量。
+
+## 取消与超时
+
+排队时间计入查询的整体超时。拥有加载的调用者取消、`Client.Cancel` 或 Client 关闭会取消相应排队工作。仅加入已有共享加载的调用者取消时，只结束自己的等待，不取消共享加载。
+
+回调开始运行后，只有真正返回才释放名额。context 取消不能强制终止忽略取消信号的函数，因此业务加载和写入函数仍需响应 context。
+
+Mutation 使用调用者 context 的截止时间，不继承 Client 的查询超时。批量加载保持自己的取消规则：关闭 Batcher，或某批次所有等待者都取消，会取消该批次的排队等待。单个等待者取消不会影响其他等待者。
+
+排队中的查询仍显示 `Fetching`，Mutation 显示 `Pending`，快照没有单独的排队状态。
+
+## `Stats`：查看执行与排队情况
+
+`budget.Stats()` 返回整个共享预算的统计，而不是某一个 Client 的统计。
+
+| 字段 | 含义 |
 | --- | --- |
-| `ExecutionOptions.MaxConcurrent` | 同时执行回调的正数上限 |
-| `ExecutionOptions.MaxQueued` | 非负排队容量；零表示名额耗尽时立即拒绝 |
-| `Options.Executor` | 可选的共享查询预算；nil 保留不限制执行的行为 |
-| `BatchOptions.Executor` | 收集完成后，对每次实际批量回调设置可选预算 |
-| `MutationOptions.Executor` | 可选的写入预算；nil 继承 Client 预算 |
+| `Active` | 已分配的执行名额，包括取消后尚未返回的回调 |
+| `Queued` | 当前等待数量；取消清理完成前可能短暂包含已取消任务 |
+| `Rejected` | 因容量已满而返回 `ErrQueueFull` 的累计次数 |
 
-非法容量使 `NewExecutor` 返回 `ErrInvalidExecutionOptions`。必须使用该构造函数；零值不是已配置的预算。配置会被复制，容量不能动态修改。Executor 不持有定时器或 goroutine，无需 `Close`。生命周期继续由 Client 和调用方 context 管理。
+名额移交给等待者后即计入 `Active`。快速开始中，第一个加载未结束时 `Active` 为 1；结束后为 0。
 
-## 准入、取消与重试
+Client 的 `Stats().Loads` 统计逐键逻辑加载，包括排队或被拒绝的加载。`Retries` 和诊断事件的 `Attempts` 统计实际进入的 Client 加载函数；首次调用前就被拒绝时，尝试数为 0。逐键 Fetcher 次数不等于批量后端调用次数，Mutation 也不计入 Client 查询统计。
 
-- 新鲜缓存命中和同键请求的加入者不额外占用名额。
-- 等待者按 FIFO 顺序获得名额。执行与排队容量均耗尽时，返回 `ErrQueueFull`，不调用回调。应用可使用 `errors.Is` 判断。
-- Client 不重试 `ErrQueueFull`，包括批量加载器或业务加载函数包装后的错误；不会为该错误调用 `RetryIf`。
-- 每次查询加载尝试单独获取名额，在执行重试判断和退避前释放。下一次尝试重新参与排队。
-- 排队时间计入查询现有整体超时或调用方截止时间。排队调用取消、`Client.Cancel` 和 Client 关闭会移除等待的查询工作。
-- 正在运行的回调必须真正返回后才释放名额。否则忽略取消的回调会使实际并发超过预算。
-- Mutation 仅在写入回调期间占用名额，在本地同步和失效前释放。写入使用调用方 context 截止时间，不继承 Client 的查询超时和重试默认值。
-- 等待执行时，查询仍显示 `Fetching`，Mutation 显示 `Pending`。现有快照不新增排队状态。
+## 错误与限制
 
-## 批量配置位置与嵌套调用
+| 条件 | 错误 |
+| --- | --- |
+| `MaxConcurrent` 非正数或 `MaxQueued` 为负数 | `ErrInvalidExecutionOptions` |
+| 执行名额与排队容量均已满 | `ErrQueueFull` |
+| 排队期间 context 取消或超时 | `context.Canceled` 或 `context.DeadlineExceeded` |
 
-Client 加载函数使用 `Batcher.Fetcher` 时，优先只配置 `BatchOptions.Executor`。这样不同键可以进入收集窗口，同时实际后端批量调用受到限制。`MaxBatchSize` 继续限制单批唯一键数量，不限制回调并发。
+Executor 限制回调的同时执行数量和等待数量，不限制每秒请求数。它不提供持久化任务队列，也不限制缓存字节数、订阅数量、批量收集窗口中的键数或瞬时 goroutine 数。缓存容量和保留时间仍由 Client 配置管理。
 
-多个 Batcher 可以共享一个 Executor。批次被拒绝时，其中所有键收到 `ErrQueueFull`。关闭 Batcher，或取消某批次全部等待者，会取消该批次的排队等待。
+## 相关文档
 
-不要在外层 Client 和它使用的 Batcher 同时配置同一个 Executor：外层加载可能占满名额，并等待需要同一名额的内部批量回调。加载函数或写入函数递归调用使用相同预算的查询，也有相同限制。应在实际后端边界配置预算，或使用具有明确依赖顺序的独立预算。限制外层逐键加载也可能缩小批次大小。
-
-## 统计与资源边界
-
-`Executor.Stats()` 返回 `Active`、`Queued` 和累计 `Rejected`。Active 包含已经移交给等待者的名额，以及取消后仍未返回的回调。Queued 在清理执行前可能短暂包含已取消调用。统计属于共享 Executor，不属于单个 Client。
-
-Client 的 `Stats().Loads` 仍统计逻辑共享加载，包括等待或被拒绝的加载。`Retries` 和诊断 `Attempts` 按 Client 边界实际进入的加载回调计数；首次尝试前被拒绝的查询，其尝试数为零。批量 Fetcher 的调用不等于实际后端批次。Mutation 不计入 Client 查询统计。
-
-预算限制回调并发和其准入队列，不限制缓存字节数、订阅数量、批量收集窗口、瞬时 goroutine 数或单次回调成本。仍需配置缓存保留策略并响应 context 取消。
-
-## 验证
-
-```sh
-go test -race ./... -run 'Test(Executor|Execution|BatcherExecution|MutationExecution)' -count=1
-```
-
-[Executor 测试](../executor_test.go)、[查询集成](../execution_test.go)、[批量集成](../batcher_execution_test.go)和[Mutation 集成](../mutation_execution_test.go)验证过载、FIFO、取消竞争、共享预算、批量配置位置，以及在同步或重试退避前释放名额。
+- [缓存与生命周期](cache.zh-CN.md)：配置加载超时、重试、缓存容量和取消。
+- [自动批量加载](batching.zh-CN.md)：收集不同键并执行批量后端请求。
+- [写入与关联失效](mutations.zh-CN.md)：为写入设置预算，并在成功后同步关联查询。
