@@ -178,22 +178,35 @@ func (h *QueryHandle[V]) activeLocked() error {
 
 // Fetch waits for fresh data without owning a long-lived subscription.
 // The result type is inferred from fetch, allowing one client to serve unrelated data types.
-func Fetch[V any](ctx context.Context, client *Client, key any, fetch Fetcher[V]) (V, error) {
+// Optional per-call overrides are copied; only the last options value overrides Client defaults.
+// Ordinary freshness is evaluated independently; explicit loader deadlines stay authoritative.
+// Joining in-flight work preserves its initiator's loader, retries, and timeout.
+// Canceling ctx stops this caller's wait; a configured timeout applies only to loads it starts.
+func Fetch[V any](
+	ctx context.Context,
+	client *Client,
+	key any,
+	fetch Fetcher[V],
+	options ...FetchOptions,
+) (V, error) {
+	policy := client.options
+	for _, option := range options {
+		policy = resolvePolicy(client.options, option)
+	}
 	value, err := client.fetch(
 		ctx,
 		key,
 		reflect.TypeFor[V](),
-		eraseFetcher(fetch, client.options),
+		eraseFetcher(fetch, policy),
 		false,
 		nil,
 	)
 	return typedValue[V](value), err
 }
 
-// FetchWithOptions waits for data using this call's copied overrides of Client defaults.
-// Ordinary freshness is evaluated independently; explicit loader deadlines stay authoritative.
-// Joining in-flight work preserves its initiator's loader, retries, and timeout.
-// Canceling ctx stops this caller's wait; a configured timeout applies only to loads it starts.
+// FetchWithOptions is a compatibility wrapper for callers predating optional Fetch arguments.
+//
+// Deprecated: pass FetchOptions directly to Fetch instead.
 func FetchWithOptions[V any](
 	ctx context.Context,
 	client *Client,
@@ -201,15 +214,7 @@ func FetchWithOptions[V any](
 	fetch Fetcher[V],
 	options FetchOptions,
 ) (V, error) {
-	value, err := client.fetch(
-		ctx,
-		key,
-		reflect.TypeFor[V](),
-		eraseFetcher(fetch, resolvePolicy(client.options, options)),
-		false,
-		nil,
-	)
-	return typedValue[V](value), err
+	return Fetch(ctx, client, key, fetch, options)
 }
 
 // FetchWithExpiry loads data with an absolute freshness deadline, preserving the age of restored data.

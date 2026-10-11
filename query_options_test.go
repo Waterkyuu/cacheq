@@ -150,6 +150,78 @@ func TestQueryOptionsFreshness(t *testing.T) {
 	}
 }
 
+// TestFetchOptionsSelection keeps omitted defaults and lets only the last options value affect a call.
+func TestFetchOptionsSelection(t *testing.T) {
+	hour, zero := time.Hour, time.Duration(0)
+	retries := 0
+	for _, tc := range []struct {
+		// name identifies the omitted, single, or repeated configuration.
+		name string
+		// options contains the complete overrides passed to Fetch.
+		options []FetchOptions
+		// cached indicates whether the final freshness policy reuses the stored value.
+		cached bool
+	}{
+		{name: "omitted"},
+		{name: "empty", options: []FetchOptions{{}}},
+		{name: "single", options: []FetchOptions{{StaleTime: &hour}}, cached: true},
+		{name: "last fresh", options: []FetchOptions{{StaleTime: &zero}, {StaleTime: &hour}}, cached: true},
+		{name: "last stale", options: []FetchOptions{{StaleTime: &hour}, {StaleTime: &zero}}},
+		{name: "last empty", options: []FetchOptions{{StaleTime: &hour}, {}}},
+		{name: "last inherits freshness", options: []FetchOptions{{StaleTime: &hour}, {Retry: &retries}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, now := newAgeClient(t, Options{StaleTime: time.Minute})
+			if err := Set(c, "users", 7); err != nil {
+				t.Fatal(err)
+			}
+			now.Store(int64(time.Minute))
+			var calls int
+			value, err := Fetch(
+				context.Background(),
+				c,
+				"users",
+				func(context.Context) (int, error) {
+					calls++
+					return 8, nil
+				},
+				tc.options...,
+			)
+			want, wantCalls := 8, 1
+			if tc.cached {
+				want, wantCalls = 7, 0
+			}
+			if err != nil || value != want || calls != wantCalls {
+				t.Fatalf("value=%d err=%v calls=%d, want %d and %d calls", value, err, calls, want, wantCalls)
+			}
+		})
+	}
+}
+
+// TestFetchWithOptionsCompatibility preserves the published signature and per-call freshness override.
+func TestFetchWithOptionsCompatibility(t *testing.T) {
+	c, now := newAgeClient(t, Options{StaleTime: time.Minute})
+	if err := Set(c, "users", 7); err != nil {
+		t.Fatal(err)
+	}
+	now.Store(int64(time.Minute))
+	hour := time.Hour
+	legacy := FetchWithOptions[int]
+	value, err := legacy(
+		context.Background(),
+		c,
+		"users",
+		nil,
+		FetchOptions{StaleTime: &hour},
+	)
+	if err != nil || value != 7 {
+		t.Fatalf("legacy cache lookup = %d, %v", value, err)
+	}
+	if !Get[int](c, "users").Stale {
+		t.Fatal("legacy override changed Client defaults")
+	}
+}
+
 // TestFetchOptionsFreshness applies per-call cache decisions without registering policies on the key.
 func TestFetchOptionsFreshness(t *testing.T) {
 	c, now := newAgeClient(t, Options{StaleTime: time.Minute})
@@ -163,7 +235,7 @@ func TestFetchOptionsFreshness(t *testing.T) {
 		t.Fatal(err)
 	}
 	now.Store(int64(time.Minute))
-	value, err := FetchWithOptions(context.Background(), c, "users", fetch, FetchOptions{StaleTime: &hour})
+	value, err := Fetch(context.Background(), c, "users", fetch, FetchOptions{StaleTime: &hour})
 	if err != nil || value != 1 || calls != 1 {
 		t.Fatalf("longer policy = %d, %v; calls=%d", value, err, calls)
 	}
@@ -171,14 +243,14 @@ func TestFetchOptionsFreshness(t *testing.T) {
 	if err != nil || value != 2 || calls != 2 {
 		t.Fatalf("default policy = %d, %v; calls=%d", value, err, calls)
 	}
-	value, err = FetchWithOptions(context.Background(), c, "users", fetch, FetchOptions{StaleTime: &zero})
+	value, err = Fetch(context.Background(), c, "users", fetch, FetchOptions{StaleTime: &zero})
 	if err != nil || value != 3 || calls != 3 {
 		t.Fatalf("zero freshness = %d, %v; calls=%d", value, err, calls)
 	}
 	if Get[int](c, "users").Stale {
 		t.Fatal("the last caller's zero freshness changed Client freshness")
 	}
-	value, err = FetchWithOptions[int](context.Background(), c, "users", nil, FetchOptions{StaleTime: &hour})
+	value, err = Fetch[int](context.Background(), c, "users", nil, FetchOptions{StaleTime: &hour})
 	if err != nil || value != 3 {
 		t.Fatalf("cache-only lookup = %d, %v", value, err)
 	}
@@ -210,7 +282,7 @@ func TestQueryOptionsExplicitExpiry(t *testing.T) {
 		}
 	}
 	now.Store(int64(2 * time.Minute))
-	if _, err := FetchWithOptions[int](
+	if _, err := Fetch[int](
 		context.Background(), c, "explicit", nil, FetchOptions{StaleTime: &hour},
 	); !errors.Is(err, ErrNoFetcher) {
 		t.Fatalf("expired explicit deadline = %v", err)
@@ -285,7 +357,7 @@ func TestQueryOptionsRetries(t *testing.T) {
 				}
 				var err error
 				if api == "fetch" {
-					_, err = FetchWithOptions(context.Background(), c, "users", fetch, tc.options)
+					_, err = Fetch(context.Background(), c, "users", fetch, tc.options)
 				} else {
 					handle := Query(c, "users", fetch, QueryOptions{
 						Disable:    true,
@@ -358,7 +430,7 @@ func TestQueryOptionsTimeout(t *testing.T) {
 				var deadline time.Time
 				var err error
 				if api == "fetch" {
-					deadline, err = FetchWithOptions(
+					deadline, err = Fetch(
 						context.Background(),
 						c,
 						"users",
@@ -394,7 +466,7 @@ func TestQueryOptionsTimeout(t *testing.T) {
 	callerDeadline := time.Now().Add(time.Minute)
 	ctx, cancel := context.WithDeadline(context.Background(), callerDeadline)
 	defer cancel()
-	deadline, err := FetchWithOptions(ctx, c, "users", func(ctx context.Context) (time.Time, error) {
+	deadline, err := Fetch(ctx, c, "users", func(ctx context.Context) (time.Time, error) {
 		deadline, _ := ctx.Deadline()
 		return deadline, nil
 	}, FetchOptions{Timeout: &zero})
@@ -444,7 +516,7 @@ func TestQueryOptionsSharedRequest(t *testing.T) {
 	t.Cleanup(joiner.Close)
 	result := make(chan error, 1)
 	go func() {
-		_, err := FetchWithOptions(context.Background(), c, "users", joinFetch, FetchOptions{
+		_, err := Fetch(context.Background(), c, "users", joinFetch, FetchOptions{
 			Timeout: &zero, RetryIf: func(error) bool { return false },
 		})
 		result <- err
@@ -474,7 +546,7 @@ func TestQueryOptionsRetryCallback(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var calls, predicates, delays int
-	_, err := FetchWithOptions(ctx, c, "users", func(context.Context) (int, error) {
+	_, err := Fetch(ctx, c, "users", func(context.Context) (int, error) {
 		calls++
 		return 0, errors.New("offline")
 	}, FetchOptions{

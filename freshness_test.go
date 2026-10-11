@@ -101,7 +101,7 @@ func TestFetchAndQueryFreshness(t *testing.T) {
 				var value int
 				var err error
 				if api == "fetch" {
-					value, err = FetchWithOptions(
+					value, err = Fetch(
 						context.Background(),
 						client,
 						"a",

@@ -404,7 +404,7 @@ func TestBatcherFetcherLocalWrite(t *testing.T) {
 	}
 }
 
-// TestBatcherFetcherConsumerOptions preserves independent freshness decisions through FetchWithOptions.
+// TestBatcherFetcherConsumerOptions preserves independent freshness decisions through Fetch.
 func TestBatcherFetcherConsumerOptions(t *testing.T) {
 	client := NewClient(Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
@@ -425,7 +425,7 @@ func TestBatcherFetcherConsumerOptions(t *testing.T) {
 		}
 	}
 	var immediate time.Duration
-	value, err := FetchWithOptions(
+	value, err := Fetch(
 		context.Background(),
 		client,
 		key,
