@@ -32,18 +32,12 @@ consumers keep their own typed handles.
 
 ## Features
 
-- One shared client caches different result types: details, lists, and configuration.
-- Each query retains static typing; incompatible types for a key return an error.
-- One `Query` entry point supplies state, updates, enablement, and manual refresh.
-- Freshness, background refresh, same-key request sharing, retries, and load timeouts.
-- Per-consumer freshness, retry filtering, and timeout overrides through query and fetch options.
-- Single-key, mixed-type batch, and predicate invalidation with optional deferred refresh.
-- Read cached state by key with `client.Get(key)`, or use `cacheq.Get[V]` for typed access.
-- Local writes, prefetching, cancellation, and inactive cache cleanup.
-- Concurrent loads for different keys can share a business-supplied bulk callback.
-- Conflict-safe local updates, typed mutations, and associated query invalidation.
-- Shared execution budgets bound concurrent query, batch, and mutation callbacks.
-- Per-key diagnostic events explain cache decisions, shared loads, retries, and removal causes.
+- Type-safe shared queries and caching.
+- Cache policies and lifecycle management.
+- Cache updates, mutations, and invalidation.
+- Automatic batch loading.
+- Shared execution budgets.
+- Query observability.
 
 ## Install
 
