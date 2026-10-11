@@ -31,6 +31,9 @@ type MutationOptions[I, V any] struct {
 	// InvalidateOptions selects whether associated observed queries refresh in the background.
 	// It does not wait for refresh completion or change in-flight invalidation semantics.
 	InvalidateOptions InvalidateOptions
+	// Executor optionally overrides the Client budget for the business write; nil inherits it.
+	// Capacity is released before OnSuccess and invalidation, which may start their own loads.
+	Executor *Executor
 }
 
 // MutationResult separates a committed business result from failures in subsequent cache synchronization.

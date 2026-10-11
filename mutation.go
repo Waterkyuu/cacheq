@@ -51,6 +51,9 @@ func Mutation[I, V any](
 	for _, option := range options {
 		h.options = option
 	}
+	if h.options.Executor == nil {
+		h.options.Executor = client.options.Executor
+	}
 	if client.ctx.Err() != nil {
 		h.err = ErrClosed
 	} else if write == nil {
@@ -101,7 +104,7 @@ func (h *MutationHandle[I, V]) Mutate(ctx context.Context, input I) (MutationRes
 	}
 	err := ctx.Err()
 	if err == nil {
-		result.Data, err = h.write(ctx, input)
+		result.Data, err = h.execute(ctx, input)
 	}
 	if err == nil {
 		result.SyncErr = h.synchronize(input, result.Data)
@@ -117,6 +120,17 @@ func (h *MutationHandle[I, V]) Mutate(ctx context.Context, input I) (MutationRes
 		h.publishLocked()
 	}
 	return result, err
+}
+
+// execute holds budget capacity only while the business callback is running.
+func (h *MutationHandle[I, V]) execute(ctx context.Context, input I) (V, error) {
+	release, err := h.options.Executor.acquire(ctx)
+	if err != nil {
+		var zero V
+		return zero, err
+	}
+	defer release()
+	return h.write(ctx, input)
 }
 
 // admitLocked validates handle ownership without acquiring the Client lock.

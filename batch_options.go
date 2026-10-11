@@ -24,6 +24,9 @@ type BatchOptions struct {
 	// MaxBatchSize is the positive limit of unique keys per callback.
 	// Reaching it dispatches immediately, without waiting for the collection window.
 	MaxBatchSize int
+	// Executor optionally bounds active and queued bulk callbacks, not individual keys.
+	// Nil leaves batch execution unrestricted. Share a budget across batchers for one backend.
+	Executor *Executor
 }
 
 // BatchResult represents a value and an optional application error for one requested key.

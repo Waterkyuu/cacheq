@@ -11,7 +11,7 @@ import (
 
 // Batcher groups independent loads and shares in-flight results without retaining a cache.
 // Construct it with NewBatcher, reuse it within one data and authorization scope, and call Close.
-// Distinct batches may execute concurrently; MaxBatchSize limits keys, not callback concurrency.
+// Distinct batches may execute concurrently; Executor bounds callbacks, while MaxBatchSize limits keys.
 type Batcher[K comparable, V any] struct {
 	// mu protects pending loads, the collection window, and lifecycle transitions.
 	mu sync.Mutex
@@ -226,7 +226,7 @@ func (b *Batcher[K, V]) run(ctx context.Context, group *batchGroup[K, V]) {
 	results := make(map[K]BatchResult[V])
 	err := ctx.Err()
 	if err == nil {
-		results, err = b.load(ctx, keys)
+		results, err = b.call(ctx, keys)
 	}
 	// Formatting a missing key can invoke an application's String or Format method.
 	// Match outcomes outside mu so those methods can safely reenter the scheduler.
@@ -255,6 +255,16 @@ func (b *Batcher[K, V]) run(ctx context.Context, group *batchGroup[K, V]) {
 		}
 		b.finishLocked(item, result)
 	}
+}
+
+// call acquires capacity for the bulk callback after collection without charging per-key waiters.
+func (b *Batcher[K, V]) call(ctx context.Context, keys []K) (map[K]BatchResult[V], error) {
+	release, err := b.options.Executor.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return b.load(ctx, keys)
 }
 
 // hasActiveWaiterLocked distinguishes live callers from canceled waits awaiting deferred cleanup.
