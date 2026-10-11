@@ -95,6 +95,14 @@ type QueryOptions struct {
 	DisableExecutor bool
 }
 
+// lastQueryOptions selects one complete override value without merging separate arguments.
+func lastQueryOptions(options []QueryOptions) QueryOptions {
+	if len(options) == 0 {
+		return QueryOptions{}
+	}
+	return options[len(options)-1]
+}
+
 // resolvePolicy copies scalar overrides while sharing callbacks and the selected execution budget.
 func resolvePolicy(options Options, policy QueryOptions) Options {
 	if policy.StaleTime != nil {

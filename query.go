@@ -42,18 +42,21 @@ type QueryHandle[V any] struct {
 // Invalid keys, incompatible result types, and nil fetchers are reported through Snapshot and Updates.
 // Disabled handles still receive shared updates and may explicitly Refetch. Close releases the subscription.
 func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOptions) *QueryHandle[V] {
-	enabled := true
-	policy := client.options
-	for _, option := range options {
-		// A freshness-only override must not disable loading just because enablement was omitted.
-		enabled = !option.Disable
-		policy = resolvePolicy(client.options, option)
-	}
+	definition := QueryDefinition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
+	return query(client, definition)
+}
+
+// query registers a typed subscription and its definition's labels before starting automatic work.
+func query[V any](client *Client, definition QueryDefinition[V]) *QueryHandle[V] {
+	key := definition.Key
+	enabled := !definition.Options.Disable
+	request := definition.request(client.options, TriggerQuery)
+	policy := request.options
 	handle := &QueryHandle[V]{client: client, key: key, updates: make(chan Snapshot[V], 1)}
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	handle.err = client.checkLocked(key, reflect.TypeFor[V]())
-	if handle.err == nil && fetch == nil {
+	if handle.err == nil && definition.Fetcher == nil {
 		handle.err = ErrNoFetcher
 	}
 	if handle.err != nil {
@@ -63,8 +66,7 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOpt
 	}
 	// Bind before registering a typed publisher so no concurrent writer can install another type.
 	_ = client.bindLocked(key, reflect.TypeFor[V]())
-	request := eraseFetcher(fetch, policy)
-	request.trigger = TriggerQuery
+	client.registerTagsLocked(key, request.tags)
 	observer := &subscription{
 		enabled: enabled,
 		request: request,
@@ -190,19 +192,8 @@ func Fetch[V any](
 	fetch Fetcher[V],
 	options ...QueryOptions,
 ) (V, error) {
-	policy := client.options
-	for _, option := range options {
-		policy = resolvePolicy(client.options, option)
-	}
-	value, err := client.fetch(
-		ctx,
-		key,
-		reflect.TypeFor[V](),
-		eraseFetcher(fetch, policy),
-		false,
-		nil,
-	)
-	return typedValue[V](value), err
+	definition := QueryDefinition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
+	return definition.Fetch(ctx, client)
 }
 
 // FetchWithOptions is a compatibility wrapper for callers predating optional Fetch arguments.
@@ -248,21 +239,8 @@ func Prefetch[V any](
 	fetch Fetcher[V],
 	options ...QueryOptions,
 ) error {
-	policy := client.options
-	for _, option := range options {
-		policy = resolvePolicy(client.options, option)
-	}
-	request := eraseFetcher(fetch, policy)
-	request.trigger = TriggerPrefetch
-	_, err := client.fetch(
-		ctx,
-		key,
-		reflect.TypeFor[V](),
-		request,
-		false,
-		nil,
-	)
-	return err
+	definition := QueryDefinition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
+	return definition.Prefetch(ctx, client)
 }
 
 // Get reads cached state without requiring a result type, starting a request, or creating a subscription.
@@ -313,7 +291,7 @@ func (c *Client) setLocked(key, value any, typ reflect.Type) {
 	c.cancelLocked(key, ReasonSet)
 	now := c.options.Clock()
 	cached := entry{
-		typ: typ, value: value, hasData: true, updatedAt: now,
+		typ: typ, value: value, hasData: true, updatedAt: now, tags: c.entries[key].tags,
 		expiresAt: c.limitExpiry(now, now.Add(c.options.StaleTime)), ordinary: true,
 	}
 	c.advanceRevisionLocked(&cached)
@@ -366,6 +344,7 @@ func (c *Client) fetch(
 			countedLookup = true
 		}
 		if !force && fresh {
+			c.registerTagsLocked(key, request.tags)
 			c.emitEventLocked(
 				Event{Key: key, Kind: EventCacheHit, Trigger: request.trigger, Reason: ReasonFresh, Err: cached.err},
 			)
@@ -382,6 +361,7 @@ func (c *Client) fetch(
 			c.mu.Unlock()
 			return nil, err
 		}
+		c.registerTagsLocked(key, request.tags)
 		if force {
 			cached = c.entries[key]
 			cached.expiresAt = time.Time{}

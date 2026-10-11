@@ -3,12 +3,15 @@ package cacheq
 import "fmt"
 
 // QueryFilter selects existing cached, loading, or subscribed keys for Client operations.
-// Keys and Predicate are combined with AND. The zero value selects all existing queries.
+// Keys, Tags, and Predicate are combined with AND. The zero value selects all existing queries.
 // Selection does not create missing keys, change loading policy, or own query lifetimes.
 type QueryFilter struct {
 	// Keys limits selection to exact comparable keys, preserving their first-occurrence order.
 	// Nil imposes no key restriction; a non-nil empty slice selects nothing.
 	Keys []any
+	// Tags requires at least one matching registered label, using exact string equality.
+	// Nil imposes no tag restriction; a non-nil empty slice selects nothing.
+	Tags []string
 	// Predicate further restricts keys and runs once per candidate outside the Client lock.
 	// Nil accepts every candidate. The caller owns synchronization of captured mutable state.
 	Predicate func(key any) bool
@@ -63,8 +66,10 @@ func (c *Client) querySelectionLocked(target any) (querySelection, error) {
 		return querySelection{}, ErrClosed
 	}
 	var selection querySelection
+	var tags []string
 	switch selected := target.(type) {
 	case QueryFilter:
+		tags = selected.Tags
 		selection = querySelection{keys: selected.Keys, predicate: selected.Predicate, existingOnly: true}
 		if selected.Keys == nil {
 			selection.keys = c.queryKeysLocked()
@@ -90,6 +95,9 @@ func (c *Client) querySelectionLocked(target any) (querySelection, error) {
 		}
 		seen[key] = struct{}{}
 		if selection.existingOnly && !c.hasQueryLocked(key) {
+			continue
+		}
+		if tags != nil && !matchesQueryTags(c.entries[key].tags, tags) {
 			continue
 		}
 		keys = append(keys, key)

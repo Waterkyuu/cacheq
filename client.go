@@ -56,6 +56,8 @@ type Client struct {
 
 // entry retains one typed result, including stale data and the latest load error.
 type entry struct {
+	// tags retains the union of labels registered for this key until its query state is released.
+	tags []string
 	// revision changes when data or its invalidation state is replaced.
 	revision uint64
 	// typ binds this key to one static result type until its state and subscriptions are released.
@@ -80,6 +82,8 @@ type entry struct {
 
 // queryRequest owns an erased loader and the initiating consumer's copied request policy.
 type queryRequest struct {
+	// tags owns copied labels supplied by a definition; admission merges them into the shared entry.
+	tags []string
 	// load produces data and an optional explicit expiration outside the client lock.
 	load Loader[any]
 	// options supplies the initiator's retry, timeout, and ordinary freshness settings.
@@ -525,7 +529,7 @@ func (c *Client) discardLocked(key any, reason EventReason) {
 	cached := c.entries[key]
 	c.forgetCapacityLocked(key)
 	if len(c.observers[key]) > 0 || c.pending[key] != nil {
-		c.entries[key] = entry{typ: c.entries[key].typ}
+		c.entries[key] = entry{typ: cached.typ, tags: cached.tags}
 	} else {
 		delete(c.entries, key)
 	}
