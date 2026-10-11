@@ -79,6 +79,11 @@ export default defineConfig({
 					translations: { "zh-CN": "失效与刷新" },
 				},
 				{
+					slug: "docs/query-filters",
+					label: "Query filters",
+					translations: { "zh-CN": "统一查询筛选" },
+				},
+				{
 					slug: "docs/observability",
 					label: "Observability",
 					translations: { "zh-CN": "可观测性" },

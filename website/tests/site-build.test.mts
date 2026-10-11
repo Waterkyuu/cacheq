@@ -55,8 +55,8 @@ test("every published page has server-rendered content and working internal link
 	const files = await htmlFiles(build);
 	assert.equal(
 		files.filter((file) => file.endsWith("index.html")).length,
-		30,
-		"Each language must publish one homepage and fourteen guides without fallback duplicates",
+		32,
+		"Each language must publish one homepage and fifteen guides without fallback duplicates",
 	);
 	for (const file of files) {
 		const html = await readFile(file, "utf8");
@@ -78,6 +78,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			"docs/",
 			"docs/queries/",
 			"docs/query-options/",
+			"docs/query-filters/",
 			"docs/cache/",
 			"docs/invalidation/",
 			"docs/observability/",
@@ -121,7 +122,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			}
 		}
 	}
-	assert.equal(descriptions.size, 30);
+	assert.equal(descriptions.size, 32);
 	assert.ok((await readFile(path.join(build, "cacheq.png"))).length > 0);
 });
 
@@ -158,6 +159,7 @@ test("Go search results resolve to published sections and public source declarat
 		"RefreshResult",
 		"ErrRefreshInvalidated",
 		"ErrRefreshSuperseded",
+		"QueryFilter",
 	]) {
 		assert.ok(
 			index.some((record) => record.title === declaration),
@@ -167,6 +169,7 @@ test("Go search results resolve to published sections and public source declarat
 	for (const locale of ["en", "zh-CN"]) {
 		const prefix = locale === "en" ? "" : "zh-CN/";
 		for (const [slug, declaration] of [
+			["query-filters", "QueryFilter"],
 			["updates", "ErrUpdateConflict"],
 			["invalidation", "InvalidateAndWait"],
 			["mutations", "SyncErr"],
@@ -222,6 +225,7 @@ test("new feature guides are discoverable and render the maintained API document
 		const queries = await readFile(path.join(build, prefix, "docs/queries/index.html"), "utf8");
 		for (const [slug, declarations] of [
 			["query-options", ["QueryOptions", "QueryDefinition", "Disable", "Prefetch"]],
+			["query-filters", ["QueryFilter", "Predicate", "InvalidateAndWait", "Cancel", "Remove"]],
 			["events", ["SubscribeEvents", "EventResultDiscarded", "Dropped()"]],
 			["updates", ["Update", "ErrUpdateConflict", "ErrNoData"]],
 			["mutations", ["Mutation", "SyncErr", "ErrMutationBusy", "OnSuccess", "InvalidateAndWait"]],

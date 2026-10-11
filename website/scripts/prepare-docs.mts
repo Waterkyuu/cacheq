@@ -51,6 +51,16 @@ export const chapters: Chapter[] = [
 		},
 	},
 	{
+		id: "query-filters",
+		zh: "统一查询筛选",
+		en: "Query filters",
+		description: {
+			en: "Reuse cacheq QueryFilter selections across invalidation, awaited refresh, cancellation, and removal in Go. Combine exact keys and predicates with tenant-scoped query keys.",
+			"zh-CN":
+				"在 Go 中通过 cacheq QueryFilter 为失效、等待刷新、取消和删除复用同一组查询筛选，结合精确键、条件函数和包含租户范围的查询键。",
+		},
+	},
+	{
 		id: "observability",
 		zh: "可观测性",
 		en: "Observability",

@@ -4,7 +4,7 @@
 
 Invalidation retains data but marks it stale. After updating a user, detail and list results can become stale together even though they return `User` and `[]User` respectively.
 
-`Invalidate` accepts three target forms: pass one key for an exact match, a `[]any` list for explicit keys, or a `func(any) bool` predicate to select existing keys. Options are optional; when multiple options are supplied, the last one wins. Only `[]any` is treated as a batch, so convert other slice types explicitly. Nil targets and invalid keys return `ErrInvalidKey`; empty or nil `[]any` batches do nothing.
+`Invalidate` accepts an exact key, a `[]any` list, a `func(any) bool` predicate, or a reusable `QueryFilter`. [Query filters](query-filters.en-US.md) combine exact keys and predicates and also apply to waiting for refresh, cancellation, and removal. Options are optional; when multiple options are supplied, the last one wins. Only `[]any` is treated as a batch, so convert other slice types explicitly. Nil targets and invalid keys return `ErrInvalidKey`; empty or nil `[]any` batches do nothing.
 
 ## Quick start
 
