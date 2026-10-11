@@ -2,70 +2,41 @@
 
 [简体中文](query-options.zh-CN.md)
 
-`QueryOptions` overrides client defaults for an individual `Query` handle. Use it when consumers share a key but need different freshness, retry, or timeout policies. Pass optional `FetchOptions` directly to `Fetch` to override the same settings on an imperative read.
+`QueryOptions` configures one `Query` handle; `FetchOptions` configures one `Fetch` call. Both override Client defaults for freshness, retries, and timeouts. `QueryOptions` additionally provides `Disable` to control automatic loading.
 
 ## Quick start
 
-Save this program as `main.go` in a module importing cacheq, then run `go run .`. It uses no network service and does not sleep. Both consumers share one value, but disagree about freshness. The first load retries once after a transient error.
+Append options to the call. This complete example gives `Query` and `Fetch` a one-hour freshness window while leaving the Client's one-minute default unchanged.
+
+Save the program as `main.go` in a module importing cacheq, then run `go run .`.
 
 ```go
 package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/Waterkyuu/cacheq"
 )
 
-// main demonstrates shared data with independent freshness and a filtered retry policy.
+// main applies the same freshness override to a query handle and a Fetch call.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{
-		StaleTime: time.Minute,
-		Retry:     2,
-		Timeout:   10 * time.Second,
-		Clock:     func() time.Time { return time.Unix(0, 0) },
-	})
+	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	defer client.Close()
-
-	transient := errors.New("temporarily unavailable")
-	var calls atomic.Int32
 	load := func(context.Context) (string, error) {
-		if calls.Add(1) == 1 {
-			return "", transient
-		}
 		return "hello", nil
 	}
+	hour := time.Hour
 
-	hour, immediate, timeout := time.Hour, time.Duration(0), 3*time.Second
-	retries := 1
-	steady := cacheq.Query(
+	query := cacheq.Query(
 		client,
 		"greeting",
 		load,
-		cacheq.QueryOptions{
-			StaleTime:  &hour,
-			Retry:      &retries,
-			RetryIf:    func(err error) bool { return errors.Is(err, transient) },
-			RetryDelay: func(int) time.Duration { return 0 },
-			Timeout:    &timeout,
-		},
+		cacheq.QueryOptions{StaleTime: &hour},
 	)
-	defer steady.Close()
-
-	live := cacheq.Query(
-		client,
-		"greeting",
-		load,
-		cacheq.QueryOptions{
-			Disable:   true,
-			StaleTime: &immediate,
-		},
-	)
-	defer live.Close()
+	defer query.Close()
 
 	value, err := cacheq.Fetch(
 		context.Background(),
@@ -78,9 +49,6 @@ func main() {
 		panic(err)
 	}
 	fmt.Println(value)
-	fmt.Printf("steady stale=%t; live stale=%t\n", steady.Snapshot().Stale, live.Snapshot().Stale)
-	stats := client.Stats()
-	fmt.Printf("loads=%d; retries=%d\n", stats.Loads, stats.Retries)
 }
 ```
 
@@ -88,65 +56,94 @@ Expected output:
 
 ```text
 hello
-steady stale=false; live stale=true
-loads=1; retries=1
 ```
 
-## `Fetch`: optional per-call configuration
+`Query` accepts `QueryOptions`, and `Fetch` accepts `FetchOptions`. The example's calls share the cache and any active request for `"greeting"`. The `StaleTime` overrides change only their respective freshness decisions. Unset retry and timeout fields continue to use Client defaults.
 
-Without options, `Fetch(ctx, client, key, load)` uses Client defaults. Append `FetchOptions` to the same entry point to override them, as with `StaleTime: &hour` in the quick start.
+## QueryOptions
 
-An empty `FetchOptions{}` and nil fields inherit defaults. Like `Query`, multiple options values use only the last value without merging fields. Fields omitted from that last value inherit Client defaults again. Options affect only this call, not the shared Client.
+Pass options through `Query(client, key, load, options)`. Configuration is captured when the handle is created and remains in effect for automatic loading, `SetEnabled`, and manual `Refetch`.
 
-## Configuration and explicit zero values
+In addition to the shared fields below, `QueryOptions` supports:
 
-| Field | Omitted / nil | Explicit override |
-| --- | --- | --- |
-| `Disable` | False permits automatic loading | True disables automatic loading |
-| `StaleTime` | Use Client freshness | Pointer to a duration; zero makes ordinary data immediately stale |
-| `Retry` | Use Client retry count | Pointer to an integer; zero disables additional attempts |
-| `Timeout` | Use Client timeout | Pointer to a duration; zero removes the Client timeout, while caller cancellation and deadlines still apply |
-| `RetryIf` | Use the Client predicate | A function deciding which errors permit another attempt |
-| `RetryDelay` | Use Client backoff | A function taking the additional attempt number, starting at one |
+| Field | Type | Default | Behavior |
+| --- | --- | --- | --- |
+| `Disable` | `bool` | false | True prevents automatic loading while retaining cache reads and state updates |
 
-`Disable` is available only in `QueryOptions`. The other fields are shared by `QueryOptions` and `FetchOptions`.
+For example, pass this configuration to create a query without automatic loading:
 
-Pointer values are copied when a call or handle is created. Later mutation of the source variables does not reconfigure a handle. Callback closures retain their captured state; synchronize it when shared across loads. A handle keeps its policy through enablement changes and `Refetch`.
-
-`Disable` defaults to false, so an empty `QueryOptions` or freshness-only overrides permit automatic loading. Set `Disable: true` to disable automatic loading explicitly. The flag is copied at construction; use `SetEnabled` to change it later. When several `QueryOptions` arguments are supplied, only the last one's fields are applied over Client defaults.
-
-`RetryIf` is available in both Client `Options` and per-consumer options. It is consulted only for retryable errors while attempts remain. Cancellation, deadline errors, `ErrQueueFull`, and `ErrBatcherClosed` never retry, including wrapped errors; they bypass `RetryIf`. Nil inherits the Client predicate; to override a restrictive Client predicate, provide a function returning true. Predicates and delay callbacks run outside the Client lock and may call Client APIs.
-
-## Shared data, independent freshness
-
-For ordinary successful loads and `Set`, each consumer uses the shared `UpdatedAt` and its own `StaleTime` to calculate `Stale` and `ExpiresAt`. `Get`, `Fetch` without options, and `Prefetch` use Client defaults. A caller with a longer window may reuse data that another consumer considers stale. Changing one consumer's freshness does not register settings for later callers.
-
-`FetchWithExpiry` supplies an authoritative absolute deadline, including for explicitly cached fallback data and errors. Consumer `StaleTime` cannot shorten or extend this deadline. Client `MaxAge` caps availability and freshness in either case. Capacity, GC, and the clock remain Client policies.
-
-Explicit invalidation and a failed refresh that installs no new data mark retained data stale for every consumer. An explicit fallback with a future absolute deadline still follows that deadline. Passing time alone does not publish updates or start requests; `Snapshot` evaluates current freshness. `Updates` carries consumer-specific snapshots on ordinary state transitions.
-
-## Shared load policy
-
-The consumer starting a load supplies its loader, retry count, predicate, backoff, and whole-load timeout. Same-key consumers joining that load reuse it without replacing these settings. A joining call's context still controls its own wait. Its `Timeout` override applies only when it starts a new load.
-
-Automatic invalidation refresh uses the oldest still-enabled handle's loader and policy. Disabling or closing that handle allows the next enabled handle to supply future automatic refreshes. Existing requests keep their initiator's settings. Manual `Refetch` uses the invoking handle when starting a new load.
-
-Same-key loaders must represent the same data. Include parameters, user identity, and tenant scope in the key; policy overrides do not isolate cached results.
-
-## Migrating from `FetchWithOptions`
-
-In v0.2.0, use the unified `Fetch(ctx, client, key, load, options)` entry point instead of `FetchWithOptions(ctx, client, key, load, options)`. Argument order, results, and option behavior remain the same. The published `FetchWithOptions` remains available as a deprecated compatibility entry point.
-
-Existing four-argument calls to `Fetch(ctx, client, key, load)` need no changes. Adding a variadic parameter changes the Go function type of `Fetch`: assignments or callbacks expecting a fixed four-argument function must accept `...FetchOptions` instead, or use a closure with the original four-argument signature. This function-type change is a v0.2.0 migration item.
-
-## Migrating enablement configuration
-
-`QueryOptions.Enabled *bool` from v0.1.1 is replaced by `Disable bool`. Omit `Disable` when the old `Enabled` was nil or pointed to true. Replace a pointer to false with `Disable: true`; for a computed boolean, use `Disable: !enabled`. Empty `QueryOptions{}` and freshness-only overrides still enable automatic loading. Existing `SetEnabled(bool)` calls remain unchanged.
-
-## Verification
-
-```sh
-go test -race ./... -run 'Test(QueryOptions|FetchOptions)' -count=1
+```go
+options := cacheq.QueryOptions{
+	Disable: true,
+}
 ```
 
-[Behavior tests](../query_options_test.go) cover independent freshness, inherited and zero-valued options, copied policy values, explicit deadlines, availability limits, shared requests, retries, callback cancellation, and deterministic automatic refresh selection.
+While disabled, construction and invalidation do not trigger automatic loading for this handle. Calling `query.SetEnabled(true)` permits missing or stale data to load. Changing the original `options.Disable` does not reconfigure the handle. Disabling does not cancel active shared requests.
+
+## FetchOptions
+
+Pass options through `Fetch(ctx, client, key, load, options)`. Configuration applies only to this call. It neither changes Client defaults nor becomes the configuration for later calls using the same key.
+
+For example, disable retries and set a three-second load timeout:
+
+```go
+retries := 0
+timeout := 3 * time.Second
+options := cacheq.FetchOptions{
+	Retry:   &retries,
+	Timeout: &timeout,
+}
+```
+
+Pass `options` as the final argument to `Fetch`. `FetchOptions` has no `Disable` field: calling `Fetch` requests data, and cache state determines whether loading is necessary.
+
+## Shared fields
+
+The following fields apply to both `QueryOptions` and `FetchOptions`.
+
+| Field | Type | When nil | When set |
+| --- | --- | --- | --- |
+| `StaleTime` | `*time.Duration` | Inherit Client freshness | Calculate freshness from the data's `UpdatedAt`; zero means immediately stale |
+| `Retry` | `*int` | Inherit Client retry count | Additional attempts after the first failure; zero or negative disables retries |
+| `RetryIf` | `func(error) bool` | Inherit Client error filter | True permits an additional attempt, subject to the retry count and terminal errors |
+| `RetryDelay` | `func(int) time.Duration` | Inherit Client retry delay | Return the delay before an additional attempt; numbering starts at 1 |
+| `Timeout` | `*time.Duration` | Inherit Client load timeout | Bound the entire load, including queuing, execution, and retry delays; zero or negative adds no timeout |
+
+Pointer fields distinguish inheritance from explicit zero values. For example, `Retry: nil` inherits the default retry count; a pointer to 0 disables retries. Caller context deadlines and cancellation remain effective even with a zero `Timeout`.
+
+Cancellation, deadline errors, `ErrQueueFull`, and `ErrBatcherClosed` never retry, including wrapped errors, and bypass `RetryIf`. The predicate runs only when attempts remain and the error is retryable. A predicate always returning true can override the Client filter but cannot bypass terminal errors.
+
+`RetryIf` and `RetryDelay` run outside the Client lock and may call Client APIs. Applications must synchronize shared mutable state captured by callbacks.
+
+## Defaults and overrides
+
+- Omitting options or passing an empty value uses Client defaults. `QueryOptions.Disable` defaults to false.
+- If several options values are supplied, only the last applies; their fields are not merged. Nil fields in the last value inherit Client defaults.
+- Pointed-to values are copied when creating `Query` or calling `Fetch`. Later changes to the original variables do not alter existing configuration.
+- The same key still shares data and requests. Different options do not create separate caches or replace query parameters and identity scope in the key.
+
+## Configuration for shared requests
+
+A new load uses its initiator's loader, retry settings, and timeout. Later same-key calls do not replace them. A joiner's context can end its own wait, but its `Timeout` setting applies only to new loads it initiates.
+
+Automatic refresh after invalidation uses the oldest still-enabled handle's configuration. After that handle closes or is disabled, the next enabled handle supplies future automatic refreshes. Manual `Refetch` uses the current handle's configuration when starting a new load.
+
+## Cache policy limits
+
+`StaleTime` changes ordinary cache freshness decisions without enabling polling. Passing time does not automatically publish notifications or start requests; `Snapshot()` reevaluates state when read. `Get`, `Prefetch`, and `Fetch` without options use Client freshness defaults.
+
+Explicit invalidation and failed refreshes that install no new data make ordinary cached data stale for all queries. Absolute deadlines returned through `FetchWithExpiry` are unaffected by `StaleTime` overrides, including explicitly cached fallback data and errors.
+
+The Client owns cache capacity, `MaxAge`, GC, and the clock. A longer `StaleTime` cannot extend data availability beyond `MaxAge`.
+
+## Compatibility
+
+`FetchWithOptions` remains as a deprecated compatibility entry point; new code uses `Fetch(..., options)`. Existing direct four-argument `Fetch` calls need no changes. In v0.2.0, `Fetch` gains a variadic parameter. Passing `Fetch[V]` as a fixed four-argument function value requires updating the function type or using a forwarding closure with the original signature.
+
+The old `QueryOptions.Enabled *bool` is replaced by `Disable bool`. Omit `Disable` when the old value was nil or pointed to true; use `Disable: true` when it pointed to false. Existing `SetEnabled(bool)` calls remain unchanged.
+
+## Related guides
+
+- [Queries and conditions](queries.en-US.md): `Query`, `Fetch`, state subscriptions, and enablement.
+- [Cache and lifecycle](cache.en-US.md): Client defaults, expiration, and resource management.
+- [Invalidation](invalidation.en-US.md): invalidate and refresh associated queries.
