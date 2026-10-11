@@ -51,7 +51,7 @@ type Options struct {
 	// Retry limits additional attempts after the initial load; zero disables retries.
 	Retry int
 	// RetryIf permits another attempt for an error, subject to Retry and cancellation.
-	// Cancellation, deadline expiration, and ErrBatcherClosed never retry.
+	// Cancellation, deadline expiration, ErrQueueFull, and ErrBatcherClosed never retry.
 	// Nil permits every other error; the predicate runs outside the client lock.
 	RetryIf func(error) bool
 	// RetryDelay supplies the delay before each additional attempt, numbered from one.
@@ -59,6 +59,10 @@ type Options struct {
 	RetryDelay func(attempt int) time.Duration
 	// Timeout bounds the entire load, including retries; zero uses the caller's deadline.
 	Timeout time.Duration
+	// Executor optionally bounds concurrent loader attempts and queued loads across clients.
+	// Nil leaves execution unrestricted. Queue time counts toward Timeout; retry waits hold no slot.
+	// For batched fetchers, prefer BatchOptions.Executor to budget actual bulk callbacks.
+	Executor *Executor
 	// Clock supplies freshness and retention checks; nil uses time.Now.
 	Clock func() time.Time
 }

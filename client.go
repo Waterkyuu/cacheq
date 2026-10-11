@@ -428,7 +428,7 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 	close(pending.done)
 }
 
-// run applies bounded retries and stops for cancellation, deadline errors, or a closed batcher.
+// run applies bounded retries and stops for cancellation, deadline errors, closure, or overload.
 func (c *Client) run(ctx context.Context, key any, pending *flight) (any, time.Time, error) {
 	options := pending.request.options
 	var previousErr error
@@ -436,20 +436,11 @@ func (c *Client) run(ctx context.Context, key any, pending *flight) (any, time.T
 		if ctx.Err() != nil {
 			return nil, time.Time{}, ctx.Err()
 		}
-		c.mu.Lock()
-		pending.attempts++
-		if attempt > 0 {
-			c.stats.Retries++
-			event := pending.event(key, EventRetryStarted)
-			event.Err = previousErr
-			c.emitEventLocked(event)
-		}
-		c.mu.Unlock()
-		value, expiresAt, err := pending.request.load(ctx)
+		value, expiresAt, err := c.attempt(ctx, key, pending, previousErr)
 		previousErr = err
-		// Batcher closure is permanent, including when wrapped by an application fetcher.
-		// Do not spend retry delays or invoke predicates for work that cannot recover.
-		if errors.Is(err, ErrBatcherClosed) {
+		// Closed schedulers and overloaded budgets are terminal for this call.
+		// Retrying admission failures would amplify load while the backend is already saturated.
+		if errors.Is(err, ErrBatcherClosed) || errors.Is(err, ErrQueueFull) {
 			return value, expiresAt, err
 		}
 		stopped := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
@@ -471,6 +462,30 @@ func (c *Client) run(ctx context.Context, key any, pending *flight) (any, time.T
 		case <-timer.C:
 		}
 	}
+}
+
+// attempt acquires execution capacity only around a loader invocation, never around retry backoff.
+func (c *Client) attempt(
+	ctx context.Context,
+	key any,
+	pending *flight,
+	previousErr error,
+) (any, time.Time, error) {
+	release, err := c.options.Executor.acquire(ctx)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer release()
+	c.mu.Lock()
+	pending.attempts++
+	if pending.attempts > 1 {
+		c.stats.Retries++
+		event := pending.event(key, EventRetryStarted)
+		event.Err = previousErr
+		c.emitEventLocked(event)
+	}
+	c.mu.Unlock()
+	return pending.request.load(ctx)
 }
 
 // snapshotLocked removes data beyond MaxAge and derives state without scheduling a request.
