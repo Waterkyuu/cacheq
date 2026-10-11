@@ -277,17 +277,24 @@ func Set[V any](client *Client, key any, value V) error {
 	if err := client.bindLocked(key, reflect.TypeFor[V]()); err != nil {
 		return err
 	}
-	client.cancelLocked(key, ReasonSet)
-	now := client.options.Clock()
-	client.entries[key] = entry{
-		typ: reflect.TypeFor[V](), value: value, hasData: true, updatedAt: now,
-		expiresAt: client.limitExpiry(now, now.Add(client.options.StaleTime)), ordinary: true,
-	}
-	client.emitEventLocked(Event{Key: key, Kind: EventLocalWrite, Reason: ReasonSet})
-	client.touchCapacityLocked(key)
-	client.touchGCLocked(key)
-	client.notifyLocked(key)
+	client.setLocked(key, value, reflect.TypeFor[V]())
 	return nil
+}
+
+// setLocked installs already-validated local data while serializing cancellation and notifications.
+func (c *Client) setLocked(key, value any, typ reflect.Type) {
+	c.cancelLocked(key, ReasonSet)
+	now := c.options.Clock()
+	cached := entry{
+		typ: typ, value: value, hasData: true, updatedAt: now,
+		expiresAt: c.limitExpiry(now, now.Add(c.options.StaleTime)), ordinary: true,
+	}
+	c.advanceRevisionLocked(&cached)
+	c.entries[key] = cached
+	c.emitEventLocked(Event{Key: key, Kind: EventLocalWrite, Reason: ReasonSet})
+	c.touchCapacityLocked(key)
+	c.touchGCLocked(key)
+	c.notifyLocked(key)
 }
 
 // fetch shares one erased loader while keeping cancellation and type binding atomic with cache access.
@@ -353,6 +360,7 @@ func (c *Client) fetch(
 			cached.expiresAt = time.Time{}
 			cached.invalidated = true
 			cached.staleReason = ReasonRefetch
+			c.advanceRevisionLocked(&cached)
 			c.entries[key] = cached
 			c.notifyLocked(key)
 			force = false

@@ -26,6 +26,8 @@ type Client struct {
 	nextLoadID uint64
 	// loadNow measures elapsed load time independently of the freshness clock; tests may replace it.
 	loadNow func() time.Time
+	// nextRevision distinguishes writes even when a key is removed and recreated.
+	nextRevision uint64
 	// entries contains completed query state, including expired data for background refresh.
 	entries map[any]entry
 	// recency orders retained results and errors from least to most recently used.
@@ -54,6 +56,8 @@ type Client struct {
 
 // entry retains one typed result, including stale data and the latest load error.
 type entry struct {
+	// revision changes when data or its invalidation state is replaced.
+	revision uint64
 	// typ binds this key to one static result type until its state and subscriptions are released.
 	typ reflect.Type
 	// value is shared, immutable query data.
@@ -234,6 +238,7 @@ func (c *Client) invalidateLocked(key any, refetch RefetchMode) {
 	cached.expiresAt = time.Time{}
 	cached.invalidated = true
 	cached.staleReason = ReasonInvalidated
+	c.advanceRevisionLocked(&cached)
 	c.entries[key] = cached
 	event := Event{Key: key, Kind: EventInvalidated, Trigger: TriggerInvalidate, Reason: ReasonInvalidated}
 	pending := c.pending[key]
@@ -401,6 +406,7 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 				cached.staleReason = ReasonPreviousFailure
 			}
 			cached.err, cached.expiresAt = err, expiresAt
+			c.advanceRevisionLocked(&cached)
 			c.entries[key] = cached
 			applied = true
 			c.touchCapacityLocked(key)
