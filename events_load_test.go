@@ -58,7 +58,7 @@ func TestEventsLoadDecisions(t *testing.T) {
 	}
 	now = now.Add(2 * time.Minute)
 	hour := time.Hour
-	if _, err := Fetch(context.Background(), c, "a", load, FetchOptions{StaleTime: &hour}); err != nil {
+	if _, err := Fetch(context.Background(), c, "a", load, QueryOptions{StaleTime: &hour}); err != nil {
 		t.Fatal(err)
 	}
 	if hit := receiveTestEvent(
@@ -95,7 +95,7 @@ func TestEventsTriggers(t *testing.T) {
 			return err
 		}},
 		{name: "fetch options", trigger: TriggerFetch, reason: ReasonMissing, call: func(t *testing.T, c *Client) error {
-			_, err := Fetch(context.Background(), c, "a", load, FetchOptions{})
+			_, err := Fetch(context.Background(), c, "a", load, QueryOptions{})
 			return err
 		}},
 		{name: "expiry", trigger: TriggerFetch, reason: ReasonMissing, call: func(t *testing.T, c *Client) error {

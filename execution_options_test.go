@@ -9,7 +9,7 @@ import (
 
 // TestExecutionOptions resolves inheritance, replacement, disabling, and last-option precedence per initiator.
 func TestExecutionOptions(t *testing.T) {
-	for _, api := range []string{"fetch", "query"} {
+	for _, api := range []string{"fetch", "prefetch", "query"} {
 		for _, mode := range []string{"inherit", "override", "disable", "disable wins", "last inherits", "last disables"} {
 			t.Run(api+"/"+mode, func(t *testing.T) {
 				shared, err := NewExecutor(ExecutionOptions{MaxConcurrent: 1})
@@ -27,18 +27,18 @@ func TestExecutionOptions(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer release()
-				options := []FetchOptions{{}}
+				options := []QueryOptions{{}}
 				switch mode {
 				case "override":
-					options = []FetchOptions{{Executor: separate}}
+					options = []QueryOptions{{Executor: separate}}
 				case "disable":
-					options = []FetchOptions{{DisableExecutor: true}}
+					options = []QueryOptions{{DisableExecutor: true}}
 				case "disable wins":
-					options = []FetchOptions{{Executor: separate, DisableExecutor: true}}
+					options = []QueryOptions{{Executor: separate, DisableExecutor: true}}
 				case "last inherits":
-					options = []FetchOptions{{DisableExecutor: true}, {}}
+					options = []QueryOptions{{DisableExecutor: true}, {}}
 				case "last disables":
-					options = []FetchOptions{{Executor: separate}, {DisableExecutor: true}}
+					options = []QueryOptions{{Executor: separate}, {DisableExecutor: true}}
 				}
 				calls := 0
 				load := func(context.Context) (int, error) {
@@ -53,20 +53,21 @@ func TestExecutionOptions(t *testing.T) {
 					return 42, nil
 				}
 				var value int
-				if api == "fetch" {
+				switch api {
+				case "fetch":
 					value, err = Fetch(context.Background(), c, "key", load, options...)
-				} else {
-					queryOptions := make([]QueryOptions, 0, len(options))
-					for _, option := range options {
-						queryOptions = append(queryOptions, QueryOptions{
-							Disable: true, Executor: option.Executor, DisableExecutor: option.DisableExecutor,
-						})
+				case "prefetch":
+					err = Prefetch(context.Background(), c, "key", load, options...)
+					value = Get[int](c, "key").Data
+				case "query":
+					for index := range options {
+						options[index].Disable = true
 					}
-					h := Query(c, "key", load, queryOptions...)
+					h := Query(c, "key", load, options...)
 					t.Cleanup(h.Close)
 					// Mutation of the source options must not reconfigure this handle's future loads.
-					queryOptions[len(queryOptions)-1].Executor = shared
-					queryOptions[len(queryOptions)-1].DisableExecutor = false
+					options[len(options)-1].Executor = shared
+					options[len(options)-1].DisableExecutor = false
 					value, err = h.Refetch(context.Background())
 				}
 				if mode == "inherit" || mode == "last inherits" {
@@ -116,7 +117,7 @@ func TestExecutionOptionsSharedRequest(t *testing.T) {
 		value, err := Fetch(context.Background(), c, "key", func(context.Context) (int, error) {
 			t.Error("joining caller replaced the loader")
 			return 0, nil
-		}, FetchOptions{DisableExecutor: true})
+		}, QueryOptions{DisableExecutor: true})
 		if err == nil && value != 42 {
 			err = errors.New("joining caller did not receive shared data")
 		}

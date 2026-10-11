@@ -106,7 +106,7 @@ func TestFetchAndQueryFreshness(t *testing.T) {
 						client,
 						"a",
 						load,
-						FetchOptions{StaleTime: &tc.policy},
+						QueryOptions{StaleTime: &tc.policy},
 					)
 				} else {
 					if err := handle.SetEnabled(true); err != nil {

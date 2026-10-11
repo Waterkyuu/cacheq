@@ -92,7 +92,7 @@ func TestBatcherFetchSharedBudget(t *testing.T) {
 	t.Cleanup(b.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	value, err := Fetch(ctx, c, "batched", b.Fetcher(42), FetchOptions{DisableExecutor: true})
+	value, err := Fetch(ctx, c, "batched", b.Fetcher(42), QueryOptions{DisableExecutor: true})
 	if err != nil || value != 42 {
 		t.Fatalf("batched fetch = %d, %v", value, err)
 	}

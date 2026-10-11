@@ -430,7 +430,7 @@ func TestBatcherFetcherConsumerOptions(t *testing.T) {
 		client,
 		key,
 		fetch,
-		FetchOptions{StaleTime: &immediate},
+		QueryOptions{StaleTime: &immediate},
 	)
 	if value != 2 || err != nil || calls.Load() != 2 || Get[int](client, key).Stale {
 		t.Fatalf("consumer cache decision = %d, %v; callbacks = %d", value, err, calls.Load())
