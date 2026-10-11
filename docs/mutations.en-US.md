@@ -169,12 +169,6 @@ The `Mutate` context and handle lifetime bound waits that use the supplied callb
 
 A late successful write still invokes `OnSuccess`, even with a canceled context. `Client.InvalidateAndWait` rejects a pre-canceled context without invalidating. When a confirmed write must always mark cached data stale, call `Client.Invalidate` independently of cancellation before any cancellable waiting step. Mutation performs no implicit invalidation after the callback returns.
 
-## Migrating previous Mutation options
-
-This API change removes `MutationOptions.Invalidate`, `InvalidateOptions`, and `WaitForRefresh`, and changes the `OnSuccess` signature from `func(input I, result V) error` to `func(ctx context.Context, result V, input I) error`.
-
-Move target selection and refresh options into explicit Client calls in `OnSuccess`. Replace background invalidation with `client.Invalidate(target, options)` and awaited invalidation with `client.InvalidateAndWait(ctx, target, options)`. Cache updates and invalidation now share one callback, which controls their ordering and combined errors.
-
 ## Distinguishing write failures from synchronization failures
 
 The `error` returned by `Mutate` means the write did not complete successfully, including rejected calls and business callback errors. `result.SyncErr` means the business write succeeded but a subsequent cache update, invalidation, or opted-in refresh wait failed.

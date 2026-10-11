@@ -169,12 +169,6 @@ options := cacheq.MutationOptions[string, User]{
 
 较晚返回成功的写入仍会调用 `OnSuccess`，即使 context 已取消。`Client.InvalidateAndWait` 对开始前已取消的 context 直接返回，不执行失效。如果已确认的写入必须始终将缓存标记过期，应在任何可取消的等待步骤之前，独立于取消调用 `Client.Invalidate`。Mutation 不会在回调返回后隐式执行失效。
 
-## 迁移旧的 Mutation 配置
-
-此次 API 调整移除 `MutationOptions.Invalidate`、`InvalidateOptions` 和 `WaitForRefresh`，并将 `OnSuccess` 签名从 `func(input I, result V) error` 改为 `func(ctx context.Context, result V, input I) error`。
-
-将目标选择和刷新配置迁移到 `OnSuccess` 内的显式 Client 调用。后台失效使用 `client.Invalidate(target, options)`，等待失效后刷新使用 `client.InvalidateAndWait(ctx, target, options)`。缓存更新和失效由同一个回调组织，执行顺序和错误合并均由回调明确控制。
-
 ## 区分写入失败与同步失败
 
 `Mutate` 返回的 `error` 表示本次写入没有成功完成，包括调用被拒绝和业务函数返回错误。`result.SyncErr` 表示业务写入已经成功，但后续缓存更新、失效或启用的刷新等待失败。
