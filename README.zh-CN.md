@@ -150,7 +150,7 @@ go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 | 文档 | 说明 |
 | --- | --- |
 | [查询与条件请求](docs/queries.zh-CN.md) | `Query`、状态、更新通知、条件开关、刷新、`Fetch` 和 HTTP 加载函数 |
-| [查询配置](docs/query-options.zh-CN.md) | 按消费者覆盖默认配置、独立新鲜度、重试错误判断、超时和共享请求策略 |
+| [查询配置](docs/query-options.zh-CN.md) | 共享加载配置、可复用的类型化查询定义、新鲜期、重试和超时 |
 | [自动批量加载](docs/batching.zh-CN.md) | 不同 key 组批、接入现有查询 API、逐 key 结果、取消和可运行示例 |
 | [缓存与生命周期](docs/cache.zh-CN.md) | 所有缓存读写、配置、自动删除、取消、删除、关闭及错误处理 |
 | [失效与刷新](docs/invalidation.zh-CN.md) | 单键、批量、条件失效，可等待刷新及有界补刷 |

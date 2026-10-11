@@ -1,14 +1,14 @@
-# 每个消费者独立的查询配置
+# 统一查询配置与可复用查询定义
 
 [English](query-options.en-US.md)
 
-`QueryOptions` 配置一个 `Query` 查询对象，`FetchOptions` 配置一次 `Fetch` 调用。两者都用于覆盖 Client 默认的新鲜期、重试、超时和执行预算设置；`QueryOptions` 额外提供 `Disable`，控制是否自动加载。
+`QueryOptions` 是 `Query`、`Fetch` 和 `Prefetch` 共用的配置，用于覆盖 Client 默认的新鲜期、重试、超时和执行预算。`Disable` 只控制 Query 的自动加载；显式 `Fetch`、`Prefetch` 和查询对象的 `Refetch` 仍会执行。
 
-## 快速开始
+`QueryDefinition[V]` 将查询键、类型化加载函数和 `QueryOptions` 组合为可复用的查询定义。创建定义不会加载数据，也不会创建缓存或订阅。
 
-在调用末尾传入配置。以下完整示例为 `Query` 和 `Fetch` 设置一小时的新鲜期，Client 默认的一分钟新鲜期保持不变。
+## 快速开始：复用同一份配置
 
-将程序保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
+以下完整示例为三个入口使用同一份一小时新鲜期配置。禁用自动加载的订阅接收 `Prefetch` 显式加载的数据，`Fetch` 复用这份新鲜缓存。Client 默认值保持不变。将程序保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
 
 ```go
 package main
@@ -21,34 +21,25 @@ import (
 	"github.com/Waterkyuu/cacheq"
 )
 
-// main applies the same freshness override to a query handle and a Fetch call.
+// main reuses one loading policy across subscription, prefetch, and explicit reads.
 func main() {
 	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	defer client.Close()
-	load := func(context.Context) (string, error) {
-		return "hello", nil
-	}
+	ctx := context.Background()
+	load := func(context.Context) (string, error) { return "hello", nil }
 	hour := time.Hour
-
-	query := cacheq.Query(
-		client,
-		"greeting",
-		load,
-		cacheq.QueryOptions{StaleTime: &hour},
-	)
+	options := cacheq.QueryOptions{Disable: true, StaleTime: &hour}
+	query := cacheq.Query(client, "greeting", load, options)
 	defer query.Close()
-
-	value, err := cacheq.Fetch(
-		context.Background(),
-		client,
-		"greeting",
-		load,
-		cacheq.FetchOptions{StaleTime: &hour},
-	)
+	if err := cacheq.Prefetch(ctx, client, "greeting", load, options); err != nil {
+		panic(err)
+	}
+	value, err := cacheq.Fetch(ctx, client, "greeting", load, options)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(value)
+	fmt.Println("observed:", query.Snapshot().Data)
 }
 ```
 
@@ -56,50 +47,106 @@ func main() {
 
 ```text
 hello
+observed: hello
 ```
 
-`Query` 使用 `QueryOptions`，`Fetch` 使用 `FetchOptions`。示例中的两次调用共享 `"greeting"` 的缓存和正在进行的请求；`StaleTime` 覆盖只改变各自判断缓存新鲜度的规则。未设置的重试和超时字段继续使用 Client 默认值。
+## 自动加载与显式读取
 
-## QueryOptions
+`Query(client, key, load, options)` 在创建时复制配置，后续自动加载、`SetEnabled` 和手动 `Refetch` 继续使用该配置。
 
-传入方式为 `Query(client, key, load, options)`。配置在创建查询对象时确定，后续自动加载、`SetEnabled` 和手动 `Refetch` 继续使用该配置。
+| 入口 | `Disable: true` 的作用 |
+| --- | --- |
+| `Query` | 订阅共享状态更新，不启动自动加载 |
+| `Fetch` | 执行显式读取，可以直接使用新鲜缓存 |
+| `Prefetch` | 使用同一套加载策略显式预热缓存 |
+| 查询对象的 `Refetch` | 禁用自动加载时仍允许显式刷新 |
 
-除下文的共有字段外，`QueryOptions` 还支持：
+不传配置或 `Disable` 为 false 时，允许自动加载。禁用对象不会取消共享请求，也不会禁用其他对象。修改原始配置不会改变已有对象；后续启停使用 `SetEnabled(bool)`。
 
-| 字段 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `Disable` | `bool` | false | true 时不自动加载；仍可读取缓存和接收状态更新 |
+`Fetch(ctx, client, key, load, options)` 和 `Prefetch(ctx, client, key, load, options)` 的配置只对本次调用有效，二者都忽略 `Disable`。它们不修改 Client 默认值，也不注册该键后续调用的策略。`Prefetch` 返回加载错误，不返回数据，也不创建持续订阅。
 
-例如，创建一个暂不自动加载的查询时，传入以下配置：
+## `QueryDefinition`：集中定义类型化查询
+
+查询定义包含三个字段：
+
+| 字段 | 职责 |
+| --- | --- |
+| `Key` | 用非 nil、可比较的键标识查询，包含全部查询参数和身份范围 |
+| `Fetcher` | 通过业务的 HTTP、数据库或其他依赖加载 `V` |
+| `Options` | 将同一份 `QueryOptions` 用于读取、订阅和预加载 |
+
+每次操作显式传入 Client，由 Client 管理缓存、共享请求和关闭生命周期。同一份定义可以用于多个 Client，各 Client 的缓存仍相互独立。返回的查询对象由调用者负责关闭。
+
+以下完整示例展示定义构造、预加载、缓存复用和显式失效：
 
 ```go
-options := cacheq.QueryOptions{
-	Disable: true,
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+)
+
+// main reuses a typed definition without creating a second cache or automatic loading.
+func main() {
+	client := cacheq.NewClient(cacheq.Options{})
+	defer client.Close()
+	ctx := context.Background()
+	hour := time.Hour
+	calls := 0
+	definition := cacheq.QueryDefinition[string]{
+		Key: "greeting",
+		Fetcher: func(context.Context) (string, error) {
+			calls++
+			return "hello", nil
+		},
+		Options: cacheq.QueryOptions{Disable: true, StaleTime: &hour},
+	}
+	query := definition.Query(client)
+	defer query.Close()
+	fmt.Println("initial calls:", calls)
+	if err := definition.Prefetch(ctx, client); err != nil {
+		panic(err)
+	}
+	value, err := definition.Fetch(ctx, client)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(value, "calls:", calls)
+	if err := client.Invalidate(definition.Key); err != nil {
+		panic(err)
+	}
+	if _, err := definition.Fetch(ctx, client); err != nil {
+		panic(err)
+	}
+	fmt.Println("refreshed calls:", calls)
 }
 ```
 
-禁用期间，创建查询和缓存失效都不会为该对象触发自动加载。调用 `query.SetEnabled(true)` 后，缺失或过期的数据可以开始加载。修改原来的 `options.Disable` 不会改变已有对象；禁用也不会取消正在运行的共享请求。
+预期输出：
 
-## FetchOptions
-
-传入方式为 `Fetch(ctx, client, key, load, options)`。配置只对本次调用有效，不修改 Client 默认值，也不会保存为该键后续调用的配置。
-
-例如，本次不重试，并设置三秒的加载超时：
-
-```go
-retries := 0
-timeout := 3 * time.Second
-options := cacheq.FetchOptions{
-	Retry:   &retries,
-	Timeout: &timeout,
-}
+```text
+initial calls: 0
+hello calls: 1
+refreshed calls: 2
 ```
 
-将 `options` 作为 `Fetch` 的最后一个参数。`FetchOptions` 没有 `Disable` 字段；调用 `Fetch` 本身就表示需要获取数据，是否发起加载由缓存状态决定。
+| 方法 | 返回结果 |
+| --- | --- |
+| `definition.Fetch(ctx, client)` | `(V, error)`，契约与 `Fetch` 相同 |
+| `definition.Query(client)` | `*QueryHandle[V]`，契约与 `Query` 相同 |
+| `definition.Prefetch(ctx, client)` | 加载错误，契约与 `Prefetch` 相同 |
+
+方法直接使用定义中的键、加载函数和配置。如果需要定制一个消费者，可以先复制定义，再修改副本的配置并调用方法。修改定义影响后续操作，不改变已有查询对象。配置指针指向的值在每次操作开始时读取。业务需同步共享定义、指针值以及加载函数捕获的可变状态。
+
+定义不会从加载函数推断查询键，不增加授权检查，也不串行业务操作。可以用普通业务函数构造带参数的定义，使键和加载函数捕获一致的参数。结果类型绑定、取消、错误及正在执行的请求共享遵循已有[查询契约](queries.zh-CN.md)。显式失效使用 `client.Invalidate(definition.Key)` 或 `client.InvalidateAndWait(ctx, definition.Key)`。
 
 ## 共有字段
 
-以下字段同时适用于 `QueryOptions` 和 `FetchOptions`。
+以下加载策略字段同时适用于 `Query`、`Fetch` 和 `Prefetch`。
 
 | 字段 | 类型 | 默认行为 | 设置后的行为 |
 | --- | --- | --- | --- |
@@ -127,13 +174,13 @@ options := cacheq.QueryOptions{
 }
 ```
 
-将此配置传给使用 `Batcher.Fetcher` 的查询对象。命令式调用使用 `FetchOptions{DisableExecutor: true}`。在两层使用相同预算且传递回调 context 时，会返回 `ErrExecutionReentry`。完整配置示例与检测限制见[执行并发预算](execution.zh-CN.md)。
+使用 `Batcher.Fetcher` 时，可以将同一份配置传给 `Query`、`Fetch` 或 `Prefetch`。在两层使用相同预算且传递回调 context 时，会返回 `ErrExecutionReentry`。完整配置示例与检测限制见[执行并发预算](execution.zh-CN.md)。
 
 ## 默认值与覆盖规则
 
 - 不传配置或传空配置时，使用 Client 默认值；`QueryOptions.Disable` 默认为 false。
 - 传入多份配置时，仅最后一份生效，不合并各份字段。最后一份中为 nil 的字段继承 Client 默认值。
-- 创建 `Query` 或调用 `Fetch` 时会复制时间与重试次数指针指向的值。之后修改原变量不会改变已有配置。Executor 引用保持共享，不复制预算容量。
+- 创建 `Query` 或调用 `Fetch`、`Prefetch` 时会复制时间与重试次数指针指向的值。查询定义保留配置指针，直到这些操作实际应用配置。之后修改原变量不会改变已有配置。Executor 引用保持共享，不复制预算容量。
 - 同一个键仍共享数据和请求。不同配置不创建独立缓存，也不替代键中的查询参数或身份范围。
 
 ## 共享请求的配置
@@ -144,17 +191,11 @@ options := cacheq.QueryOptions{
 
 ## 缓存策略限制
 
-`StaleTime` 只调整普通缓存的新鲜度判断，不触发轮询。时间经过不会自动发送通知或启动请求；`Snapshot()` 在读取时重新判断状态。`Get`、`Prefetch` 和未传配置的 `Fetch` 使用 Client 默认新鲜期。
+`StaleTime` 只调整普通缓存的新鲜度判断，不触发轮询。时间经过不会自动发送通知或启动请求；`Snapshot()` 在读取时重新判断状态。`Get` 和未传配置的 `Fetch`、`Prefetch` 使用 Client 默认新鲜期。
 
 显式失效和未写入新数据的刷新失败，会使普通缓存对所有查询变旧。`FetchWithExpiry` 返回的绝对截止时间不受 `StaleTime` 覆盖影响，包括显式缓存的兜底数据和错误。
 
 缓存容量、`MaxAge`、GC 和时钟由 Client 管理。较长的 `StaleTime` 不能延长 `MaxAge` 限制的数据可用时间。
-
-## 兼容性
-
-`FetchWithOptions` 保留为已弃用的兼容入口，新代码直接使用 `Fetch(..., options)`。原来的四参数 `Fetch` 直接调用无需修改。v0.2.0 为 `Fetch` 增加了可变参数；如果将 `Fetch[V]` 作为固定四参数函数值传递，需要调整函数类型，或使用保持原签名的闭包转调。
-
-旧的 `QueryOptions.Enabled *bool` 已替换为 `Disable bool`。原值为 nil 或指向 true 时省略 `Disable`，指向 false 时使用 `Disable: true`；已有 `SetEnabled(bool)` 调用不变。
 
 ## 相关文档
 
