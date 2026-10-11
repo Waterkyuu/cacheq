@@ -115,11 +115,7 @@ func (b *Batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}
-	value := reflect.ValueOf(key)
-	if !value.IsValid() || !value.Comparable() {
-		return zero, ErrInvalidKey
-	}
-	if key != key { //nolint:gocritic // NaN-containing keys cannot be retrieved from a map, even with the original key.
+	if !validBatchKey(key) {
 		return zero, ErrInvalidKey
 	}
 	b.mu.Lock()
@@ -133,19 +129,8 @@ func (b *Batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 		b.mu.Unlock()
 		return zero, ErrExecutionReentry
 	}
-	item := b.pending[key]
-	// Client cancellation can precede the old Load goroutine's deferred cleanup.
-	// Check caller lifetimes before joining so replacement work cannot revive that old result.
-	if item != nil && !item.hasActiveWaiterLocked() {
-		b.finishLocked(item, BatchResult[V]{Err: context.Canceled})
-		item = nil
-	}
 	waiter := &batchWaiter{ctx: ctx}
-	if item == nil {
-		item = b.enqueueLocked(key, waiter)
-	} else {
-		item.waiters[waiter] = struct{}{}
-	}
+	item := b.joinOrEnqueueLocked(key, waiter)
 	b.mu.Unlock()
 	defer b.releaseWaiter(item, waiter)
 	select {
@@ -157,6 +142,97 @@ func (b *Batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 		}
 		return item.result.Data, item.result.Err
 	}
+}
+
+// LoadMany registers all valid keys before waiting and returns one outcome per input position.
+// Duplicate keys share a load within this call, including across MaxBatchSize boundaries.
+// New work is dispatched immediately, including the final partial batch, without waiting for Wait.
+// Results are not cached; invalid keys fail individually without blocking valid keys.
+// Canceling ctx preserves already-published outcomes and gives unfinished positions ctx.Err().
+// Other callers keep shared work alive. Callback ownership and Executor rules are the same as Load.
+// A nil or empty keys slice returns a non-nil empty result slice. ctx must be non-nil.
+func (b *Batcher[K, V]) LoadMany(ctx context.Context, keys []K) []BatchResult[V] {
+	results := make([]BatchResult[V], len(keys))
+	if err := ctx.Err(); err != nil {
+		for index := range results {
+			results[index].Err = err
+		}
+		return results
+	}
+	valid := false
+	for index, key := range keys {
+		if validBatchKey(key) {
+			valid = true
+		} else {
+			results[index].Err = ErrInvalidKey
+		}
+	}
+	if !valid {
+		return results
+	}
+	b.mu.Lock()
+	err := b.lifecycleErrorLocked()
+	if err == nil && b.options.Executor.heldBy(ctx) {
+		err = ErrExecutionReentry
+	}
+	if err != nil {
+		b.mu.Unlock()
+		for index := range results {
+			if results[index].Err == nil {
+				results[index].Err = err
+			}
+		}
+		return results
+	}
+	waiter := &batchWaiter{ctx: ctx}
+	items := make([]*batchLoad[K, V], len(keys))
+	unique := make(map[K]*batchLoad[K, V], len(keys))
+	for index, key := range keys {
+		if results[index].Err != nil {
+			continue
+		}
+		item := unique[key]
+		if item == nil {
+			item = b.joinOrEnqueueLocked(key, waiter)
+			unique[key] = item
+		}
+		items[index] = item
+	}
+	if b.queued != nil {
+		b.dispatchLocked(b.queued)
+	}
+	b.mu.Unlock()
+	defer func() {
+		for _, item := range unique {
+			b.releaseWaiter(item, waiter)
+		}
+	}()
+	for index, item := range items {
+		if item == nil {
+			continue
+		}
+		select {
+		case <-item.done:
+			results[index] = item.result
+		case <-ctx.Done():
+			// A later position may have completed while this earlier key was blocked.
+			// Snapshot every item under mu to retain published outcomes without racing unfinished results.
+			b.mu.Lock()
+			for position, pending := range items {
+				if pending == nil {
+					continue
+				}
+				if pending.finished {
+					results[position] = pending.result
+				} else {
+					results[position] = BatchResult[V]{Err: ctx.Err()}
+				}
+			}
+			b.mu.Unlock()
+			return results
+		}
+	}
+	return results
 }
 
 // Fetcher binds key for use with Fetch, Query, and Prefetch.
@@ -178,6 +254,30 @@ func (b *Batcher[K, V]) lifecycleErrorLocked() error {
 		return b.err
 	}
 	return b.ctx.Err()
+}
+
+// validBatchKey excludes values that cannot safely identify and retrieve a pending map entry.
+func validBatchKey[K comparable](key K) bool {
+	value := reflect.ValueOf(key)
+	if !value.IsValid() || !value.Comparable() {
+		return false
+	}
+	return key == key //nolint:gocritic // NaN-containing keys cannot be retrieved even with the original key.
+}
+
+// joinOrEnqueueLocked shares live work without reviving results whose callers have all canceled.
+func (b *Batcher[K, V]) joinOrEnqueueLocked(key K, waiter *batchWaiter) *batchLoad[K, V] {
+	item := b.pending[key]
+	// Cancellation can precede deferred waiter cleanup, so replacement callers must inspect the old lifetimes.
+	if item != nil && !item.hasActiveWaiterLocked() {
+		b.finishLocked(item, BatchResult[V]{Err: context.Canceled})
+		item = nil
+	}
+	if item == nil {
+		return b.enqueueLocked(key, waiter)
+	}
+	item.waiters[waiter] = struct{}{}
+	return item
 }
 
 // enqueueLocked registers a unique key and starts or fills its collection window.

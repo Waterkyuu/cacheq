@@ -83,6 +83,84 @@ cached: product 42; bulk calls: 1
 
 两个 `Query` 在后台发起加载，ID 42 和 43 进入同一批次。最后的 `Fetch` 命中商品 42 的缓存，不再调用批量函数。
 
+## 加载已知的一组 key
+
+已获得完整 key 列表时，使用 `LoadMany(ctx, keys)`。返回的 `[]BatchResult[V]` 与输入等长、顺序一致，每个位置分别携带数据或错误，无需为每个 key 编排 goroutine，也无需处理额外的整体错误返回值。
+
+将以下示例保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`：
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+)
+
+// main loads known product IDs and prints outcomes in input order.
+func main() {
+	var calls atomic.Int32
+	products, err := cacheq.NewBatcher(
+		context.Background(),
+		func(_ context.Context, ids []int) (map[int]cacheq.BatchResult[string], error) {
+			calls.Add(1)
+			results := make(map[int]cacheq.BatchResult[string], len(ids))
+			for _, id := range ids {
+				if id == 99 {
+					results[id] = cacheq.BatchResult[string]{Err: errors.New("product not found")}
+					continue
+				}
+				results[id] = cacheq.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
+			}
+			return results, nil
+		},
+		cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
+	)
+	if err != nil {
+		panic(err)
+	}
+	defer products.Close()
+
+	ids := []int{43, 42, 43, 99}
+	results := products.LoadMany(context.Background(), ids)
+	for index, result := range results {
+		if result.Err != nil {
+			fmt.Printf("%d: %v\n", ids[index], result.Err)
+			continue
+		}
+		fmt.Printf("%d: %s\n", ids[index], result.Data)
+	}
+	fmt.Printf("bulk calls: %d\n", calls.Load())
+}
+```
+
+输出：
+
+```text
+43: product 43
+42: product 42
+43: product 43
+99: product not found
+bulk calls: 2
+```
+
+三个唯一 ID 按 `MaxBatchSize: 2` 分为两个回调。ID 43 的两个输入位置共享同一结果；ID 99 单独失败，其他位置保留成功数据。
+
+### LoadMany 契约
+
+- 所有有效 key 均先登记，再开始等待。一次调用中的重复 key 共享一次加载，即使它们跨越批次边界。
+- 新排队的工作立即执行，包括最后不足数量上限的批次。`Wait` 继续控制独立的 `Load` 调用；`LoadMany` 也可能提前执行这些调用已排队的 key。
+- 与其他调用者共享相同 key 的排队或执行中加载。不同批次可以并发执行、乱序完成；`MaxBatchSize` 和 `Executor` 的职责不变。
+- nil 和空输入返回非 nil 的空切片，不启动或提前执行其他工作。无效 key 在对应位置收到 `ErrInvalidKey`，有效 key 仍会加载。调用者在进入方法前已取消时，每个位置直接收到 `ctx.Err()`，不再校验 key。
+- 取消时保留批量器已发布的结果，包括数据和逐 key 错误；未完成位置收到 `ctx.Err()`。本次调用释放对所有 key 的等待，其他调用者可以继续保留共享工作。不保证不同批次的数据构成原子快照。
+- 关闭、生命周期取消、预算准入失败和批量回调整体错误均返回到受影响的位置，没有额外的聚合错误返回值。
+- 不缓存已完成的结果。需要 Client 缓存和查询订阅时，将 `Fetcher` 传给现有查询 API。
+
 ## 接入查询 API
 
 `products.Fetcher(42)` 返回绑定批量 key `42` 的 `Fetcher[V]`，创建该函数不会启动加载。它可传给 `Fetch`、`Query` 和 `Prefetch`。
@@ -102,10 +180,11 @@ Client 先判断是否可复用缓存；需要加载时，才调用该 Fetcher �
 | --- | --- |
 | `NewBatcher(ctx, load, options)` | 创建批量加载器；`ctx` 管理其生命周期，`load` 为业务批量函数 |
 | `Load(ctx, key)` | 加入或创建该 key 的加载，并等待对应结果 |
+| `LoadMany(ctx, keys)` | 登记已知 key，立即执行排队工作，按输入顺序返回逐位置结果 |
 | `Fetcher(key)` | 返回供现有查询 API 调用的加载函数，不立即执行 |
 | `Close()` | 关闭加载器，释放等待者并取消执行中的批次；可重复调用 |
 
-`BatchFunc[K, V]` 的签名为 `func(context.Context, []K) (map[K]BatchResult[V], error)`。构造函数和 `Load` 必须接收非 nil 的 context。
+`BatchFunc[K, V]` 的签名为 `func(context.Context, []K) (map[K]BatchResult[V], error)`。构造函数、`Load` 和 `LoadMany` 必须接收非 nil 的 context。
 
 | `BatchOptions` 字段 | 默认值或约束 | 说明 |
 | --- | --- | --- |
