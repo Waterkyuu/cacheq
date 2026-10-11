@@ -124,7 +124,7 @@ func (h *MutationHandle[I, V]) Mutate(ctx context.Context, input I) (MutationRes
 
 // execute holds budget capacity only while the business callback is running.
 func (h *MutationHandle[I, V]) execute(ctx context.Context, input I) (V, error) {
-	release, err := h.options.Executor.acquire(ctx)
+	ctx, release, err := h.options.Executor.acquireContext(ctx)
 	if err != nil {
 		var zero V
 		return zero, err

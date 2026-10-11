@@ -438,9 +438,9 @@ func (c *Client) run(ctx context.Context, key any, pending *flight) (any, time.T
 		}
 		value, expiresAt, err := c.attempt(ctx, key, pending, previousErr)
 		previousErr = err
-		// Closed schedulers and overloaded budgets are terminal for this call.
-		// Retrying admission failures would amplify load while the backend is already saturated.
-		if errors.Is(err, ErrBatcherClosed) || errors.Is(err, ErrQueueFull) {
+		// Closed schedulers, overload, and recursive budgets cannot recover through retries.
+		unavailable := errors.Is(err, ErrBatcherClosed) || errors.Is(err, ErrQueueFull)
+		if unavailable || errors.Is(err, ErrExecutionReentry) {
 			return value, expiresAt, err
 		}
 		stopped := ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
@@ -471,7 +471,7 @@ func (c *Client) attempt(
 	pending *flight,
 	previousErr error,
 ) (any, time.Time, error) {
-	release, err := c.options.Executor.acquire(ctx)
+	ctx, release, err := c.options.Executor.acquireContext(ctx)
 	if err != nil {
 		return nil, time.Time{}, err
 	}

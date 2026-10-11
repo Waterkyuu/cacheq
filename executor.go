@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 )
 
 // ErrInvalidExecutionOptions indicates a non-positive concurrency limit or a negative queue capacity.
@@ -12,6 +13,10 @@ var ErrInvalidExecutionOptions = errors.New("invalid execution options")
 // ErrQueueFull indicates an execution budget has no active or queued capacity for new work.
 // Client retries never retry this admission failure.
 var ErrQueueFull = errors.New("execution queue is full")
+
+// ErrExecutionReentry indicates work waiting on an Executor already held by its caller's context.
+// Apply the budget at the backend boundary instead of acquiring it at both layers.
+var ErrExecutionReentry = errors.New("execution budget is already held by caller")
 
 // ExecutionOptions bounds concurrently running callbacks and callers waiting to start.
 type ExecutionOptions struct {
@@ -33,7 +38,7 @@ type ExecutionStats struct {
 
 // Executor is an explicitly shared concurrency budget with a bounded first-in-first-out queue.
 // Construct it with NewExecutor. It owns no goroutines or timers and needs no Close.
-// Do not acquire the same budget recursively; use it at the actual backend boundary for batched loads.
+// Recursive acquisition through a callback's context returns ErrExecutionReentry.
 type Executor struct {
 	// mu protects admission, queued handoffs, and usage statistics.
 	mu sync.Mutex
@@ -57,6 +62,12 @@ type executionWaiter struct {
 	granted bool
 }
 
+// executionContextKey identifies one budget's active callback ownership in a context chain.
+type executionContextKey struct {
+	// executor keeps ownership independent for distinct budgets used by nested callbacks.
+	executor *Executor
+}
+
 // NewExecutor validates capacities and constructs a reusable budget independent of any Client lifetime.
 func NewExecutor(options ExecutionOptions) (*Executor, error) {
 	if options.MaxConcurrent <= 0 || options.MaxQueued < 0 {
@@ -77,6 +88,9 @@ func (e *Executor) Stats() ExecutionStats {
 func (e *Executor) acquire(ctx context.Context) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if e.heldBy(ctx) {
+		return nil, ErrExecutionReentry
 	}
 	if e == nil {
 		return func() {}, nil
@@ -117,6 +131,31 @@ func (e *Executor) acquire(ctx context.Context) (func(), error) {
 		e.mu.Unlock()
 		return nil, ctx.Err()
 	}
+}
+
+// acquireContext marks slot ownership for nested operations until the callback releases capacity.
+func (e *Executor) acquireContext(ctx context.Context) (context.Context, func(), error) {
+	release, err := e.acquire(ctx)
+	if err != nil || e == nil {
+		return ctx, release, err
+	}
+	held := &atomic.Bool{}
+	held.Store(true)
+	ctx = context.WithValue(ctx, executionContextKey{executor: e}, held)
+	return ctx, func() {
+		// Callback contexts may escape; completed callbacks must not leave stale ownership markers.
+		held.Store(false)
+		release()
+	}, nil
+}
+
+// heldBy reports whether a callback in ctx's ancestry still owns capacity from this budget.
+func (e *Executor) heldBy(ctx context.Context) bool {
+	if e == nil {
+		return false
+	}
+	held, _ := ctx.Value(executionContextKey{executor: e}).(*atomic.Bool)
+	return held != nil && held.Load()
 }
 
 // release hands a slot to the next live waiter or returns it to unused capacity.
