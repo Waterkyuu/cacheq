@@ -28,9 +28,11 @@ type MutationOptions[I, V any] struct {
 	// Invalidate selects associated queries using Client.Invalidate's key, []any, or predicate contract.
 	// Nil callbacks or nil returned targets skip invalidation. Include authorization scope in selected keys.
 	Invalidate func(I, V) any
-	// InvalidateOptions selects whether associated observed queries refresh in the background.
-	// It does not wait for refresh completion or change in-flight invalidation semantics.
+	// InvalidateOptions selects background refresh and optional bounded in-flight follow-up behavior.
 	InvalidateOptions InvalidateOptions
+	// WaitForRefresh waits for associated post-invalidation refreshes using the Mutate context.
+	// Failures are reported through SyncErr after a committed write; false preserves background behavior.
+	WaitForRefresh bool
 	// Executor optionally overrides the Client budget for the business write; nil inherits it.
 	// Capacity is released before OnSuccess and invalidation, which may start their own loads.
 	Executor *Executor
@@ -40,7 +42,7 @@ type MutationOptions[I, V any] struct {
 type MutationResult[V any] struct {
 	// Data is the business write's return value and remains available when SyncErr is non-nil.
 	Data V
-	// SyncErr combines local synchronization and invalidation errors after write success.
+	// SyncErr combines local synchronization, invalidation, and optional refresh-wait errors after write success.
 	// Repair cache state instead of repeating a committed write solely because this error is non-nil.
 	SyncErr error
 }
@@ -56,6 +58,6 @@ type MutationSnapshot[V any] struct {
 	Status Status
 	// Err reports business execution failure, not post-write cache synchronization failure.
 	Err error
-	// SyncErr reports cache synchronization failure after a successful business write.
+	// SyncErr reports cache synchronization or opted-in refresh-wait failure after a successful business write.
 	SyncErr error
 }

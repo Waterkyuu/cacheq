@@ -94,7 +94,7 @@ list: Bob
 
 `rename.Mutate(ctx, "Bob")` 先修改后端数据。写入成功后，`OnSuccess` 将返回的 `User` 存入 `"user:42"`，`Invalidate` 使 `"users"` 失效。因为列表有启用的 `Query`，失效会触发后台刷新。
 
-`Mutate` 等待写入和同步回调完成，但不等待列表的后台刷新。最后的 `Fetch` 加入正在进行的刷新，或直接复用刷新完成后的数据，因此返回的新列表包含 Bob。
+默认情况下，`Mutate` 等待写入和同步回调完成，但不等待列表的后台刷新。本例最后的 `Fetch` 加入新启动的刷新，或直接复用刷新完成后的数据，因此返回的新列表包含 Bob。配置 `WaitForRefresh: true` 可以在 `Mutate` 内等待失效后的关联刷新。
 
 ## API 片段前提
 
@@ -135,11 +135,29 @@ options := cacheq.MutationOptions[string, User]{
 
 执行顺序是业务写入、`OnSuccess`、`Invalidate`。即使 `OnSuccess` 返回错误，仍继续执行失效。失效本身不等待刷新；后台加载错误通过对应的查询状态报告。
 
-正在加载时发生失效，已有加载不会被复制，其结果保持过期；完成后不会自动补发下一次加载。需要等待新鲜结果时，应根据[缓存失效](invalidation.zh-CN.md)中的规则调用 `Fetch` 或 `Refetch`。
+默认情况下，正在加载时发生失效，已有加载不会被复制，其结果保持过期，完成后不会自动补发下一次加载。`InvalidateOptions.RefetchAfterLoad` 可以启用一次有界后台补刷；`WaitForRefresh` 也会启用该行为，并等待其结果。详见[缓存失效](invalidation.zh-CN.md)。
+
+## `WaitForRefresh`：提交后等待刷新
+
+```go
+options := cacheq.MutationOptions[string, User]{
+	OnSuccess: func(_ string, user User) error {
+		return cacheq.Set(client, "user:42", user)
+	},
+	Invalidate:     func(string, User) any { return "users" },
+	WaitForRefresh: true,
+}
+```
+
+创建快速开始中的 Mutation 时使用此配置，`Mutate` 会等待列表的失效后刷新。如果较早的请求尚未结束，还会等待有界补刷。快速开始末尾的单独 `Fetch` 不再需要；检查 `err` 和 `result.SyncErr` 后，通过 `users.Snapshot().Data` 读取列表。
+
+等待期间，句柄保持 `Pending` 并拒绝重叠执行。仅刷新有启用查询对象的键，没有订阅或仅有禁用对象的键只标记过期；`RefetchNone` 禁止刷新。等待契约与 `Client.InvalidateAndWait` 相同，包括再次失效和本地替换错误。等待不保证不同 Mutation 句柄的业务执行顺序或服务端一致性。
+
+`Mutate` 的 context 和句柄生命周期限制等待。写入提交后取消，通过 `SyncErr` 报告，业务返回错误仍为 nil，状态仍为 `Success`。Client 关闭可能报告 `ErrClosed` 或 context 取消，取决于先观察到哪个信号。即使 context 已取消，较晚返回成功的写入仍会执行 `OnSuccess` 和失效；调用者结束等待后，Client 拥有的刷新可以继续。执行预算在缓存同步和等待刷新之前释放。
 
 ## 区分写入失败与同步失败
 
-`Mutate` 返回的 `error` 表示本次写入没有成功完成，包括调用被拒绝和业务函数返回错误。`result.SyncErr` 表示业务写入已经成功，但后续缓存更新或失效失败。
+`Mutate` 返回的 `error` 表示本次写入没有成功完成，包括调用被拒绝和业务函数返回错误。`result.SyncErr` 表示业务写入已经成功，但后续缓存更新、失效或启用的刷新等待失败。
 
 ```go
 result, err := rename.Mutate(ctx, "Bob")
@@ -177,6 +195,7 @@ return nil
 | `OnSuccess` | nil | 写入成功后更新本地缓存 |
 | `Invalidate` | nil | 选择写入成功后需要失效的查询 |
 | `InvalidateOptions` | `RefetchObserved` | 控制关联查询立即后台刷新或只标记过期 |
+| `WaitForRefresh` | false | 等待失效后的关联刷新，通过 `SyncErr` 报告失败 |
 | `Executor` | nil，继承 Client 配置 | 限制写入回调的并发和排队数量 |
 
 多份配置以最后一份为准，不合并字段。配置会被复制；回调捕获的应用数据仍需自行保护。缓存键和失效条件应包含影响结果的租户及用户范围。

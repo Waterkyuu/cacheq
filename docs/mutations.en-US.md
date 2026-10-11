@@ -94,7 +94,7 @@ list: Bob
 
 `rename.Mutate(ctx, "Bob")` first changes backend data. After success, `OnSuccess` stores the returned `User` under `"user:42"`, and `Invalidate` marks `"users"` stale. The list has an enabled `Query`, so invalidation starts a background refresh.
 
-`Mutate` waits for the write and synchronization callbacks, but not for the list's background refresh. The final `Fetch` joins that refresh or reuses its completed data, returning a list containing Bob.
+By default, `Mutate` waits for the write and synchronization callbacks, but not for the list's background refresh. In this example, the final `Fetch` joins the newly started refresh or reuses its completed data, returning a list containing Bob. Set `WaitForRefresh: true` to wait for associated post-invalidation refreshes within `Mutate`.
 
 ## Snippet prerequisites
 
@@ -135,11 +135,29 @@ This retains old detail and list data. A subsequent `Fetch`, new enabled `Query`
 
 Execution proceeds through the business write, `OnSuccess`, and then `Invalidate`. Invalidation still runs when `OnSuccess` returns an error. Invalidation itself does not wait for refreshes; background load errors are reported through the corresponding query state.
 
-Invalidating an active load does not duplicate it. Its result remains stale, and no follow-up load starts automatically. To wait for fresh data, use `Fetch` or `Refetch` according to the [invalidation rules](invalidation.en-US.md).
+By default, invalidating an active load does not duplicate it. Its result remains stale, and no follow-up load starts automatically. `InvalidateOptions.RefetchAfterLoad` opts into one bounded background follow-up; `WaitForRefresh` also enables that behavior and waits for its outcome. See the [invalidation rules](invalidation.en-US.md).
+
+## `WaitForRefresh`: wait after a committed write
+
+```go
+options := cacheq.MutationOptions[string, User]{
+	OnSuccess: func(_ string, user User) error {
+		return cacheq.Set(client, "user:42", user)
+	},
+	Invalidate:     func(string, User) any { return "users" },
+	WaitForRefresh: true,
+}
+```
+
+Use these options when constructing the quick-start Mutation. `Mutate` now waits for the list's post-invalidation refresh, including the bounded follow-up if an earlier request is still running. The separate final `Fetch` in the quick start is no longer needed; read `users.Snapshot().Data` after checking both `err` and `result.SyncErr`.
+
+The handle remains `Pending` and rejects overlapping executions during this wait. Enabled observed queries refresh; unobserved or disabled keys are only marked stale, and `RefetchNone` suppresses refreshing. The waiting contract is the same as `Client.InvalidateAndWait`, including further-invalidation and local-replacement errors. Waiting does not establish business ordering across Mutation handles or server-side consistency.
+
+The `Mutate` context and handle lifetime bound the wait. Cancellation after a committed write is reported through `SyncErr`, while the returned business error remains nil and status remains `Success`. Client closure can report `ErrClosed` or context cancellation, depending on which signal is observed first. A late successful write still runs `OnSuccess` and invalidation even if its context has already been canceled; Client-owned refreshes may continue after the caller stops waiting. Execution budget capacity is released before cache synchronization and refresh waiting.
 
 ## Distinguishing write failures from synchronization failures
 
-The `error` returned by `Mutate` means the write did not complete successfully, including rejected calls and business callback errors. `result.SyncErr` means the business write succeeded but a subsequent cache update or invalidation failed.
+The `error` returned by `Mutate` means the write did not complete successfully, including rejected calls and business callback errors. `result.SyncErr` means the business write succeeded but a subsequent cache update, invalidation, or opted-in refresh wait failed.
 
 ```go
 result, err := rename.Mutate(ctx, "Bob")
@@ -177,6 +195,7 @@ Successful zero-valued data is valid. A snapshot is a value and does not update 
 | `OnSuccess` | nil | Update local cache after write success |
 | `Invalidate` | nil | Select queries to invalidate after write success |
 | `InvalidateOptions` | `RefetchObserved` | Refresh observed queries in the background or only mark stale |
+| `WaitForRefresh` | false | Wait for associated post-invalidation refreshes; report failures through `SyncErr` |
 | `Executor` | nil, inherits Client configuration | Limit concurrent and queued write callbacks |
 
 The last options value wins; fields are not merged. Options are copied, but captured application data still needs synchronization. Cache keys and invalidation predicates should include tenant and user scope that affects results.

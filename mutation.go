@@ -107,7 +107,7 @@ func (h *MutationHandle[I, V]) Mutate(ctx context.Context, input I) (MutationRes
 		result.Data, err = h.execute(ctx, input)
 	}
 	if err == nil {
-		result.SyncErr = h.synchronize(input, result.Data)
+		result.SyncErr = h.synchronize(ctx, input, result.Data)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -150,14 +150,19 @@ func (h *MutationHandle[I, V]) admitLocked() error {
 }
 
 // synchronize runs both cache steps even when the local update fails, retaining both errors.
-func (h *MutationHandle[I, V]) synchronize(input I, value V) error {
+func (h *MutationHandle[I, V]) synchronize(ctx context.Context, input I, value V) error {
 	var updateErr, invalidateErr error
 	if h.options.OnSuccess != nil {
 		updateErr = h.options.OnSuccess(input, value)
 	}
 	if h.options.Invalidate != nil {
 		if target := h.options.Invalidate(input, value); target != nil {
-			invalidateErr = h.client.Invalidate(target, h.options.InvalidateOptions)
+			if h.options.WaitForRefresh {
+				// A confirmed commit still invalidates caches when cancellation races with write success.
+				_, invalidateErr = h.client.invalidateAndWait(ctx, target, h.options.InvalidateOptions)
+			} else {
+				invalidateErr = h.client.Invalidate(target, h.options.InvalidateOptions)
+			}
 		}
 	}
 	return errors.Join(updateErr, invalidateErr)
