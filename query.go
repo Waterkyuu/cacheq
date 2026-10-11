@@ -96,7 +96,7 @@ func (h *QueryHandle[V]) Snapshot() Snapshot[V] {
 	if h.err != nil {
 		return Snapshot[V]{Status: Error, Stale: true, Err: h.err}
 	}
-	return getSnapshot[V](h.client, h.key, h.observer.request.options)
+	return typedSnapshot[V](h.client.getSnapshot(h.key, reflect.TypeFor[V](), h.observer.request.options))
 }
 
 // Updates returns the initial and latest states; slow readers may skip intermediate transitions.
@@ -253,25 +253,35 @@ func Prefetch[V any](ctx context.Context, client *Client, key any, fetch Fetcher
 	return err
 }
 
+// Get reads cached state without requiring a result type, starting a request, or creating a subscription.
+// Data retains its dynamic type; use HasData to distinguish missing data from a cached nil or zero value.
+// Reads use Client freshness defaults and restart inactive retention without binding an unused key.
+// Invalid keys and closed clients return errors; existing result type bindings remain unchanged.
+func (c *Client) Get(key any) Snapshot[any] {
+	return c.getSnapshot(key, nil, c.options)
+}
+
 // Get reads typed cached state without starting a request or binding a previously unused key.
 // Incompatible result types return ErrTypeMismatch instead of panicking or exposing another query's data.
+// Use Client.Get to inspect cached state without specifying or checking a result type.
 func Get[V any](client *Client, key any) Snapshot[V] {
-	return getSnapshot[V](client, key, client.options)
+	return typedSnapshot[V](client.getSnapshot(key, reflect.TypeFor[V](), client.options))
 }
 
 // getSnapshot reads shared state using one consumer's freshness without changing another consumer's policy.
-func getSnapshot[V any](client *Client, key any, options Options) Snapshot[V] {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if err := client.checkLocked(key, reflect.TypeFor[V]()); err != nil {
-		return Snapshot[V]{Status: Error, Stale: true, Err: err}
+// A nil result type skips type matching while preserving key validation and cache lifecycle behavior.
+func (c *Client) getSnapshot(key any, typ reflect.Type, options Options) Snapshot[any] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.checkLocked(key, typ); err != nil {
+		return Snapshot[any]{Status: Error, Stale: true, Err: err}
 	}
-	if client.expireDataLocked(key) {
-		client.notifyLocked(key)
+	if c.expireDataLocked(key) {
+		c.notifyLocked(key)
 	}
-	client.touchCapacityLocked(key)
-	client.touchGCLocked(key)
-	return typedSnapshot[V](client.withFreshnessLocked(key, client.snapshotLocked(key), options))
+	c.touchCapacityLocked(key)
+	c.touchGCLocked(key)
+	return c.withFreshnessLocked(key, c.snapshotLocked(key), options)
 }
 
 // Set installs a typed local result, cancels older loads, and notifies all compatible handles.

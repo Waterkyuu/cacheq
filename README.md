@@ -38,6 +38,7 @@ consumers keep their own typed handles.
 - Freshness, background refresh, same-key request sharing, retries, and load timeouts.
 - Per-consumer freshness, retry filtering, and timeout overrides through query and fetch options.
 - Single-key, mixed-type batch, and predicate invalidation with optional deferred refresh.
+- Read cached state by key with `client.Get(key)`, or use `cacheq.Get[V]` for typed access.
 - Local writes, prefetching, cancellation, and inactive cache cleanup.
 - Concurrent loads for different keys can share a business-supplied bulk callback.
 - Conflict-safe local updates, typed mutations, and associated query invalidation.

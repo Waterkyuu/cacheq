@@ -48,6 +48,51 @@ These policies provide client defaults. [Per-consumer options](query-options.en-
 
 Configure [execution budgets](execution.en-US.md) to limit active loader attempts and queued loads. Queue time is included in the overall timeout.
 
+## `Client.Get`: inspect by key without a result type
+
+`client.Get(key)` returns `Snapshot[any]` containing the actual cached value and shared query state. No result type is required or checked. `Data` preserves its dynamic type; accessing concrete fields or methods requires a Go type assertion. Invalid keys return `ErrInvalidKey`, and closed clients return `ErrClosed` through `Snapshot.Err`.
+
+The following complete program reads the same cache through both APIs. Save it as `main.go` in a Go module that imports cacheq and run `go run .`.
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+)
+
+// main reads cached state with and without specifying a result type.
+func main() {
+	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	defer client.Close()
+	if err := cacheq.Set(client, "greeting", "hello"); err != nil {
+		panic(err)
+	}
+	state := client.Get("greeting")
+	if state.HasData {
+		fmt.Println("cached:", state.Data)
+	}
+	typed := cacheq.Get[string](client, "greeting")
+	if typed.HasData {
+		fmt.Println("typed:", typed.Data)
+	}
+}
+```
+
+Expected output:
+
+```text
+cached: hello
+typed: hello
+```
+
+Both APIs inspect without starting a request or creating a subscription. An unknown key returns `Idle`, `HasData: false`, and `Data: nil` from `Client.Get`; reading it does not bind a result type. `HasData` distinguishes missing data from cached nils or zero values. Reads use Client freshness defaults, enforce `MaxAge`, update LRU recency, and restart inactive retention. Reading expired data may notify existing query handles of its removal. Use handle `Updates()` for ongoing notifications.
+
+Cached data remains shared and read-only. Untyped reads do not change the key's type binding or relax type checks for writes, typed reads, or subscriptions.
+
 ## `Get[V]`: inspect without requesting
 
 ```go
@@ -57,7 +102,7 @@ if state.HasData {
 }
 ```
 
-No request or subscription is created. The explicit type is necessary because there is no fetcher to infer it from. An unknown key is `Idle`; reading it does not bind its type. Reads of cached state restart inactive retention. Use handle `Updates()` for ongoing notifications.
+Use `cacheq.Get[V]` when the result type is known and a typed `Snapshot[V]` is needed. The explicit type is necessary because there is no fetcher to infer it from. Incompatible static result types return `ErrTypeMismatch`; untyped `Client.Get` does not perform this check. Unlike an untyped read, a typed read of missing data returns the zero value of `V`. Both APIs otherwise have the same cache inspection and lifecycle behavior.
 
 ## `Set`: install local data
 
@@ -277,9 +322,9 @@ if errors.Is(state.Err, cacheq.ErrTypeMismatch) {
 | `ErrInvalidKey` | Nil or non-comparable key |
 | `ErrNoFetcher` | Query construction without a fetcher, or a required load without a loader |
 
-`Query` always requires a non-nil fetcher. `Fetch[V]` and `FetchWithExpiry[V]` may accept nil when fresh data already exists; stale or missing data returns `ErrNoFetcher`. Prefer `Get[V]` for inspection.
+`Query` always requires a non-nil fetcher. `Fetch[V]` and `FetchWithExpiry[V]` may accept nil when fresh data already exists; stale or missing data returns `ErrNoFetcher`. Use `Client.Get` for inspection without a result type, or `Get[V]` for typed inspection.
 
-Static and dynamic types differ: a `Query[any]` key is bound to `any`. Use `Set[any]` for that key; an inferred concrete string in `Set` binds as `string` and conflicts. Ordinary business queries should use concrete types.
+Static and dynamic types differ: `Get[any]` checks that the key is bound to `any`; it is not equivalent to `Client.Get`, which accepts any existing result type. A `Query[any]` key is bound to `any`. Use `Set[any]` for that key; an inferred concrete string in `Set` binds as `string` and conflicts. Ordinary business queries should use concrete types.
 
 ## Verification
 

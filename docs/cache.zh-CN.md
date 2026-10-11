@@ -48,6 +48,51 @@ defer client.Close()
 
 通过[执行预算](execution.zh-CN.md)限制活动加载尝试和排队数量，排队时间计入整体超时。
 
+## `Client.Get`：按键读取，无需指定结果类型
+
+`client.Get(key)` 返回 `Snapshot[any]`，包含实际缓存值和共享查询状态，无需指定或检查结果类型。`Data` 保留动态类型；访问具体类型的字段或方法时，需要使用 Go 类型断言。非法键通过 `Snapshot.Err` 返回 `ErrInvalidKey`，已关闭客户端返回 `ErrClosed`。
+
+以下完整程序通过两种 API 读取同一份缓存。将代码保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+)
+
+// main reads cached state with and without specifying a result type.
+func main() {
+	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	defer client.Close()
+	if err := cacheq.Set(client, "greeting", "hello"); err != nil {
+		panic(err)
+	}
+	state := client.Get("greeting")
+	if state.HasData {
+		fmt.Println("cached:", state.Data)
+	}
+	typed := cacheq.Get[string](client, "greeting")
+	if typed.HasData {
+		fmt.Println("typed:", typed.Data)
+	}
+}
+```
+
+预期输出：
+
+```text
+cached: hello
+typed: hello
+```
+
+两种 API 都不启动请求、不建立订阅。未知键在 `Client.Get` 中返回 `Idle`、`HasData: false` 和 `Data: nil`；读取不会绑定结果类型。`HasData` 用于区分缺失数据与已缓存的 nil 或零值。读取使用客户端默认新鲜期，执行 `MaxAge` 检查，更新 LRU 使用顺序，并重新计算闲置保留期。读取发现超龄数据时，可能通知已有查询对象数据已被移除。持续更新通知使用查询对象的 `Updates()`。
+
+缓存值仍是共享的只读数据。无类型读取不会改变键的类型绑定，也不会放宽写入、类型化读取或订阅的类型检查。
+
 ## `Get[V]`：读取缓存状态
 
 ```go
@@ -57,9 +102,7 @@ if state.HasData {
 }
 ```
 
-`Get` 不需要加载函数，不启动请求，也不建立订阅。显式写 `[string]` 是因为没有加载函数可供推断结果类型。未知键返回 `Idle`，不会把这个键绑定成 `string`。
-
-读取已有缓存会重新计算闲置保留期。持续更新通知使用查询对象的 `Updates()`，见[查询文档](queries.zh-CN.md)。
+已知结果类型且需要类型化的 `Snapshot[V]` 时，使用 `cacheq.Get[V]`。显式写 `[string]` 是因为没有加载函数可供推断结果类型。静态结果类型不兼容时返回 `ErrTypeMismatch`；无类型读取 `Client.Get` 不执行此检查。与无类型读取不同，类型化读取在数据缺失时返回 `V` 的零值。两种 API 的其他缓存读取和生命周期行为一致。
 
 ## `Set`：直接安装本地数据
 
@@ -281,9 +324,9 @@ if errors.Is(state.Err, cacheq.ErrTypeMismatch) {
 | `ErrInvalidKey` | 键为 nil，或包含不能比较的值 |
 | `ErrNoFetcher` | 创建查询没有加载函数，或需要请求却没有加载函数 |
 
-`Query` 始终需要非 nil 加载函数。`Fetch[V]` 和 `FetchWithExpiry[V]` 可以传 nil 来读取**已有新鲜缓存**；缺失或过期时返回 `ErrNoFetcher`。只想读状态时使用 `Get[V]`。
+`Query` 始终需要非 nil 加载函数。`Fetch[V]` 和 `FetchWithExpiry[V]` 可以传 nil 来读取**已有新鲜缓存**；缺失或过期时返回 `ErrNoFetcher`。无需指定结果类型的状态读取使用 `Client.Get`，类型化读取使用 `Get[V]`。
 
-静态类型与动态值不同：`Query[any]` 的键绑定的是 `any`，对它写数据应使用 `Set[any]`；直接传入具体字符串的 `Set` 会推断为 `string`，因此产生类型冲突。正常业务应使用具体类型。
+静态类型与动态值不同：`Get[any]` 要求键绑定的静态类型是 `any`，不等同于可读取任意已有结果类型的 `Client.Get`。`Query[any]` 的键绑定的是 `any`，对它写数据应使用 `Set[any]`；直接传入具体字符串的 `Set` 会推断为 `string`，因此产生类型冲突。正常业务应使用具体类型。
 
 ## 验证
 
