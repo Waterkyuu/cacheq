@@ -85,7 +85,7 @@ The two `Query` handles load in the background, placing IDs 42 and 43 into one b
 
 ## Query API integration
 
-`products.Fetcher(42)` returns a `Fetcher[V]` bound to batch key `42`. Creating the function starts no work. Pass it to `Fetch`, `FetchWithOptions`, `Query`, or `Prefetch`.
+`products.Fetcher(42)` returns a `Fetcher[V]` bound to batch key `42`. Creating the function starts no work. Pass it to `Fetch`, `Query`, or `Prefetch`.
 
 The Client first decides whether cached data is reusable. Only required loads invoke the Fetcher and enter the collection window. Each Client key retains independent cached data and subscriptions.
 

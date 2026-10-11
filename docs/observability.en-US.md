@@ -80,7 +80,7 @@ if completed > 0 {
 
 | Field | Meaning |
 | --- | --- |
-| `CacheHits` | Valid non-forced `Fetch`, `FetchWithOptions`, `FetchWithExpiry`, and `Prefetch` calls, enabled `Query` construction, or disabled-to-enabled transitions reusing fresh data |
+| `CacheHits` | Valid non-forced `Fetch`, `FetchWithExpiry`, and `Prefetch` calls, enabled `Query` construction, or disabled-to-enabled transitions reusing fresh data |
 | `CacheMisses` | Those decisions without fresh data, counted once per call or transition, including `ErrNoFetcher` |
 | `MergedRequests` | Calls or enabled consumers joining existing work, counted once even if owner cancellation requires a replacement load |
 | `Loads` | Shared operations started, including explicit `Refetch` and automatic invalidation refreshes; retries belong to the same operation |

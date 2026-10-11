@@ -85,7 +85,7 @@ cached: product 42; bulk calls: 1
 
 ## 接入查询 API
 
-`products.Fetcher(42)` 返回绑定批量 key `42` 的 `Fetcher[V]`，创建该函数不会启动加载。它可传给 `Fetch`、`FetchWithOptions`、`Query` 和 `Prefetch`。
+`products.Fetcher(42)` 返回绑定批量 key `42` 的 `Fetcher[V]`，创建该函数不会启动加载。它可传给 `Fetch`、`Query` 和 `Prefetch`。
 
 Client 先判断是否可复用缓存；需要加载时，才调用该 Fetcher 并进入批量收集窗口。每个 Client key 保留独立的缓存条目和订阅。
 

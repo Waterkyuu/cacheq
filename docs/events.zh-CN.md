@@ -142,7 +142,7 @@ go func() {
 
 | `Trigger` | 对应操作 |
 | --- | --- |
-| `TriggerFetch` | `Fetch`、`FetchWithOptions`、`FetchWithExpiry` |
+| `TriggerFetch` | `Fetch`、`FetchWithExpiry` |
 | `TriggerQuery` | 创建启用的 `Query` 时自动加载或复用缓存 |
 | `TriggerEnable` | `SetEnabled(true)` 从禁用切换为启用 |
 | `TriggerRefetch` | `QueryHandle.Refetch` |

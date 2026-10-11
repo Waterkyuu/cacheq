@@ -142,7 +142,7 @@ Call `subscription.Close()` when the consumer leaves. This closes only diagnosti
 
 | `Trigger` | Operation |
 | --- | --- |
-| `TriggerFetch` | `Fetch`, `FetchWithOptions`, `FetchWithExpiry` |
+| `TriggerFetch` | `Fetch`, `FetchWithExpiry` |
 | `TriggerQuery` | Automatic loading or cache reuse when constructing an enabled `Query` |
 | `TriggerEnable` | `SetEnabled(true)` transitioning from disabled to enabled |
 | `TriggerRefetch` | `QueryHandle.Refetch` |
