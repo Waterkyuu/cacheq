@@ -20,17 +20,21 @@ var ErrBatcherClosed = errors.New("batcher is closed")
 // BatchOptions controls the collection window and the number of unique keys per callback.
 type BatchOptions struct {
 	// Wait starts with the first queued key; zero adds no intentional collection delay.
+	// LoadMany dispatches queued work immediately instead of waiting for this window.
 	Wait time.Duration
 	// MaxBatchSize is the positive limit of unique keys per callback.
 	// Reaching it dispatches immediately, without waiting for the collection window.
 	MaxBatchSize int
+	// Executor optionally bounds active and queued bulk callbacks, not individual keys.
+	// Nil leaves batch execution unrestricted. Share a budget across batchers for one backend.
+	Executor *Executor
 }
 
-// BatchResult represents a value and an optional application error for one requested key.
+// BatchResult represents per-key data and an optional error from a callback or LoadMany.
 type BatchResult[V any] struct {
 	// Data contains this key's result, including valid zero values or fallback data.
 	Data V
-	// Err reports a failure specific to this key, independently of other keys in the batch.
+	// Err reports this key's failure, including callback, admission, lifecycle, and cancellation errors.
 	Err error
 }
 

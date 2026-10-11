@@ -80,7 +80,7 @@ if completed > 0 {
 
 | 字段 | 含义 |
 | --- | --- |
-| `CacheHits` | 合法的非强制 `Fetch`、`FetchWithOptions`、`FetchWithExpiry`、`Prefetch` 调用，以及创建启用的 `Query` 或从禁用变为启用时，复用了新鲜数据 |
+| `CacheHits` | 合法的非强制 `Fetch`、`FetchWithExpiry`、`Prefetch` 调用，以及创建启用的 `Query` 或从禁用变为启用时，复用了新鲜数据 |
 | `CacheMisses` | 上述操作没有新鲜数据，每次调用或启用转换只计一次，包括返回 `ErrNoFetcher` 的情况 |
 | `MergedRequests` | 加入已有加载的调用或启用消费者数；原所有者取消后需要替代加载，也不会把同一个调用重复计数 |
 | `Loads` | 启动的共享加载次数，包括手动 `Refetch` 和失效后自动刷新；重试属于同一次加载 |

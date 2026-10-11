@@ -55,8 +55,8 @@ test("every published page has server-rendered content and working internal link
 	const files = await htmlFiles(build);
 	assert.equal(
 		files.filter((file) => file.endsWith("index.html")).length,
-		24,
-		"Each language must publish one homepage and eleven guides without fallback duplicates",
+		34,
+		"Each language must publish one homepage and sixteen guides without fallback duplicates",
 	);
 	for (const file of files) {
 		const html = await readFile(file, "utf8");
@@ -78,11 +78,16 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			"docs/",
 			"docs/queries/",
 			"docs/query-options/",
+			"docs/query-filters/",
+			"docs/query-tags/",
 			"docs/cache/",
 			"docs/invalidation/",
 			"docs/observability/",
 			"docs/events/",
 			"docs/batching/",
+			"docs/updates/",
+			"docs/mutations/",
+			"docs/execution/",
 			"docs/bubbletea/",
 			"docs/mcp/",
 			"docs/versioning/",
@@ -118,7 +123,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			}
 		}
 	}
-	assert.equal(descriptions.size, 24);
+	assert.equal(descriptions.size, 34);
 	assert.ok((await readFile(path.join(build, "cacheq.png"))).length > 0);
 });
 
@@ -144,8 +149,46 @@ test("Go search results resolve to published sections and public source declarat
 	assert.ok(index.some((record) => record.title === "EventSubscription.Dropped"));
 	assert.ok(index.some((record) => record.title === "NewBatcher"));
 	assert.ok(index.some((record) => record.title === "Query"));
+	for (const declaration of [
+		"Update",
+		"ErrUpdateConflict",
+		"Mutation",
+		"MutationHandle.Mutate",
+		"NewExecutor",
+		"Executor.Stats",
+		"Client.InvalidateAndWait",
+		"RefreshResult",
+		"ErrRefreshInvalidated",
+		"ErrRefreshSuperseded",
+		"QueryFilter",
+		"Batcher.LoadMany",
+	]) {
+		assert.ok(
+			index.some((record) => record.title === declaration),
+			`Missing API search entry: ${declaration}`,
+		);
+	}
 	for (const locale of ["en", "zh-CN"]) {
 		const prefix = locale === "en" ? "" : "zh-CN/";
+		for (const [slug, declaration] of [
+			["query-filters", "QueryFilter"],
+			["query-tags", "QueryDefinition.Tags"],
+			["updates", "ErrUpdateConflict"],
+			["invalidation", "InvalidateAndWait"],
+			["mutations", "SyncErr"],
+			["execution", "MaxConcurrent"],
+			["batching", "LoadMany"],
+		]) {
+			assert.ok(
+				documents.some(
+					(record) =>
+						record.language === locale &&
+						record.url.startsWith(`/cacheq/${prefix}docs/${slug}/`) &&
+						record.content.includes(declaration),
+				),
+				`Missing ${locale} ${slug} search coverage`,
+			);
+		}
 		const route = `/cacheq/${prefix}docs/events/`;
 		assert.ok(
 			documents.some(
@@ -185,8 +228,18 @@ test("new feature guides are discoverable and render the maintained API document
 		const homepage = await readFile(path.join(build, prefix, "index.html"), "utf8");
 		const queries = await readFile(path.join(build, prefix, "docs/queries/index.html"), "utf8");
 		for (const [slug, declarations] of [
+			["query-options", ["QueryOptions", "QueryDefinition", "Disable", "Prefetch"]],
+			["query-filters", ["QueryFilter", "Predicate", "InvalidateAndWait", "Cancel", "Remove"]],
+			[
+				"query-tags",
+				["QueryDefinition.Tags", "QueryFilter.Tags", "InvalidateAndWait", "Cancel", "Remove"],
+			],
 			["events", ["SubscribeEvents", "EventResultDiscarded", "Dropped()"]],
-			["batching", ["NewBatcher", "MaxBatchSize", "ErrBatchResultMissing"]],
+			["updates", ["Update", "ErrUpdateConflict", "ErrNoData"]],
+			["mutations", ["Mutation", "SyncErr", "ErrMutationBusy", "OnSuccess", "InvalidateAndWait"]],
+			["invalidation", ["InvalidateAndWait", "RefetchAfterLoad", "ErrRefreshInvalidated"]],
+			["execution", ["NewExecutor", "MaxConcurrent", "ErrQueueFull"]],
+			["batching", ["NewBatcher", "LoadMany", "MaxBatchSize", "ErrBatchResultMissing"]],
 			["bubbletea", ["Bubble Tea", "examples/bubbletea", "QueryHandle"]],
 		] as const) {
 			const route = `/cacheq/${prefix}docs/${slug}/`;

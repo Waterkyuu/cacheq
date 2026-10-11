@@ -42,12 +42,32 @@ export const chapters: Chapter[] = [
 	},
 	{
 		id: "invalidation",
-		zh: "缓存失效",
-		en: "Invalidation",
+		zh: "失效与刷新",
+		en: "Invalidation & refresh",
 		description: {
-			en: "Invalidate cacheq data in Go by key, batch, or predicate. Keep cached results available and choose background refresh or deferred loading after a mutation.",
+			en: "Invalidate cacheq queries by key, batch, or predicate. Await post-invalidation refreshes and coalesce bounded follow-up loads after mutations.",
 			"zh-CN":
-				"在 Go 中使用 cacheq 按单键、批量或条件使缓存失效，保留已有数据，并在业务更新后选择后台刷新或延迟加载。",
+				"在 Go 中使用 cacheq 按键、批量或条件使缓存失效，等待关联刷新，并在加载期间失效后执行有界补刷。",
+		},
+	},
+	{
+		id: "query-filters",
+		zh: "统一查询筛选",
+		en: "Query filters",
+		description: {
+			en: "Reuse cacheq QueryFilter selections across invalidation, awaited refresh, cancellation, and removal in Go. Combine exact keys and predicates with tenant-scoped query keys.",
+			"zh-CN":
+				"在 Go 中通过 cacheq QueryFilter 为失效、等待刷新、取消和删除复用同一组查询筛选，结合精确键、条件函数和包含租户范围的查询键。",
+		},
+	},
+	{
+		id: "query-tags",
+		zh: "查询标签",
+		en: "Query tags",
+		description: {
+			en: "Group related cacheq queries with QueryDefinition.Tags and select labels through QueryFilter for invalidation, awaited refresh, cancellation, and removal in Go.",
+			"zh-CN":
+				"在 Go 中通过 cacheq QueryDefinition.Tags 声明关联查询分组，使用 QueryFilter 按标签失效、等待刷新、取消和删除，并管理标签登记与生命周期。",
 		},
 	},
 	{
@@ -95,9 +115,9 @@ export const chapters: Chapter[] = [
 		zh: "查询配置",
 		en: "Query options",
 		description: {
-			en: "Override cacheq Client defaults per query or fetch in Go. Configure independent freshness, filtered retries, and timeouts while sharing same-key data and requests.",
+			en: "Reuse cacheq QueryDefinition values and shared QueryOptions across reading, subscribing, and prefetching in Go. Configure freshness, retries, timeouts, and automatic loading.",
 			"zh-CN":
-				"在 Go 中通过 cacheq 的每次查询或获取调用覆盖客户端默认配置，独立判断新鲜度，设置重试错误判断和超时，同时共享同键数据与请求。",
+				"在 Go 中通过 cacheq QueryDefinition 复用类型化查询，并在读取、订阅和预加载间共享 QueryOptions，配置新鲜期、重试、超时和自动加载。",
 		},
 	},
 	{
@@ -105,9 +125,9 @@ export const chapters: Chapter[] = [
 		zh: "自动批量加载",
 		en: "Automatic batch loading",
 		description: {
-			en: "Group concurrent cacheq loads for different keys into bulk callbacks in Go. Configure collection windows, handle per-key results, and integrate batching with cached queries.",
+			en: "Group concurrent cacheq loads or load known keys with LoadMany in Go. Configure bounded bulk callbacks, handle ordered per-key outcomes, and integrate batching with cached queries.",
 			"zh-CN":
-				"使用 cacheq 在 Go 中合并不同 key 的并发加载，配置批量收集窗口，处理逐 key 结果，并与查询缓存、重试及取消策略集成。",
+				"使用 cacheq 在 Go 中合并并发加载，或通过 LoadMany 加载已知 key。限制批次大小，按输入顺序处理逐 key 结果，并与查询缓存及取消策略集成。",
 		},
 	},
 	{
@@ -118,6 +138,34 @@ export const chapters: Chapter[] = [
 			en: "Run the cacheq Bubble Tea task board in Go. Share query data across views, connect updates to the UI loop, refresh after mutations, and retain data when loads fail.",
 			"zh-CN":
 				"运行 cacheq 的 Go Bubble Tea 任务看板示例，跨视图共享查询，将更新接入界面消息循环，并处理修改后刷新、加载失败和资源清理。",
+		},
+	},
+	{
+		id: "updates",
+		zh: "原子缓存更新",
+		en: "Atomic cache updates",
+		description: {
+			en: "Transform cached values with revision checks and explicit conflicts in cacheq.",
+			"zh-CN": "使用 cacheq 在锁外转换已有缓存值，通过版本检查识别并发修改，防止覆盖新数据。",
+		},
+	},
+	{
+		id: "mutations",
+		zh: "写入与关联失效",
+		en: "Mutations & synchronization",
+		description: {
+			en: "Execute typed cacheq mutations, observe write state, and synchronize associated queries after a confirmed commit.",
+			"zh-CN":
+				"使用 cacheq 执行类型安全写入、订阅执行状态，并在提交成功后更新缓存、使关联查询失效。",
+		},
+	},
+	{
+		id: "execution",
+		zh: "执行并发预算",
+		en: "Execution budgets",
+		description: {
+			en: "Bound cacheq loader, mutation, and batch concurrency with reusable execution budgets, FIFO queues, and cancellation.",
+			"zh-CN": "通过 cacheq 可共享的执行预算限制查询、写入和批次并发，管理 FIFO 排队、过载与取消。",
 		},
 	},
 ];
