@@ -115,6 +115,7 @@ meaning, contract, or reason for existing instead of translating its syntax.
 
 ## Testing
 
+- For every new feature, write unit tests and end-to-end tests before implementing.
 - Test observable behavior rather than implementation details.
 - Use table-driven tests when several cases share the same setup and assertion shape.
 - Cover success, failure, cancellation, and boundary cases when relevant.
