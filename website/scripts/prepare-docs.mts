@@ -120,6 +120,34 @@ export const chapters: Chapter[] = [
 				"运行 cacheq 的 Go Bubble Tea 任务看板示例，跨视图共享查询，将更新接入界面消息循环，并处理修改后刷新、加载失败和资源清理。",
 		},
 	},
+	{
+		id: "updates",
+		zh: "原子缓存更新",
+		en: "Atomic cache updates",
+		description: {
+			en: "Transform cached values with revision checks and explicit conflicts in cacheq.",
+			"zh-CN": "使用 cacheq 在锁外转换已有缓存值，通过版本检查识别并发修改，防止覆盖新数据。",
+		},
+	},
+	{
+		id: "mutations",
+		zh: "写入与关联失效",
+		en: "Mutations & synchronization",
+		description: {
+			en: "Execute typed cacheq mutations, observe write state, and synchronize associated queries after a confirmed commit.",
+			"zh-CN":
+				"使用 cacheq 执行类型安全写入、订阅执行状态，并在提交成功后更新缓存、使关联查询失效。",
+		},
+	},
+	{
+		id: "execution",
+		zh: "执行并发预算",
+		en: "Execution budgets",
+		description: {
+			en: "Bound cacheq loader, mutation, and batch concurrency with reusable execution budgets, FIFO queues, and cancellation.",
+			"zh-CN": "通过 cacheq 可共享的执行预算限制查询、写入和批次并发，管理 FIFO 排队、过载与取消。",
+		},
+	},
 ];
 
 // Adapt repository documentation without creating another maintained copy.

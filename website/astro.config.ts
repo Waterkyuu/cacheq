@@ -58,6 +58,21 @@ export default defineConfig({
 					label: "Automatic batch loading",
 					translations: { "zh-CN": "自动批量加载" },
 				},
+				{
+					slug: "docs/updates",
+					label: "Atomic cache updates",
+					translations: { "zh-CN": "原子缓存更新" },
+				},
+				{
+					slug: "docs/mutations",
+					label: "Mutations & synchronization",
+					translations: { "zh-CN": "写入与关联失效" },
+				},
+				{
+					slug: "docs/execution",
+					label: "Execution budgets",
+					translations: { "zh-CN": "执行并发预算" },
+				},
 				{ slug: "docs/invalidation", label: "Invalidation", translations: { "zh-CN": "缓存失效" } },
 				{
 					slug: "docs/observability",

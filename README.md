@@ -40,6 +40,8 @@ consumers keep their own typed handles.
 - Single-key, mixed-type batch, and predicate invalidation with optional deferred refresh.
 - Local writes, prefetching, cancellation, and inactive cache cleanup.
 - Concurrent loads for different keys can share a business-supplied bulk callback.
+- Conflict-safe local updates, typed mutations, and associated query invalidation.
+- Shared execution budgets bound concurrent query, batch, and mutation callbacks.
 - Per-key diagnostic events explain cache decisions, shared loads, retries, and removal causes.
 
 ## Install
@@ -160,6 +162,9 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | [Automatic batch loading](docs/batching.en-US.md) | Different-key batching, existing query API integration, per-key results, cancellation, and a runnable example |
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
 | [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
+| [Atomic cache updates](docs/updates.en-US.md) | Conflict-safe typed transformations, immutable values, and explicit retry contracts |
+| [Mutations & synchronization](docs/mutations.en-US.md) | Write state, cache synchronization, associated invalidation, and separate synchronization errors |
+| [Execution budgets](docs/execution.en-US.md) | Shared concurrency limits, bounded FIFO queues, overload handling, and cancellation |
 | [Observability](docs/observability.en-US.md) | Cache hits, shared requests, load outcomes and duration, retries, and cleanup statistics |
 | [Diagnostic events](docs/events.en-US.md) | Per-key load causes and sources, shared operation IDs, joins, retries, discarded results, and bounded subscriptions |
 | [MCP resource caching](docs/mcp.en-US.md) | Server-side reuse, remaining TTL, change notifications, private scopes, and e2e |

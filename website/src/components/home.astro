@@ -87,6 +87,24 @@ const guides = [
 			: "Run a task board with shared views, refreshes, and error recovery.",
 		api: "Query · Updates · Invalidate",
 	},
+	{
+		slug: "updates",
+		title: chinese ? "原子缓存更新" : "Atomic cache updates",
+		description: chinese ? "转换已有缓存数据，检测并发修改冲突。" : "Transform cached data without overwriting concurrent changes.",
+		api: "Update · ErrUpdateConflict",
+	},
+	{
+		slug: "mutations",
+		title: chinese ? "写入与关联失效" : "Mutations & synchronization",
+		description: chinese ? "订阅写入状态，成功后同步关联查询。" : "Observe writes and synchronize related queries after success.",
+		api: "Mutation · SyncErr · Invalidate",
+	},
+	{
+		slug: "execution",
+		title: chinese ? "执行并发预算" : "Execution budgets",
+		description: chinese ? "限制后端并发与排队数量，支持共享预算。" : "Bound backend concurrency and queued work across consumers.",
+		api: "NewExecutor · MaxConcurrent · MaxQueued",
+	},
 ];
 ---
 

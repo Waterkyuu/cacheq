@@ -55,8 +55,8 @@ test("every published page has server-rendered content and working internal link
 	const files = await htmlFiles(build);
 	assert.equal(
 		files.filter((file) => file.endsWith("index.html")).length,
-		24,
-		"Each language must publish one homepage and eleven guides without fallback duplicates",
+		30,
+		"Each language must publish one homepage and fourteen guides without fallback duplicates",
 	);
 	for (const file of files) {
 		const html = await readFile(file, "utf8");
@@ -83,6 +83,9 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			"docs/observability/",
 			"docs/events/",
 			"docs/batching/",
+			"docs/updates/",
+			"docs/mutations/",
+			"docs/execution/",
 			"docs/bubbletea/",
 			"docs/mcp/",
 			"docs/versioning/",
@@ -118,7 +121,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			}
 		}
 	}
-	assert.equal(descriptions.size, 24);
+	assert.equal(descriptions.size, 30);
 	assert.ok((await readFile(path.join(build, "cacheq.png"))).length > 0);
 });
 
@@ -144,8 +147,36 @@ test("Go search results resolve to published sections and public source declarat
 	assert.ok(index.some((record) => record.title === "EventSubscription.Dropped"));
 	assert.ok(index.some((record) => record.title === "NewBatcher"));
 	assert.ok(index.some((record) => record.title === "Query"));
+	for (const declaration of [
+		"Update",
+		"ErrUpdateConflict",
+		"Mutation",
+		"MutationHandle.Mutate",
+		"NewExecutor",
+		"Executor.Stats",
+	]) {
+		assert.ok(
+			index.some((record) => record.title === declaration),
+			`Missing API search entry: ${declaration}`,
+		);
+	}
 	for (const locale of ["en", "zh-CN"]) {
 		const prefix = locale === "en" ? "" : "zh-CN/";
+		for (const [slug, declaration] of [
+			["updates", "ErrUpdateConflict"],
+			["mutations", "SyncErr"],
+			["execution", "MaxConcurrent"],
+		]) {
+			assert.ok(
+				documents.some(
+					(record) =>
+						record.language === locale &&
+						record.url.startsWith(`/cacheq/${prefix}docs/${slug}/`) &&
+						record.content.includes(declaration),
+				),
+				`Missing ${locale} ${slug} search coverage`,
+			);
+		}
 		const route = `/cacheq/${prefix}docs/events/`;
 		assert.ok(
 			documents.some(
@@ -186,6 +217,9 @@ test("new feature guides are discoverable and render the maintained API document
 		const queries = await readFile(path.join(build, prefix, "docs/queries/index.html"), "utf8");
 		for (const [slug, declarations] of [
 			["events", ["SubscribeEvents", "EventResultDiscarded", "Dropped()"]],
+			["updates", ["Update", "ErrUpdateConflict", "ErrNoData"]],
+			["mutations", ["Mutation", "SyncErr", "ErrMutationBusy"]],
+			["execution", ["NewExecutor", "MaxConcurrent", "ErrQueueFull"]],
 			["batching", ["NewBatcher", "MaxBatchSize", "ErrBatchResultMissing"]],
 			["bubbletea", ["Bubble Tea", "examples/bubbletea", "QueryHandle"]],
 		] as const) {
