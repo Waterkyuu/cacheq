@@ -67,7 +67,7 @@ func (c *Client) InvalidateAndWait(
 	return c.invalidateAndWait(ctx, target, lastInvalidateOptions(options))
 }
 
-// invalidateAndWait preserves post-commit invalidation even when a Mutation context is canceled.
+// invalidateAndWait schedules selected refreshes before collecting their completion results.
 func (c *Client) invalidateAndWait(
 	ctx context.Context,
 	target any,

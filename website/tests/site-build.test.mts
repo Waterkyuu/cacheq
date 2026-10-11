@@ -223,7 +223,7 @@ test("new feature guides are discoverable and render the maintained API document
 		for (const [slug, declarations] of [
 			["events", ["SubscribeEvents", "EventResultDiscarded", "Dropped()"]],
 			["updates", ["Update", "ErrUpdateConflict", "ErrNoData"]],
-			["mutations", ["Mutation", "SyncErr", "ErrMutationBusy", "WaitForRefresh"]],
+			["mutations", ["Mutation", "SyncErr", "ErrMutationBusy", "OnSuccess", "InvalidateAndWait"]],
 			["invalidation", ["InvalidateAndWait", "RefetchAfterLoad", "ErrRefreshInvalidated"]],
 			["execution", ["NewExecutor", "MaxConcurrent", "ErrQueueFull"]],
 			["batching", ["NewBatcher", "MaxBatchSize", "ErrBatchResultMissing"]],
