@@ -75,7 +75,7 @@ type EventTrigger uint8
 const (
 	// TriggerNone indicates the event is not associated with a query API decision.
 	TriggerNone EventTrigger = iota
-	// TriggerFetch identifies Fetch, FetchWithOptions, or FetchWithExpiry.
+	// TriggerFetch identifies Fetch or FetchWithExpiry.
 	TriggerFetch
 	// TriggerQuery identifies automatic loading during Query construction.
 	TriggerQuery

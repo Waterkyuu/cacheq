@@ -2,7 +2,7 @@
 
 [简体中文](query-options.zh-CN.md)
 
-`QueryOptions` overrides client defaults for an individual `Query` handle. Use it when consumers share a key but need different freshness, retry, or timeout policies. `FetchWithOptions` accepts `FetchOptions` for the same overrides on an imperative read.
+`QueryOptions` overrides client defaults for an individual `Query` handle. Use it when consumers share a key but need different freshness, retry, or timeout policies. Pass optional `FetchOptions` directly to `Fetch` to override the same settings on an imperative read.
 
 ## Quick start
 
@@ -67,7 +67,7 @@ func main() {
 	)
 	defer live.Close()
 
-	value, err := cacheq.FetchWithOptions(
+	value, err := cacheq.Fetch(
 		context.Background(),
 		client,
 		"greeting",
@@ -92,6 +92,12 @@ steady stale=false; live stale=true
 loads=1; retries=1
 ```
 
+## `Fetch`: optional per-call configuration
+
+Without options, `Fetch(ctx, client, key, load)` uses Client defaults. Append `FetchOptions` to the same entry point to override them, as with `StaleTime: &hour` in the quick start.
+
+An empty `FetchOptions{}` and nil fields inherit defaults. Like `Query`, multiple options values use only the last value without merging fields. Fields omitted from that last value inherit Client defaults again. Options affect only this call, not the shared Client.
+
 ## Configuration and explicit zero values
 
 | Field | Omitted / nil | Explicit override |
@@ -113,7 +119,7 @@ Pointer values are copied when a call or handle is created. Later mutation of th
 
 ## Shared data, independent freshness
 
-For ordinary successful loads and `Set`, each consumer uses the shared `UpdatedAt` and its own `StaleTime` to calculate `Stale` and `ExpiresAt`. `Get`, `Fetch`, and `Prefetch` use Client defaults. A caller with a longer window may reuse data that another consumer considers stale. Changing one consumer's freshness does not register settings for later callers.
+For ordinary successful loads and `Set`, each consumer uses the shared `UpdatedAt` and its own `StaleTime` to calculate `Stale` and `ExpiresAt`. `Get`, `Fetch` without options, and `Prefetch` use Client defaults. A caller with a longer window may reuse data that another consumer considers stale. Changing one consumer's freshness does not register settings for later callers.
 
 `FetchWithExpiry` supplies an authoritative absolute deadline, including for explicitly cached fallback data and errors. Consumer `StaleTime` cannot shorten or extend this deadline. Client `MaxAge` caps availability and freshness in either case. Capacity, GC, and the clock remain Client policies.
 
@@ -126,6 +132,12 @@ The consumer starting a load supplies its loader, retry count, predicate, backof
 Automatic invalidation refresh uses the oldest still-enabled handle's loader and policy. Disabling or closing that handle allows the next enabled handle to supply future automatic refreshes. Existing requests keep their initiator's settings. Manual `Refetch` uses the invoking handle when starting a new load.
 
 Same-key loaders must represent the same data. Include parameters, user identity, and tenant scope in the key; policy overrides do not isolate cached results.
+
+## Migrating from `FetchWithOptions`
+
+In v0.2.0, use the unified `Fetch(ctx, client, key, load, options)` entry point instead of `FetchWithOptions(ctx, client, key, load, options)`. Argument order, results, and option behavior remain the same. The published `FetchWithOptions` remains available as a deprecated compatibility entry point.
+
+Existing four-argument calls to `Fetch(ctx, client, key, load)` need no changes. Adding a variadic parameter changes the Go function type of `Fetch`: assignments or callbacks expecting a fixed four-argument function must accept `...FetchOptions` instead, or use a closure with the original four-argument signature. This function-type change is a v0.2.0 migration item.
 
 ## Migrating enablement configuration
 

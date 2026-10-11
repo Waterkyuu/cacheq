@@ -152,7 +152,7 @@ func (b *Batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 	}
 }
 
-// Fetcher binds key for use with Fetch, FetchWithOptions, Query, and Prefetch.
+// Fetcher binds key for use with Fetch, Query, and Prefetch.
 // Creating the function starts no work; the Client invokes it only when a load is needed.
 // Use a scoped Client cache key separately from this batch key to avoid sharing unrelated data.
 func (b *Batcher[K, V]) Fetcher(key K) Fetcher[V] {

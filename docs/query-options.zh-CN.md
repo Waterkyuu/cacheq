@@ -2,7 +2,7 @@
 
 [English](query-options.en-US.md)
 
-`QueryOptions` 为单个 `Query` 查询对象覆盖客户端默认配置，适用于共享同一个键、但需要不同新鲜期、重试或超时策略的消费者。同步读取可以通过 `FetchWithOptions` 的 `FetchOptions` 指定相同的覆盖项。
+`QueryOptions` 为单个 `Query` 查询对象覆盖客户端默认配置，适用于共享同一个键、但需要不同新鲜期、重试或超时策略的消费者。同步读取时，将可选的 `FetchOptions` 直接传给 `Fetch`，可以覆盖相同配置。
 
 ## 快速开始
 
@@ -67,7 +67,7 @@ func main() {
 	)
 	defer live.Close()
 
-	value, err := cacheq.FetchWithOptions(
+	value, err := cacheq.Fetch(
 		context.Background(),
 		client,
 		"greeting",
@@ -92,6 +92,12 @@ steady stale=false; live stale=true
 loads=1; retries=1
 ```
 
+## `Fetch`：可选的单次查询配置
+
+不传配置时，`Fetch(ctx, client, key, load)` 使用 Client 默认值。需要覆盖时，在同一入口追加 `FetchOptions`，如快速开始中的 `StaleTime: &hour`。
+
+空 `FetchOptions{}` 和字段为 nil 都表示继承默认值。与 `Query` 一样，传入多份配置时只使用最后一份，不逐项合并；最后一份中未设置的字段重新继承 Client 默认值。配置只影响本次调用，不修改共享客户端。
+
 ## 配置与显式零值
 
 | 字段 | 未设置 / nil | 显式覆盖 |
@@ -113,7 +119,7 @@ loads=1; retries=1
 
 ## 共享数据与独立新鲜期
 
-普通成功加载或 `Set` 写入的数据，通过共享的 `UpdatedAt` 和消费者自己的 `StaleTime` 计算 `Stale` 与 `ExpiresAt`。`Get`、`Fetch` 和 `Prefetch` 使用客户端默认值。较长的新鲜窗口可以复用其他消费者认为已过期的数据，一个消费者的配置不会影响后续调用的默认值。
+普通成功加载或 `Set` 写入的数据，通过共享的 `UpdatedAt` 和消费者自己的 `StaleTime` 计算 `Stale` 与 `ExpiresAt`。`Get`、未传配置的 `Fetch` 和 `Prefetch` 使用客户端默认值。较长的新鲜窗口可以复用其他消费者认为已过期的数据，一个消费者的配置不会影响后续调用的默认值。
 
 `FetchWithExpiry` 返回的是具有约束力的绝对截止时间，包含显式缓存的降级数据和错误。消费者的 `StaleTime` 不会缩短或延长这一截止时间。客户端 `MaxAge` 对两种数据来源都限制可用年龄和新鲜期限。容量、GC 和时钟继续由客户端管理。
 
@@ -126,6 +132,12 @@ loads=1; retries=1
 失效操作触发自动刷新时，使用最早创建且仍启用的查询对象的加载函数和策略。禁用或关闭该查询对象后，由下一个启用的查询对象提供后续自动刷新配置。正在执行的请求继续使用发起者的设置。手动 `Refetch` 启动新请求时使用调用它的查询对象。
 
 同键加载函数必须代表同一份数据。查询键应包含参数、用户身份和租户范围；配置覆盖不会隔离缓存结果。
+
+## `FetchWithOptions` 迁移
+
+从 v0.2.0 的统一入口调用 `Fetch(ctx, client, key, load, options)`，替换原来的 `FetchWithOptions(ctx, client, key, load, options)`。参数顺序、返回值和配置行为保持一致。已发布的 `FetchWithOptions` 保留为已弃用的兼容入口。
+
+原来的四参数直接调用 `Fetch(ctx, client, key, load)` 无需修改。`Fetch` 新增可变参数会改变其 Go 函数类型：如果把 `Fetch[V]` 赋给固定四参数的函数变量，或作为该类型的回调传递，需要将函数类型改为接受 `...FetchOptions`，或使用保持四参数签名的闭包转调。此函数类型变更属于 v0.2.0 的迁移项。
 
 ## 开关配置迁移
 
