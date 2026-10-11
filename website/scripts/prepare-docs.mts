@@ -42,12 +42,12 @@ export const chapters: Chapter[] = [
 	},
 	{
 		id: "invalidation",
-		zh: "缓存失效",
-		en: "Invalidation",
+		zh: "失效与刷新",
+		en: "Invalidation & refresh",
 		description: {
-			en: "Invalidate cacheq data in Go by key, batch, or predicate. Keep cached results available and choose background refresh or deferred loading after a mutation.",
+			en: "Invalidate cacheq queries by key, batch, or predicate. Await post-invalidation refreshes and coalesce bounded follow-up loads after mutations.",
 			"zh-CN":
-				"在 Go 中使用 cacheq 按单键、批量或条件使缓存失效，保留已有数据，并在业务更新后选择后台刷新或延迟加载。",
+				"在 Go 中使用 cacheq 按键、批量或条件使缓存失效，等待关联刷新，并在加载期间失效后执行有界补刷。",
 		},
 	},
 	{

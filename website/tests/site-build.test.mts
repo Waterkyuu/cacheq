@@ -154,6 +154,10 @@ test("Go search results resolve to published sections and public source declarat
 		"MutationHandle.Mutate",
 		"NewExecutor",
 		"Executor.Stats",
+		"Client.InvalidateAndWait",
+		"RefreshResult",
+		"ErrRefreshInvalidated",
+		"ErrRefreshSuperseded",
 	]) {
 		assert.ok(
 			index.some((record) => record.title === declaration),
@@ -164,6 +168,7 @@ test("Go search results resolve to published sections and public source declarat
 		const prefix = locale === "en" ? "" : "zh-CN/";
 		for (const [slug, declaration] of [
 			["updates", "ErrUpdateConflict"],
+			["invalidation", "InvalidateAndWait"],
 			["mutations", "SyncErr"],
 			["execution", "MaxConcurrent"],
 		]) {
@@ -218,7 +223,8 @@ test("new feature guides are discoverable and render the maintained API document
 		for (const [slug, declarations] of [
 			["events", ["SubscribeEvents", "EventResultDiscarded", "Dropped()"]],
 			["updates", ["Update", "ErrUpdateConflict", "ErrNoData"]],
-			["mutations", ["Mutation", "SyncErr", "ErrMutationBusy"]],
+			["mutations", ["Mutation", "SyncErr", "ErrMutationBusy", "WaitForRefresh"]],
+			["invalidation", ["InvalidateAndWait", "RefetchAfterLoad", "ErrRefreshInvalidated"]],
 			["execution", ["NewExecutor", "MaxConcurrent", "ErrQueueFull"]],
 			["batching", ["NewBatcher", "MaxBatchSize", "ErrBatchResultMissing"]],
 			["bubbletea", ["Bubble Tea", "examples/bubbletea", "QueryHandle"]],

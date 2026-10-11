@@ -156,9 +156,9 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | [Query options](docs/query-options.en-US.md) | Per-consumer defaults, independent freshness, filtered retries, timeouts, and shared request ownership |
 | [Automatic batch loading](docs/batching.en-US.md) | Different-key batching, existing query API integration, per-key results, cancellation, and a runnable example |
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
-| [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
+| [Invalidation & refresh](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, awaitable refresh, and bounded follow-up loads |
 | [Atomic cache updates](docs/updates.en-US.md) | Conflict-safe typed transformations, immutable values, and explicit retry contracts |
-| [Mutations & synchronization](docs/mutations.en-US.md) | Write state, cache synchronization, associated invalidation, and separate synchronization errors |
+| [Mutations & synchronization](docs/mutations.en-US.md) | Write state, optional refresh waiting, associated invalidation, and separate synchronization errors |
 | [Execution budgets](docs/execution.en-US.md) | Shared concurrency limits, bounded FIFO queues, overload handling, and cancellation |
 | [Observability](docs/observability.en-US.md) | Cache hits, shared requests, load outcomes and duration, retries, and cleanup statistics |
 | [Diagnostic events](docs/events.en-US.md) | Per-key load causes and sources, shared operation IDs, joins, retries, discarded results, and bounded subscriptions |

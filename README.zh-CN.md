@@ -153,9 +153,9 @@ go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 | [查询配置](docs/query-options.zh-CN.md) | 按消费者覆盖默认配置、独立新鲜度、重试错误判断、超时和共享请求策略 |
 | [自动批量加载](docs/batching.zh-CN.md) | 不同 key 组批、接入现有查询 API、逐 key 结果、取消和可运行示例 |
 | [缓存与生命周期](docs/cache.zh-CN.md) | 所有缓存读写、配置、自动删除、取消、删除、关闭及错误处理 |
-| [缓存失效](docs/invalidation.zh-CN.md) | 单键、批量、条件失效及刷新模式 |
+| [失效与刷新](docs/invalidation.zh-CN.md) | 单键、批量、条件失效，可等待刷新及有界补刷 |
 | [原子缓存更新](docs/updates.zh-CN.md) | 类型安全的缓存转换、共享只读值、并发冲突和显式重试契约 |
-| [写入与关联失效](docs/mutations.zh-CN.md) | 写入状态、缓存同步、关联失效及独立的同步错误 |
+| [写入与关联失效](docs/mutations.zh-CN.md) | 写入状态、可选等待刷新、关联失效及独立的同步错误 |
 | [执行并发预算](docs/execution.zh-CN.md) | 共享并发限制、有界 FIFO 队列、过载处理和取消 |
 | [可观测性](docs/observability.zh-CN.md) | 缓存命中、请求合并、加载结果与耗时、重试和清理统计 |
 | [诊断事件](docs/events.zh-CN.md) | 按 key 记录加载原因与来源、共享加载编号、合并次数、重试、结果丢弃和有界订阅 |

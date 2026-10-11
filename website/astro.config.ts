@@ -73,7 +73,11 @@ export default defineConfig({
 					label: "Execution budgets",
 					translations: { "zh-CN": "执行并发预算" },
 				},
-				{ slug: "docs/invalidation", label: "Invalidation", translations: { "zh-CN": "缓存失效" } },
+				{
+					slug: "docs/invalidation",
+					label: "Invalidation & refresh",
+					translations: { "zh-CN": "失效与刷新" },
+				},
 				{
 					slug: "docs/observability",
 					label: "Observability",

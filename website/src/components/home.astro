@@ -60,11 +60,11 @@ const guides = [
 	},
 	{
 		slug: "invalidation",
-		title: chinese ? "缓存失效" : "Invalidation",
+		title: chinese ? "失效与刷新" : "Invalidation & refresh",
 		description: chinese
-			? "把相关缓存一起作废，选择何时重新请求。"
-			: "Invalidate related data and choose when to refetch.",
-		api: "Invalidate · RefetchMode",
+			? "使关联缓存失效，等待刷新并合并有界补刷。"
+			: "Invalidate related data, await refreshes, and coalesce follow-ups.",
+		api: "Invalidate · InvalidateAndWait · RefetchAfterLoad",
 	},
 	{
 		slug: "observability",
