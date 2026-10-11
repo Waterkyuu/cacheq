@@ -111,8 +111,9 @@ Use `products.Load(ctx, id)` without Client caching. The batcher shares queued a
 | --- | --- | --- |
 | `Wait` | Zero means 0; cannot be negative | Starts with the first unique key in an empty window; zero adds no intentional collection delay |
 | `MaxBatchSize` | Must be positive; no default | Maximum unique keys per batch; reaching it dispatches immediately |
+| `Executor` | nil by default | Optional shared limit for active and queued bulk callbacks |
 
-`MaxBatchSize` is not a callback concurrency limit. Distinct batches can run concurrently, so callbacks must support concurrent execution. Sequential requests that each wait for completion cannot form one batch.
+`MaxBatchSize` is not a callback concurrency limit. Distinct batches can run concurrently; use `BatchOptions.Executor` to bound active and queued callbacks. See [execution budgets](execution.en-US.md) for placement and cancellation rules. Sequential requests that each wait for completion cannot form one batch.
 
 ## Results
 
@@ -138,6 +139,7 @@ Missing business objects should return explicit per-key application errors. Omit
 | Successful response omits a requested key | Wrapped `ErrBatchResultMissing` |
 | Caller cancellation or deadline | `context.Canceled` or `context.DeadlineExceeded` |
 | Explicitly closed batcher | `ErrBatcherClosed` |
+| Full execution budget and queue | `ErrQueueFull` for every key in the rejected batch |
 | Whole-callback or per-key application failure | Corresponding application error |
 
 Use `errors.Is` to inspect library and application errors. Passing a single-object callback instead of a `BatchFunc` produces a Go compile-time type mismatch. There is no runtime discovery or automatic single-object fallback.
@@ -163,3 +165,5 @@ The Client owns freshness, retries, and per-key load timeouts. Collection waitin
 Invalidation can refresh several observed keys through one batcher. Invalidating one key does not invalidate others that shared its batch. `Set`, `Remove`, and cancellation retain protection against late results overwriting newer state.
 
 `Stats()` and [diagnostic events](events.en-US.md) count per-key loads, not bulk callbacks or database calls. Count actual bulk invocations inside the business callback when needed.
+
+`ErrQueueFull` is also terminal for the current Client load, including wrapped errors, and bypasses `RetryIf`. Batch admission failure does not invoke the bulk callback.

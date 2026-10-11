@@ -39,11 +39,14 @@ defer client.Close()
 | `RetryIf` | 筛选允许追加尝试的错误 | nil，次数允许时重试所有可重试错误 |
 | `RetryDelay` | 追加尝试前的等待时间，第一次编号为 1 | 从 1 秒开始指数增长，上限 30 秒 |
 | `Timeout` | 整次加载的时间上限，包括重试与等待 | 0，不额外设置超时，仍响应调用者 context |
+| `Executor` | 可选的共享并发与排队预算 | nil，不限制执行 |
 | `Clock` | 新鲜期和保留期比较使用的时钟 | `time.Now` |
 
 所有时长字段使用 `time.Duration`。`StaleTime` 为零或负数时，普通结果立即过期；`Retry` 非正时不追加尝试，`Timeout` 非正时不额外设置超时。
 
-这些配置提供客户端默认值。[消费者配置](query-options.zh-CN.md)可以覆盖新鲜期、重试和超时；容量、GC、最长可用时间和时钟仍由客户端管理。取消、截止时间错误及 `ErrBatcherClosed` 不重试，即使 `RetryIf` 返回 true。超时会取消 context，不能强制终止完全忽略 context 的加载函数。
+这些配置提供客户端默认值。[消费者配置](query-options.zh-CN.md)可以覆盖新鲜期、重试和超时；容量、GC、最长可用时间和时钟仍由客户端管理。取消、截止时间错误、`ErrQueueFull` 及 `ErrBatcherClosed` 不重试，即使 `RetryIf` 返回 true。超时会取消 context，不能强制终止完全忽略 context 的加载函数。
+
+通过[执行预算](execution.zh-CN.md)限制活动加载尝试和排队数量，排队时间计入整体超时。
 
 ## `Get[V]`：读取缓存状态
 
