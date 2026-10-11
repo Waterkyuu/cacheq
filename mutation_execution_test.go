@@ -16,8 +16,8 @@ func TestMutationExecution(t *testing.T) {
 			t.Error("write did not acquire Client budget")
 		}
 		return 1, nil
-	}, MutationOptions[int, int]{OnSuccess: func(int, int) error {
-		_, err := Fetch(context.Background(), c, "related", func(context.Context) (int, error) { return 2, nil })
+	}, MutationOptions[int, int]{OnSuccess: func(ctx context.Context, _, _ int) error {
+		_, err := Fetch(ctx, c, "related", func(context.Context) (int, error) { return 2, nil })
 		return err
 	}})
 	t.Cleanup(h.Close)

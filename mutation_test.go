@@ -8,6 +8,52 @@ import (
 	"time"
 )
 
+// TestMutationSuccessCallback passes committed data, original input, and caller cancellation once.
+func TestMutationSuccessCallback(t *testing.T) {
+	for _, failWrite := range []bool{false, true} {
+		t.Run(map[bool]string{false: "committed", true: "rejected"}[failWrite], func(t *testing.T) {
+			c := NewClient(Options{})
+			t.Cleanup(c.Close)
+			failure := errors.New("write rejected")
+			calls := 0
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			h := Mutation(c, func(context.Context, string) (int, error) {
+				if failWrite {
+					return 0, failure
+				}
+				return 42, nil
+			}, MutationOptions[string, int]{
+				OnSuccess: func(callbackCtx context.Context, result int, input string) error {
+					calls++
+					if result != 42 || input != "create-user" {
+						t.Fatalf("callback result=%d input=%q", result, input)
+					}
+					cancel()
+					if !errors.Is(callbackCtx.Err(), context.Canceled) {
+						t.Fatal("success callback lost caller cancellation")
+					}
+					return callbackCtx.Err()
+				},
+			})
+			t.Cleanup(h.Close)
+			result, err := h.Mutate(ctx, "create-user")
+			if failWrite {
+				if !errors.Is(err, failure) || calls != 0 || result.SyncErr != nil {
+					t.Fatalf("rejected mutation = %+v, %v, callbacks=%d", result, err, calls)
+				}
+				return
+			}
+			if err != nil || result.Data != 42 || calls != 1 || !errors.Is(result.SyncErr, context.Canceled) {
+				t.Fatalf("committed mutation = %+v, %v, callbacks=%d", result, err, calls)
+			}
+			if h.Snapshot().Status != Success {
+				t.Fatal("callback cancellation changed committed write status")
+			}
+		})
+	}
+}
+
 // TestMutationSynchronization updates detail data and invalidates related list and summary queries once.
 func TestMutationSynchronization(t *testing.T) {
 	c := NewClient(Options{StaleTime: time.Hour, Retry: 5})
@@ -23,8 +69,11 @@ func TestMutationSynchronization(t *testing.T) {
 		c,
 		func(_ context.Context, input int) (int, error) { calls.Add(1); return input, nil },
 		MutationOptions[int, int]{
-			OnSuccess:  func(_ int, value int) error { return Set(c, "detail", value) },
-			Invalidate: func(int, int) any { return []any{"list", "summary", "list"} },
+			OnSuccess: func(_ context.Context, value int, _ int) error {
+				updateErr := Set(c, "detail", value)
+				invalidateErr := c.Invalidate([]any{"list", "summary", "list"})
+				return errors.Join(updateErr, invalidateErr)
+			},
 		},
 	)
 	t.Cleanup(h.Close)
@@ -56,8 +105,7 @@ func TestMutationFailure(t *testing.T) {
 	failure := errors.New("write rejected")
 	calls := 0
 	h := Mutation(c, func(context.Context, int) (int, error) { calls++; return 0, failure }, MutationOptions[int, int]{
-		OnSuccess:  func(int, int) error { t.Fatal("unexpected synchronization"); return nil },
-		Invalidate: func(int, int) any { t.Fatal("unexpected invalidation"); return "key" },
+		OnSuccess: func(context.Context, int, int) error { t.Fatal("unexpected synchronization"); return nil },
 	})
 	t.Cleanup(h.Close)
 	result, err := h.Mutate(context.Background(), 1)
@@ -76,9 +124,12 @@ func TestMutationSyncFailure(t *testing.T) {
 	Set(c, "list", 1)
 	failure := errors.New("local update rejected")
 	h := Mutation(c, func(context.Context, int) (int, error) { return 0, nil }, MutationOptions[int, int]{
-		OnSuccess:         func(int, int) error { return failure },
-		Invalidate:        func(int, int) any { return func(key any) bool { return key == "list" } },
-		InvalidateOptions: InvalidateOptions{Refetch: RefetchNone},
+		OnSuccess: func(context.Context, int, int) error {
+			return errors.Join(failure, c.Invalidate(
+				func(key any) bool { return key == "list" },
+				InvalidateOptions{Refetch: RefetchNone},
+			))
+		},
 	})
 	t.Cleanup(h.Close)
 	result, err := h.Mutate(context.Background(), 1)
@@ -90,8 +141,9 @@ func TestMutationSyncFailure(t *testing.T) {
 		t.Fatalf("committed state = %+v", state)
 	}
 	invalid := Mutation(c, func(context.Context, int) (int, error) { return 7, nil }, MutationOptions[int, int]{
-		OnSuccess:  func(int, int) error { return failure },
-		Invalidate: func(int, int) any { return []any{"list", []int{1}} },
+		OnSuccess: func(context.Context, int, int) error {
+			return errors.Join(failure, c.Invalidate([]any{"list", []int{1}}))
+		},
 	})
 	t.Cleanup(invalid.Close)
 	result, err = invalid.Mutate(context.Background(), 1)
@@ -154,7 +206,9 @@ func TestMutationLateSuccess(t *testing.T) {
 				close(started)
 				<-release
 				return 42, nil
-			}, MutationOptions[int, int]{OnSuccess: func(_ int, value int) error { return Set(c, "key", value) }})
+			}, MutationOptions[int, int]{
+				OnSuccess: func(_ context.Context, value int, _ int) error { return Set(c, "key", value) },
+			})
 			t.Cleanup(h.Close)
 			finished := make(chan MutationResult[int], 1)
 			go func() {

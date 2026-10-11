@@ -2,7 +2,6 @@ package cacheq
 
 import (
 	"context"
-	"errors"
 	"sync"
 )
 
@@ -21,7 +20,7 @@ type MutationHandle[I, V any] struct {
 	stopLifetime func() bool
 	// write performs one application-owned write without automatic retries.
 	write Mutator[I, V]
-	// options holds the copied synchronization callbacks and invalidation policy.
+	// options holds the copied success callback and write execution policy.
 	options MutationOptions[I, V]
 	// state retains the latest execution snapshot under mu.
 	state MutationSnapshot[V]
@@ -149,23 +148,12 @@ func (h *MutationHandle[I, V]) admitLocked() error {
 	}
 }
 
-// synchronize runs both cache steps even when the local update fails, retaining both errors.
+// synchronize waits for application-owned post-commit work without treating its error as write failure.
 func (h *MutationHandle[I, V]) synchronize(ctx context.Context, input I, value V) error {
-	var updateErr, invalidateErr error
-	if h.options.OnSuccess != nil {
-		updateErr = h.options.OnSuccess(input, value)
+	if h.options.OnSuccess == nil {
+		return nil
 	}
-	if h.options.Invalidate != nil {
-		if target := h.options.Invalidate(input, value); target != nil {
-			if h.options.WaitForRefresh {
-				// A confirmed commit still invalidates caches when cancellation races with write success.
-				_, invalidateErr = h.client.invalidateAndWait(ctx, target, h.options.InvalidateOptions)
-			} else {
-				invalidateErr = h.client.Invalidate(target, h.options.InvalidateOptions)
-			}
-		}
-	}
-	return errors.Join(updateErr, invalidateErr)
+	return h.options.OnSuccess(ctx, value, input)
 }
 
 // Snapshot returns the latest execution outcome without starting work.

@@ -166,10 +166,19 @@ func TestHTTPMutationRefreshFollowup(t *testing.T) {
 				writes.Add(1)
 				return writeHTTPUser(ctx, api, value)
 			}, cacheq.MutationOptions[user, user]{
-				OnSuccess:         func(_ user, value user) error { return cacheq.Set(client, "user:42", value) },
-				Invalidate:        func(user, user) any { return []any{"users", "users"} },
-				InvalidateOptions: cacheq.InvalidateOptions{RefetchAfterLoad: true},
-				WaitForRefresh:    wait,
+				OnSuccess: func(ctx context.Context, value user, _ user) error {
+					updateErr := cacheq.Set(client, "user:42", value)
+					var invalidateErr error
+					if wait {
+						_, invalidateErr = client.InvalidateAndWait(ctx, []any{"users", "users"})
+					} else {
+						invalidateErr = client.Invalidate(
+							[]any{"users", "users"},
+							cacheq.InvalidateOptions{RefetchAfterLoad: true},
+						)
+					}
+					return errors.Join(updateErr, invalidateErr)
+				},
 			})
 			t.Cleanup(mutation.Close)
 			done := make(chan httpMutationResult, 1)
@@ -349,15 +358,20 @@ func TestHTTPMutationRefreshFailure(t *testing.T) {
 	await(t, list, func(s cacheq.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
 	api.failNext(1)
 	writes := 0
-	mutation := cacheq.Mutation(client, func(ctx context.Context, value user) (user, error) {
+	mutation := cacheq.Mutation(client, func(ctx context.Context, name string) (user, error) {
 		writes++
-		return writeHTTPUser(ctx, api, value)
-	}, cacheq.MutationOptions[user, user]{
-		Invalidate:     func(user, user) any { return "users" },
-		WaitForRefresh: true,
+		return writeHTTPUser(ctx, api, user{Name: name})
+	}, cacheq.MutationOptions[string, user]{
+		OnSuccess: func(ctx context.Context, committed user, input string) error {
+			if committed.Name != "Bob" || input != "Bob" {
+				t.Fatalf("HTTP callback committed=%+v input=%q", committed, input)
+			}
+			_, err := client.InvalidateAndWait(ctx, "users")
+			return err
+		},
 	})
 	t.Cleanup(mutation.Close)
-	result, err := mutation.Mutate(context.Background(), user{Name: "Bob"})
+	result, err := mutation.Mutate(context.Background(), "Bob")
 	if err != nil || result.Data.Name != "Bob" || result.SyncErr == nil || writes != 1 {
 		t.Fatalf("committed HTTP mutation = %+v, %v, writes=%d", result, err, writes)
 	}

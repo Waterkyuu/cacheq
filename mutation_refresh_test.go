@@ -15,8 +15,8 @@ type mutationRefreshResult struct {
 	err error
 }
 
-// TestMutationWaitForRefresh stays Pending through the post-invalidation load and releases execution capacity.
-func TestMutationWaitForRefresh(t *testing.T) {
+// TestMutationAwaitedSuccess stays Pending through the post-invalidation load and releases execution capacity.
+func TestMutationAwaitedSuccess(t *testing.T) {
 	budget, err := NewExecutor(ExecutionOptions{MaxConcurrent: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -45,8 +45,10 @@ func TestMutationWaitForRefresh(t *testing.T) {
 		backend.Store(int32(value))
 		return value, nil
 	}, MutationOptions[int, int]{
-		Invalidate:     func(int, int) any { return "key" },
-		WaitForRefresh: true,
+		OnSuccess: func(ctx context.Context, _, _ int) error {
+			_, err := c.InvalidateAndWait(ctx, "key")
+			return err
+		},
 	})
 	t.Cleanup(h.Close)
 	done := make(chan mutationRefreshResult, 1)
@@ -88,9 +90,10 @@ func TestMutationRefreshFailure(t *testing.T) {
 	t.Cleanup(q.Close)
 	writes := 0
 	h := Mutation(c, func(context.Context, int) (int, error) { writes++; return 2, nil }, MutationOptions[int, int]{
-		OnSuccess:      func(int, int) error { return updateFailure },
-		Invalidate:     func(int, int) any { return "key" },
-		WaitForRefresh: true,
+		OnSuccess: func(ctx context.Context, _, _ int) error {
+			_, err := c.InvalidateAndWait(ctx, "key")
+			return errors.Join(updateFailure, err)
+		},
 	})
 	t.Cleanup(h.Close)
 	result, err := h.Mutate(context.Background(), 2)
@@ -124,8 +127,10 @@ func TestMutationRefreshCancellation(t *testing.T) {
 			})
 			t.Cleanup(q.Close)
 			h := Mutation(c, func(context.Context, int) (int, error) { return 2, nil }, MutationOptions[int, int]{
-				Invalidate:     func(int, int) any { return "key" },
-				WaitForRefresh: true,
+				OnSuccess: func(ctx context.Context, _, _ int) error {
+					_, err := c.InvalidateAndWait(ctx, "key")
+					return err
+				},
 			})
 			t.Cleanup(h.Close)
 			ctx, cancel := context.WithCancel(context.Background())
@@ -166,7 +171,7 @@ func TestMutationRefreshCancellation(t *testing.T) {
 	}
 }
 
-// TestMutationRefreshLateSuccess still invalidates after a committed write races with context cancellation.
+// TestMutationRefreshLateSuccess lets the callback invalidate a late commit before honoring cancellation.
 func TestMutationRefreshLateSuccess(t *testing.T) {
 	c := newInvalidationClient(t)
 	Set(c, "key", 1)
@@ -186,7 +191,15 @@ func TestMutationRefreshLateSuccess(t *testing.T) {
 	h := Mutation(c, func(context.Context, int) (int, error) {
 		cancel()
 		return 2, nil
-	}, MutationOptions[int, int]{Invalidate: func(int, int) any { return "key" }, WaitForRefresh: true})
+	}, MutationOptions[int, int]{
+		OnSuccess: func(ctx context.Context, _, _ int) error {
+			// Mark a confirmed commit stale even when the subsequent wait can no longer begin.
+			if err := c.Invalidate("key", InvalidateOptions{RefetchAfterLoad: true}); err != nil {
+				return err
+			}
+			return ctx.Err()
+		},
+	})
 	t.Cleanup(h.Close)
 	result, err := h.Mutate(ctx, 2)
 	if err != nil || result.Data != 2 || !errors.Is(result.SyncErr, context.Canceled) {

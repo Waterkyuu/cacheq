@@ -19,22 +19,16 @@ var ErrMutationBusy = errors.New("mutation is already running")
 type Mutator[I, V any] func(context.Context, I) (V, error)
 
 // MutationOptions declares cache synchronization after a successful write.
-// Callbacks execute once outside internal locks, including when cancellation races with write success.
+// The success callback executes once outside internal locks, including when cancellation races with write success.
 // Captured state and input/result references remain application-owned and require synchronization.
 type MutationOptions[I, V any] struct {
-	// OnSuccess installs or transforms local data after a committed write; nil skips this step.
-	// Its error is reported separately from the write and does not prevent associated invalidation.
-	OnSuccess func(I, V) error
-	// Invalidate selects associated queries using Client.Invalidate's key, []any, or predicate contract.
-	// Nil callbacks or nil returned targets skip invalidation. Include authorization scope in selected keys.
-	Invalidate func(I, V) any
-	// InvalidateOptions selects background refresh and optional bounded in-flight follow-up behavior.
-	InvalidateOptions InvalidateOptions
-	// WaitForRefresh waits for associated post-invalidation refreshes using the Mutate context.
-	// Failures are reported through SyncErr after a committed write; false preserves background behavior.
-	WaitForRefresh bool
+	// OnSuccess runs once after a committed write with its context, result, and original input.
+	// It may update cache entries or call Client.Invalidate or Client.InvalidateAndWait explicitly.
+	// Mutate stays Pending until it returns; its error is reported through SyncErr, not the write error.
+	// It still runs after late write success with a canceled context; nil skips synchronization.
+	OnSuccess func(context.Context, V, I) error
 	// Executor optionally overrides the Client budget for the business write; nil inherits it.
-	// Capacity is released before OnSuccess and invalidation, which may start their own loads.
+	// Capacity is released before OnSuccess, which may start its own loads.
 	Executor *Executor
 }
 
