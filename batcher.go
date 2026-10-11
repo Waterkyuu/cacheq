@@ -108,6 +108,7 @@ func NewBatcher[K comparable, V any](
 // Load queues or joins a key's in-flight load and waits for its matched result.
 // Canceling ctx releases only this caller; callbacks use the NewBatcher lifetime's values and deadline.
 // Nil, dynamically non-comparable, and non-reflexive keys return ErrInvalidKey.
+// A caller already holding this batcher's Executor receives ErrExecutionReentry before queuing.
 // Results are not cached: a call after completion starts a new load.
 func (b *Batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 	var zero V
@@ -125,6 +126,12 @@ func (b *Batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 	if err := b.lifecycleErrorLocked(); err != nil {
 		b.mu.Unlock()
 		return zero, err
+	}
+	// Bulk callbacks use the batcher's lifetime, so detect the caller's held budget before losing its context.
+	// Enqueuing first could leave the bulk callback waiting for a slot held by this very Load caller.
+	if b.options.Executor.heldBy(ctx) {
+		b.mu.Unlock()
+		return zero, ErrExecutionReentry
 	}
 	item := b.pending[key]
 	// Client cancellation can precede the old Load goroutine's deferred cleanup.
@@ -259,7 +266,7 @@ func (b *Batcher[K, V]) run(ctx context.Context, group *batchGroup[K, V]) {
 
 // call acquires capacity for the bulk callback after collection without charging per-key waiters.
 func (b *Batcher[K, V]) call(ctx context.Context, keys []K) (map[K]BatchResult[V], error) {
-	release, err := b.options.Executor.acquire(ctx)
+	ctx, release, err := b.options.Executor.acquireContext(ctx)
 	if err != nil {
 		return nil, err
 	}
