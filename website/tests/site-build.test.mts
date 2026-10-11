@@ -221,6 +221,7 @@ test("new feature guides are discoverable and render the maintained API document
 		const homepage = await readFile(path.join(build, prefix, "index.html"), "utf8");
 		const queries = await readFile(path.join(build, prefix, "docs/queries/index.html"), "utf8");
 		for (const [slug, declarations] of [
+			["query-options", ["QueryOptions", "QueryDefinition", "Disable", "Prefetch"]],
 			["events", ["SubscribeEvents", "EventResultDiscarded", "Dropped()"]],
 			["updates", ["Update", "ErrUpdateConflict", "ErrNoData"]],
 			["mutations", ["Mutation", "SyncErr", "ErrMutationBusy", "OnSuccess", "InvalidateAndWait"]],

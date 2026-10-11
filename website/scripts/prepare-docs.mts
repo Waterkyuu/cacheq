@@ -95,9 +95,9 @@ export const chapters: Chapter[] = [
 		zh: "查询配置",
 		en: "Query options",
 		description: {
-			en: "Override cacheq Client defaults per query or fetch in Go. Configure independent freshness, filtered retries, and timeouts while sharing same-key data and requests.",
+			en: "Reuse cacheq QueryDefinition values and shared QueryOptions across reading, subscribing, and prefetching in Go. Configure freshness, retries, timeouts, and automatic loading.",
 			"zh-CN":
-				"在 Go 中通过 cacheq 的每次查询或获取调用覆盖客户端默认配置，独立判断新鲜度，设置重试错误判断和超时，同时共享同键数据与请求。",
+				"在 Go 中通过 cacheq QueryDefinition 复用类型化查询，并在读取、订阅和预加载间共享 QueryOptions，配置新鲜期、重试、超时和自动加载。",
 		},
 	},
 	{
