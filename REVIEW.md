@@ -9,14 +9,12 @@ and avoid attributing caller-owned errors to library design or architecture.
 
 Before inspecting code for specific defects, complete these steps in order:
 
-1. Read the entire root [AGENTS.md](AGENTS.md).
-2. Read any nested `AGENTS.md` applicable to the review scope, then this entire
-   standard.
-3. Read relevant API comments, feature documentation, and stated limitations to
+1. Read this entire standard.
+2. Read relevant API comments, feature documentation, and stated limitations to
    establish the responsibilities of the library and its callers.
-4. Inspect the target commit or diff, surrounding implementation, existing tests,
+3. Inspect the target commit or diff, surrounding implementation, existing tests,
    and call sites.
-5. Only then investigate specific defects and verify their triggering conditions.
+4. Only then investigate specific defects and verify their triggering conditions.
 
 Do not infer a defect from a function name, personal experience, or another
 library's behavior and then search for evidence to support that conclusion.
@@ -163,5 +161,5 @@ scope.
   causal evidence. Withdraw an unsupported finding instead of preserving the same
   conclusion under a label such as "design risk."
 - A review request alone does not authorize API changes or implementation fixes.
-  When the user requests a fix, follow the development and commit workflow in
-  `AGENTS.md`.
+  When the user requests a fix, follow the repository's development and commit
+  workflow.
