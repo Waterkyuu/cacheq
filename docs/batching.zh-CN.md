@@ -168,4 +168,4 @@ Client 先判断是否可复用缓存；需要加载时，才调用该 Fetcher �
 
 `ErrQueueFull` 同样是当前 Client 加载的终止错误，包括包装后的错误，不调用 `RetryIf`。批次准入失败时不执行批量回调。
 
-Client 与 Batcher 共用 Executor 时，为批量查询传入 `FetchOptions{DisableExecutor: true}` 或 `QueryOptions{DisableExecutor: true}`。普通查询保留 Client 预算，批量回调获取 Batcher 预算。没有此覆盖配置时，持有同一预算的外层回调会在收集批次之前收到 `ErrExecutionReentry`，Client 不重试该错误。context 传递要求见[执行并发预算](execution.zh-CN.md)。
+Client 与 Batcher 共用 Executor 时，为批量查询传入 `QueryOptions{DisableExecutor: true}`。普通查询保留 Client 预算，批量回调获取 Batcher 预算。没有此覆盖配置时，持有同一预算的外层回调会在收集批次之前收到 `ErrExecutionReentry`，Client 不重试该错误。context 传递要求见[执行并发预算](execution.zh-CN.md)。

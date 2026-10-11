@@ -132,8 +132,8 @@ Create and inject budgets per data source at the application boundary. Closing o
 | Configuration field | Scope | Default behavior |
 | --- | --- | --- |
 | `Options.Executor` | Each Client loader attempt | nil, unrestricted execution |
-| `FetchOptions.Executor` / `QueryOptions.Executor` | Loads initiated by this call or handle | nil, inherits the Client Executor |
-| `FetchOptions.DisableExecutor` / `QueryOptions.DisableExecutor` | Skip the outer Client loader budget | false, retain inheritance or override |
+| `QueryOptions.Executor` | Loads initiated by this call or handle | nil, inherits the Client Executor |
+| `QueryOptions.DisableExecutor` | Skip the outer Client loader budget | false, retain inheritance or override |
 | `MutationOptions.Executor` | Mutation business write callback | nil, inherits the Client Executor |
 | `BatchOptions.Executor` | Actual bulk callback after collection | nil, unrestricted execution |
 
@@ -162,7 +162,7 @@ defer products.Close()
 
 client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute, Executor: budget})
 defer client.Close()
-value, err := cacheq.Fetch(ctx, client, "product:42", products.Fetcher(42), cacheq.FetchOptions{
+value, err := cacheq.Fetch(ctx, client, "product:42", products.Fetcher(42), cacheq.QueryOptions{
 	DisableExecutor: true,
 })
 if err != nil {

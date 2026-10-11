@@ -132,8 +132,8 @@ defer second.Close()
 | 配置字段 | 限制范围 | 默认行为 |
 | --- | --- | --- |
 | `Options.Executor` | Client 每一次加载尝试 | nil，不限制执行 |
-| `FetchOptions.Executor` / `QueryOptions.Executor` | 本次调用或查询对象发起的加载 | nil，继承 Client 的 Executor |
-| `FetchOptions.DisableExecutor` / `QueryOptions.DisableExecutor` | 跳过外层 Client 加载预算 | false，保留继承或覆盖配置 |
+| `QueryOptions.Executor` | 本次调用或查询对象发起的加载 | nil，继承 Client 的 Executor |
+| `QueryOptions.DisableExecutor` | 跳过外层 Client 加载预算 | false，保留继承或覆盖配置 |
 | `MutationOptions.Executor` | Mutation 的业务写入回调 | nil，继承 Client 的 Executor |
 | `BatchOptions.Executor` | 收集完成后的实际批量回调 | nil，不限制执行 |
 
@@ -162,7 +162,7 @@ defer products.Close()
 
 client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute, Executor: budget})
 defer client.Close()
-value, err := cacheq.Fetch(ctx, client, "product:42", products.Fetcher(42), cacheq.FetchOptions{
+value, err := cacheq.Fetch(ctx, client, "product:42", products.Fetcher(42), cacheq.QueryOptions{
 	DisableExecutor: true,
 })
 if err != nil {

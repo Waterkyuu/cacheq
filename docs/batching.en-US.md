@@ -168,4 +168,4 @@ Invalidation can refresh several observed keys through one batcher. Invalidating
 
 `ErrQueueFull` is also terminal for the current Client load, including wrapped errors, and bypasses `RetryIf`. Batch admission failure does not invoke the bulk callback.
 
-When the Client and Batcher share an Executor, use `FetchOptions{DisableExecutor: true}` or `QueryOptions{DisableExecutor: true}` for batched queries. Ordinary queries retain the Client budget, while bulk callbacks acquire the Batcher budget. Without this override, an outer callback holding the same budget receives `ErrExecutionReentry` before batch collection; the Client does not retry it. See [execution budgets](execution.en-US.md) for context propagation requirements.
+When the Client and Batcher share an Executor, use `QueryOptions{DisableExecutor: true}` for batched queries. Ordinary queries retain the Client budget, while bulk callbacks acquire the Batcher budget. Without this override, an outer callback holding the same budget receives `ErrExecutionReentry` before batch collection; the Client does not retry it. See [execution budgets](execution.en-US.md) for context propagation requirements.
