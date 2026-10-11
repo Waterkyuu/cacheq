@@ -125,9 +125,9 @@ export const chapters: Chapter[] = [
 		zh: "自动批量加载",
 		en: "Automatic batch loading",
 		description: {
-			en: "Group concurrent cacheq loads for different keys into bulk callbacks in Go. Configure collection windows, handle per-key results, and integrate batching with cached queries.",
+			en: "Group concurrent cacheq loads or load known keys with LoadMany in Go. Configure bounded bulk callbacks, handle ordered per-key outcomes, and integrate batching with cached queries.",
 			"zh-CN":
-				"使用 cacheq 在 Go 中合并不同 key 的并发加载，配置批量收集窗口，处理逐 key 结果，并与查询缓存、重试及取消策略集成。",
+				"使用 cacheq 在 Go 中合并并发加载，或通过 LoadMany 加载已知 key。限制批次大小，按输入顺序处理逐 key 结果，并与查询缓存及取消策略集成。",
 		},
 	},
 	{

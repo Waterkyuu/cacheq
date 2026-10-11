@@ -161,6 +161,7 @@ test("Go search results resolve to published sections and public source declarat
 		"ErrRefreshInvalidated",
 		"ErrRefreshSuperseded",
 		"QueryFilter",
+		"Batcher.LoadMany",
 	]) {
 		assert.ok(
 			index.some((record) => record.title === declaration),
@@ -176,6 +177,7 @@ test("Go search results resolve to published sections and public source declarat
 			["invalidation", "InvalidateAndWait"],
 			["mutations", "SyncErr"],
 			["execution", "MaxConcurrent"],
+			["batching", "LoadMany"],
 		]) {
 			assert.ok(
 				documents.some(
@@ -237,7 +239,7 @@ test("new feature guides are discoverable and render the maintained API document
 			["mutations", ["Mutation", "SyncErr", "ErrMutationBusy", "OnSuccess", "InvalidateAndWait"]],
 			["invalidation", ["InvalidateAndWait", "RefetchAfterLoad", "ErrRefreshInvalidated"]],
 			["execution", ["NewExecutor", "MaxConcurrent", "ErrQueueFull"]],
-			["batching", ["NewBatcher", "MaxBatchSize", "ErrBatchResultMissing"]],
+			["batching", ["NewBatcher", "LoadMany", "MaxBatchSize", "ErrBatchResultMissing"]],
 			["bubbletea", ["Bubble Tea", "examples/bubbletea", "QueryHandle"]],
 		] as const) {
 			const route = `/cacheq/${prefix}docs/${slug}/`;

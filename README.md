@@ -156,7 +156,7 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | [Query options](docs/query-options.en-US.md) | Shared loading options, reusable typed query definitions, freshness, retries, and timeouts |
 | [Query filters](docs/query-filters.en-US.md) | Reusable key and predicate selection for invalidation, awaited refresh, cancellation, and removal |
 | [Query tags](docs/query-tags.en-US.md) | Declare related query groups, select by label, and manage registration and retention |
-| [Automatic batch loading](docs/batching.en-US.md) | Different-key batching, existing query API integration, per-key results, cancellation, and a runnable example |
+| [Automatic batch loading](docs/batching.en-US.md) | Concurrent-key batching, LoadMany for known keys, query API integration, per-key results, and cancellation |
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
 | [Invalidation & refresh](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, awaitable refresh, and bounded follow-up loads |
 | [Atomic cache updates](docs/updates.en-US.md) | Conflict-safe typed transformations, immutable values, and explicit retry contracts |

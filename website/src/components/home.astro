@@ -54,9 +54,9 @@ const guides = [
 		slug: "batching",
 		title: chinese ? "自动批量加载" : "Automatic batch loading",
 		description: chinese
-			? "合并不同 key 的并发加载，保留独立缓存。"
-			: "Group concurrent key loads while caching each result separately.",
-		api: "NewBatcher · BatchOptions · Fetcher",
+			? "合并并发请求或通过 LoadMany 加载已知 key。"
+			: "Group concurrent requests or load known keys with LoadMany.",
+		api: "NewBatcher · LoadMany · Fetcher",
 	},
 	{
 		slug: "invalidation",

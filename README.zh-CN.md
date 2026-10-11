@@ -153,7 +153,7 @@ go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 | [查询配置](docs/query-options.zh-CN.md) | 共享加载配置、可复用的类型化查询定义、新鲜期、重试和超时 |
 | [统一查询筛选](docs/query-filters.zh-CN.md) | 为失效、等待刷新、取消和删除复用精确键与条件筛选 |
 | [查询标签](docs/query-tags.zh-CN.md) | 声明关联查询分组，按标签筛选，管理登记和保留规则 |
-| [自动批量加载](docs/batching.zh-CN.md) | 不同 key 组批、接入现有查询 API、逐 key 结果、取消和可运行示例 |
+| [自动批量加载](docs/batching.zh-CN.md) | 并发 key 组批、通过 LoadMany 加载已知 key、查询 API 集成、逐 key 结果和取消 |
 | [缓存与生命周期](docs/cache.zh-CN.md) | 所有缓存读写、配置、自动删除、取消、删除、关闭及错误处理 |
 | [失效与刷新](docs/invalidation.zh-CN.md) | 单键、批量、条件失效，可等待刷新及有界补刷 |
 | [原子缓存更新](docs/updates.zh-CN.md) | 类型安全的缓存转换、共享只读值、并发冲突和显式重试契约 |
