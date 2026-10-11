@@ -20,6 +20,17 @@ recommend a better approach when appropriate.
 - Do not add emojis to source code, comments, logs, or user-facing strings.
 - Keep the library compatible with the Go version declared in `go.mod`.
 
+## Code review
+
+- Before inspecting code for defects, read this entire `AGENTS.md`, any applicable
+  nested instructions, and [REVIEW.md](REVIEW.md), in that order.
+- Follow the review standard's contract, reproduction, and responsibility checks
+  before reporting a finding or assigning severity.
+- Do not attribute caller-owned business logic errors or unsupported guarantees
+  to implementation, API design, or architecture defects in cacheq.
+- Keep optional capability suggestions separate from verified defects; a feature
+  proposal is not an existing API contract.
+
 ## Commands
 
 Run commands from the repository root.
