@@ -1,8 +1,6 @@
 ---
 import { Code } from "@astrojs/starlight/components";
-const queryCode = `// User represents a profile and an element of the user list.
-type User struct {
-    // Name contains the user's display name.
+const queryCode = `type User struct {
     Name string
 }
 
@@ -18,7 +16,6 @@ client := cacheq.NewClient(cacheq.Options{
 })
 defer client.Close()
 
-// Query infers User and []User from the loaders' return types.
 profile := cacheq.Query(client, "user:42", loadUser)
 users := cacheq.Query(client, "users", loadUsers)
 defer profile.Close()
