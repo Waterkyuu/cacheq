@@ -471,7 +471,8 @@ func (c *Client) attempt(
 	pending *flight,
 	previousErr error,
 ) (any, time.Time, error) {
-	ctx, release, err := c.options.Executor.acquireContext(ctx)
+	// The initiating query owns budget selection; batch fetchers can skip this outer acquisition.
+	ctx, release, err := pending.request.options.Executor.acquireContext(ctx)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
