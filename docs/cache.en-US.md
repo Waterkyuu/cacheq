@@ -274,6 +274,8 @@ if err := client.Cancel("greeting"); err != nil {
 
 Previously completed data remains available. Consumers are notified that fetching stopped. Loaders must honor context. Canceling an idle key is safe and does not automatically restart work.
 
+`Cancel` and `Remove` also accept `[]any`, `func(any) bool`, and `QueryFilter` for shared selection. See [query filters](query-filters.en-US.md) for existing-key selection, predicate evaluation, and validation rules.
+
 ## `Remove`: discard one key
 
 ```go

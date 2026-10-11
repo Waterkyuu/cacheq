@@ -276,6 +276,8 @@ if err := client.Cancel("greeting"); err != nil {
 
 保留已有数据，取消正在运行的请求，通知消费者请求已停止。加载函数需要响应 context。没有请求时也可以调用，不会自动重启请求。
 
+`Cancel` 和 `Remove` 也接受 `[]any`、`func(any) bool` 和 `QueryFilter`，共用同一套查询筛选。已有键筛选、条件函数执行和校验规则见[统一查询筛选](query-filters.zh-CN.md)。
+
 ## `Remove`：删除一个键
 
 ```go
