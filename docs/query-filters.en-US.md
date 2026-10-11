@@ -107,9 +107,10 @@ Filters and predicates select existing queries only and skip missing keys. Passi
 | Field | Type | Default | Contract |
 | --- | --- | --- | --- |
 | `Keys` | `[]any` | nil | Restrict candidate keys; nil is unrestricted, while a non-nil empty slice selects nothing |
+| `Tags` | `[]string` | nil | Require any matching registered label; nil is unrestricted, while a non-nil empty slice selects nothing |
 | `Predicate` | `func(key any) bool` | nil | Further restrict candidates; nil accepts all candidates |
 
-When both fields are set, they are combined with AND: a key must belong to `Keys` and satisfy `Predicate`. Duplicate keys are processed once. After the complete key list has been validated, each existing candidate is passed to the predicate at most once.
+Configured fields are combined with AND: a key must satisfy `Keys`, match any requested `Tags`, and satisfy `Predicate`. Duplicate keys are processed once. After the complete key list has been validated, candidates satisfying key and tag restrictions are passed to the predicate at most once. Declare labels through `QueryDefinition.Tags`; see [query tags](query-tags.en-US.md) for registration and lifetime rules.
 
 This local fragment uses the `ResourceKey` type from the quick start and can be placed inside an application function:
 

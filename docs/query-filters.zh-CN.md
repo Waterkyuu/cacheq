@@ -107,9 +107,10 @@ other tenant data: Carol
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `Keys` | `[]any` | nil | 限制候选键；nil 不限制，非 nil 的空切片不选择任何键 |
+| `Tags` | `[]string` | nil | 要求命中任一已登记标签；nil 不限制，非 nil 的空切片不选择任何键 |
 | `Predicate` | `func(key any) bool` | nil | 对候选键进一步筛选；nil 表示接受所有候选键 |
 
-字段同时设置时取交集：查询键必须位于 `Keys` 中，且 `Predicate` 返回 true，才会被选中。`Keys` 中的重复键只处理一次；完整校验键列表后，每个已有候选键最多调用一次条件函数。
+已设置的字段取交集：查询键必须满足 `Keys`、命中 `Tags` 中任一标签，并且 `Predicate` 返回 true，才会被选中。`Keys` 中的重复键只处理一次；完整校验键列表后，满足键和标签条件的候选键最多调用一次条件函数。通过 `QueryDefinition.Tags` 声明标签，登记与生命周期规则见[查询标签](query-tags.zh-CN.md)。
 
 以下局部片段使用快速开始中的 `ResourceKey` 类型，可放在业务函数内：
 
