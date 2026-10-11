@@ -67,12 +67,13 @@ Omitting options or leaving `Disable` false permits automatic loading. Disabling
 
 ## `QueryDefinition`: define a typed query once
 
-The definition has three fields:
+The definition has four fields:
 
 | Field | Responsibility |
 | --- | --- |
 | `Key` | Identify the query using a non-nil comparable key; include all query parameters and identity scope |
 | `Fetcher` | Load `V` using the application's HTTP, database, or other dependencies |
+| `Tags` | Declare labels for grouping related queries; registration and lifetime follow the [query tag contract](query-tags.en-US.md) |
 | `Options` | Supply the same `QueryOptions` to reading, subscribing, and prefetching |
 
 Each operation receives a Client explicitly. The Client owns cached data, shared requests, and shutdown. The same definition can be used with multiple Clients, whose caches remain independent. The returned query handle must be closed by its caller.
@@ -140,7 +141,7 @@ refreshed calls: 2
 | `definition.Query(client)` | `*QueryHandle[V]` with the same contract as `Query` |
 | `definition.Prefetch(ctx, client)` | Loading error with the same contract as `Prefetch` |
 
-The methods use the definition's key, fetcher, and options directly. To customize one consumer, copy the definition and change the copy's options before calling a method. Changes to a definition affect subsequent operations, not existing handles. Each method reads option pointer values when its operation starts. Applications must synchronize shared definitions, pointer values, and mutable state captured by loaders.
+The methods use the definition's key, fetcher, and options directly. To customize one consumer, copy the definition and change the copy's options before calling a method. Changes to Key, Fetcher, or Options apply to subsequent operations without reconfiguring existing handles. Tags declared by subsequent operations are merged into the shared query state. Each method reads option pointer values when its operation starts. Applications must synchronize shared definitions, pointer values, and mutable state captured by loaders.
 
 Definitions do not infer keys from a loader, add authorization checks, or serialize business operations. Build parameterized definitions in ordinary business functions so the key and loader capture matching parameters. Result-type binding, cancellation, errors, and in-flight request sharing follow the existing [query contracts](queries.en-US.md). Use `client.Invalidate(definition.Key)` or `client.InvalidateAndWait(ctx, definition.Key)` for explicit invalidation.
 

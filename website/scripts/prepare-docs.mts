@@ -61,6 +61,16 @@ export const chapters: Chapter[] = [
 		},
 	},
 	{
+		id: "query-tags",
+		zh: "查询标签",
+		en: "Query tags",
+		description: {
+			en: "Group related cacheq queries with QueryDefinition.Tags and select labels through QueryFilter for invalidation, awaited refresh, cancellation, and removal in Go.",
+			"zh-CN":
+				"在 Go 中通过 cacheq QueryDefinition.Tags 声明关联查询分组，使用 QueryFilter 按标签失效、等待刷新、取消和删除，并管理标签登记与生命周期。",
+		},
+	},
+	{
 		id: "observability",
 		zh: "可观测性",
 		en: "Observability",

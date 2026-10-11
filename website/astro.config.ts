@@ -84,6 +84,11 @@ export default defineConfig({
 					translations: { "zh-CN": "统一查询筛选" },
 				},
 				{
+					slug: "docs/query-tags",
+					label: "Query tags",
+					translations: { "zh-CN": "查询标签" },
+				},
+				{
 					slug: "docs/observability",
 					label: "Observability",
 					translations: { "zh-CN": "可观测性" },
