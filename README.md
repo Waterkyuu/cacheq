@@ -18,17 +18,26 @@
 
 ## When to use cacheq
 
-Use cacheq when several parts of one Go application need the same remote or
-expensive data and must react to loading, refreshes, or failures. One shared
-client handles cache reuse, in-flight request sharing, and query notifications;
-consumers keep their own typed handles.
+Use cacheq when your Go application needs to coordinate data loading and
+synchronization: reuse cached results, share concurrent requests, batch reads,
+or refresh related queries after a write.
 
-| Your application needs | Choose |
+It fits backend services, CLI/TUI applications, and background workers. You
+provide the HTTP requests, database operations, or other loaders; cacheq manages
+how they execute and how consumers receive their results.
+
+| Application scenario | How cacheq helps |
 | --- | --- |
-| Shared data plus loading, error, refresh, and invalidation state | cacheq |
-| A few local values with basic expiration and no query observers | A simple map with synchronization and expiration, or a TTL cache |
-| An admission policy optimized for a high-volume cache and a memory budget | A cache designed for that workload; benchmark before choosing |
-| Persistent or cross-process cache sharing | An external storage or cache system; cacheq stores data in one process |
+| Several handlers or components read the same user, configuration, or resource | Reuse fresh cached data and share in-flight requests for the same key |
+| A list or aggregation needs many objects from a backend with a bulk API | Collect different-key loads into batches, or submit known keys with `LoadMany` |
+| A successful write must update a detail view and refresh related lists or totals | Coordinate cache updates and invalidation through Mutation; optionally wait for associated refreshes |
+| Multiple callers need the same query key, loader, and loading policy | Reuse a `QueryDefinition` and shared `QueryOptions`; use tags and filters to manage related queries |
+| A view or long-running task needs to react to loading, results, errors, and refreshes | Subscribe to typed query updates; inspect diagnostic events to trace execution |
+| Reads and writes share a database or service with limited capacity | Bound active callbacks and queued work with a shared `Executor` |
+
+cacheq stores its cache and query state within one process. For simple local
+values that only need expiration, a TTL cache may be sufficient. Use external
+storage when data must persist or be shared across processes.
 
 ## Features
 
