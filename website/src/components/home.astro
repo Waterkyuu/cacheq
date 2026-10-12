@@ -1,6 +1,17 @@
 ---
 import { Code } from "@astrojs/starlight/components";
-const queryCode = `client := cacheq.NewClient(cacheq.Options{
+const queryCode = `type User struct {
+    Name string
+}
+
+loadUser := func(context.Context) (User, error) {
+    return User{Name: "Alice"}, nil
+}
+loadUsers := func(context.Context) ([]User, error) {
+    return []User{{Name: "Alice"}}, nil
+}
+
+client := cacheq.NewClient(cacheq.Options{
     StaleTime: time.Minute,
 })
 defer client.Close()
@@ -27,9 +38,9 @@ const guides = [
 		slug: "query-options",
 		title: chinese ? "查询配置" : "Query options",
 		description: chinese
-			? "按消费者配置新鲜时间、重试和超时。"
-			: "Set freshness, retries, and timeouts per consumer.",
-		api: "QueryOptions · FetchWithOptions",
+			? "复用查询定义，在读取、订阅和预加载间共享配置。"
+			: "Reuse typed query definitions and share loading options.",
+		api: "QueryOptions · QueryDefinition",
 	},
 	{
 		slug: "cache",
@@ -40,12 +51,36 @@ const guides = [
 		api: "StaleTime · GCTime · Prefetch",
 	},
 	{
-		slug: "invalidation",
-		title: chinese ? "缓存失效" : "Invalidation",
+		slug: "batching",
+		title: chinese ? "自动批量加载" : "Automatic batch loading",
 		description: chinese
-			? "把相关缓存一起作废，选择何时重新请求。"
-			: "Invalidate related data and choose when to refetch.",
-		api: "Invalidate · RefetchMode",
+			? "合并并发请求或通过 LoadMany 加载已知 key。"
+			: "Group concurrent requests or load known keys with LoadMany.",
+		api: "NewBatcher · LoadMany · Fetcher",
+	},
+	{
+		slug: "invalidation",
+		title: chinese ? "失效与刷新" : "Invalidation & refresh",
+		description: chinese
+			? "使关联缓存失效，等待刷新并合并有界补刷。"
+			: "Invalidate related data, await refreshes, and coalesce follow-ups.",
+		api: "Invalidate · InvalidateAndWait · RefetchAfterLoad",
+	},
+	{
+		slug: "query-filters",
+		title: chinese ? "统一查询筛选" : "Query filters",
+		description: chinese
+			? "为失效、等待刷新、取消和删除复用查询筛选。"
+			: "Reuse query selections for refresh, cancellation, and removal.",
+		api: "QueryFilter · Keys · Predicate",
+	},
+	{
+		slug: "query-tags",
+		title: chinese ? "查询标签" : "Query tags",
+		description: chinese
+			? "声明查询关联，按标签刷新、取消和删除。"
+			: "Declare related queries and refresh, cancel, or remove them by tag.",
+		api: "QueryDefinition.Tags · QueryFilter.Tags",
 	},
 	{
 		slug: "observability",
@@ -62,6 +97,40 @@ const guides = [
 			? "共享资源读取，保留有效期，接收变化通知。"
 			: "Share resource reads, preserve TTL, and notify on changes.",
 		api: "FetchWithExpiry · Invalidate · Stats",
+	},
+	{
+		slug: "events",
+		title: chinese ? "诊断事件" : "Diagnostic events",
+		description: chinese
+			? "按 key 记录加载原因、请求合并和缓存删除。"
+			: "Trace load causes, shared requests, and removals by key.",
+		api: "SubscribeEvents · LoadID · Dropped",
+	},
+	{
+		slug: "bubbletea",
+		title: chinese ? "Bubble Tea 示例" : "Bubble Tea example",
+		description: chinese
+			? "运行任务看板，验证多视图共享、刷新和错误恢复。"
+			: "Run a task board with shared views, refreshes, and error recovery.",
+		api: "Query · Updates · Invalidate",
+	},
+	{
+		slug: "updates",
+		title: chinese ? "原子缓存更新" : "Atomic cache updates",
+		description: chinese ? "转换已有缓存数据，检测并发修改冲突。" : "Transform cached data without overwriting concurrent changes.",
+		api: "Update · ErrUpdateConflict",
+	},
+	{
+		slug: "mutations",
+		title: chinese ? "写入与关联失效" : "Mutations & synchronization",
+		description: chinese ? "订阅写入状态，成功后同步关联查询。" : "Observe writes and synchronize related queries after success.",
+		api: "Mutation · SyncErr · Invalidate",
+	},
+	{
+		slug: "execution",
+		title: chinese ? "执行并发预算" : "Execution budgets",
+		description: chinese ? "限制后端并发与排队数量，支持共享预算。" : "Bound backend concurrency and queued work across consumers.",
+		api: "NewExecutor · MaxConcurrent · MaxQueued",
 	},
 ];
 ---
@@ -112,8 +181,8 @@ const guides = [
 		<h2>{chinese ? "一个客户端，多种类型。" : "One client. Different result types."}</h2>
 		<p>
 			{chinese
-				? "用户详情与用户列表共用缓存，各自保留类型。"
-				: "Profiles and lists share the same client, while keeping their types."}
+				? "User 用户详情与 []User 用户列表使用同一客户端，各自保留类型。"
+				: "A User profile and a []User list share the same client, while keeping their types."}
 		</p>
 		<Code code={queryCode} lang="go" />
 		<a class="home-inline-link" href={docs + "queries/"}>

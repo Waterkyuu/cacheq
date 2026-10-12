@@ -53,7 +53,41 @@ export default defineConfig({
 					label: "Cache & lifecycle",
 					translations: { "zh-CN": "缓存与生命周期" },
 				},
-				{ slug: "docs/invalidation", label: "Invalidation", translations: { "zh-CN": "缓存失效" } },
+				{
+					slug: "docs/batching",
+					label: "Automatic batch loading",
+					translations: { "zh-CN": "自动批量加载" },
+				},
+				{
+					slug: "docs/updates",
+					label: "Atomic cache updates",
+					translations: { "zh-CN": "原子缓存更新" },
+				},
+				{
+					slug: "docs/mutations",
+					label: "Mutations & synchronization",
+					translations: { "zh-CN": "写入与关联失效" },
+				},
+				{
+					slug: "docs/execution",
+					label: "Execution budgets",
+					translations: { "zh-CN": "执行并发预算" },
+				},
+				{
+					slug: "docs/invalidation",
+					label: "Invalidation & refresh",
+					translations: { "zh-CN": "失效与刷新" },
+				},
+				{
+					slug: "docs/query-filters",
+					label: "Query filters",
+					translations: { "zh-CN": "统一查询筛选" },
+				},
+				{
+					slug: "docs/query-tags",
+					label: "Query tags",
+					translations: { "zh-CN": "查询标签" },
+				},
 				{
 					slug: "docs/observability",
 					label: "Observability",
@@ -63,6 +97,16 @@ export default defineConfig({
 					slug: "docs/mcp",
 					label: "MCP resource caching",
 					translations: { "zh-CN": "MCP 资源缓存" },
+				},
+				{
+					slug: "docs/events",
+					label: "Diagnostic events",
+					translations: { "zh-CN": "诊断事件" },
+				},
+				{
+					slug: "docs/bubbletea",
+					label: "Bubble Tea example",
+					translations: { "zh-CN": "Bubble Tea 示例" },
 				},
 			],
 			social: [{ icon: "github", label: "GitHub", href: "https://github.com/Waterkyuu/cacheq" }],

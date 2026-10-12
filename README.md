@@ -32,13 +32,12 @@ consumers keep their own typed handles.
 
 ## Features
 
-- One shared client caches different result types: details, lists, and configuration.
-- Each query retains static typing; incompatible types for a key return an error.
-- One `Query` entry point supplies state, updates, enablement, and manual refresh.
-- Freshness, background refresh, same-key request sharing, retries, and load timeouts.
-- Per-consumer freshness, retry filtering, and timeout overrides through query and fetch options.
-- Single-key, mixed-type batch, and predicate invalidation with optional deferred refresh.
-- Local writes, prefetching, cancellation, and inactive cache cleanup.
+- Type-safe shared queries and caching.
+- Cache policies and lifecycle management.
+- Cache updates, mutations, and invalidation.
+- Automatic batch loading.
+- Shared execution budgets.
+- Query observability.
 
 ## Install
 
@@ -139,13 +138,13 @@ go run .
 
 ## Reproducible benchmarks
 
-Compare **no cache, first load, and cache hits** for **100 sequential reads** of the same data in the [benchmark guide](docs/benchmarks.en-US.md). The main table reports total time and actual loader calls; internal cost and concurrency diagnostics are documented separately.
+Compare **no cache, first load, and cache hits** for **100 sequential reads** of the same data in the [benchmark guide](benchmarks/benchmarks.en-US.md). The main table reports total time and actual loader calls; internal cost and concurrency diagnostics are documented separately.
 
 ```sh
 go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 ```
 
-The [concurrent request scenarios](docs/benchmarks.en-US.md#concurrent-request-scenarios) compare cache behavior for shared and distinct keys with 100 reads, GOMAXPROCS=4, and four request goroutines performing 25 reads each.
+The [concurrent request scenarios](benchmarks/benchmarks.en-US.md#concurrent-request-scenarios) compare cache behavior for shared and distinct keys with 100 reads, GOMAXPROCS=4, and four request goroutines performing 25 reads each.
 
 ## Feature guides
 
@@ -154,10 +153,17 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | Guide | Coverage |
 | --- | --- |
 | [Queries and conditions](docs/queries.en-US.md) | `Query`, snapshots, updates, enablement, refresh, `Fetch`, and HTTP loaders |
-| [Query options](docs/query-options.en-US.md) | Per-consumer defaults, independent freshness, filtered retries, timeouts, and shared request ownership |
+| [Query options](docs/query-options.en-US.md) | Shared loading options, reusable typed query definitions, freshness, retries, and timeouts |
+| [Query filters](docs/query-filters.en-US.md) | Reusable key and predicate selection for invalidation, awaited refresh, cancellation, and removal |
+| [Query tags](docs/query-tags.en-US.md) | Declare related query groups, select by label, and manage registration and retention |
+| [Automatic batch loading](docs/batching.en-US.md) | Concurrent-key batching, LoadMany for known keys, query API integration, per-key results, and cancellation |
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
-| [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
+| [Invalidation & refresh](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, awaitable refresh, and bounded follow-up loads |
+| [Atomic cache updates](docs/updates.en-US.md) | Conflict-safe typed transformations, immutable values, and explicit retry contracts |
+| [Mutations & synchronization](docs/mutations.en-US.md) | Write state, optional refresh waiting, associated invalidation, and separate synchronization errors |
+| [Execution budgets](docs/execution.en-US.md) | Shared concurrency limits, bounded FIFO queues, overload handling, and cancellation |
 | [Observability](docs/observability.en-US.md) | Cache hits, shared requests, load outcomes and duration, retries, and cleanup statistics |
+| [Diagnostic events](docs/events.en-US.md) | Per-key load causes and sources, shared operation IDs, joins, retries, discarded results, and bounded subscriptions |
 | [MCP resource caching](docs/mcp.en-US.md) | Server-side reuse, remaining TTL, change notifications, private scopes, and e2e |
 
 Complete integrations live in `examples`; the guides cover API details. Treat cached values as immutable; copy slices and maps before modifying them. Different result types cannot reuse the same key.

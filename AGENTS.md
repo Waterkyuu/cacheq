@@ -20,6 +20,17 @@ recommend a better approach when appropriate.
 - Do not add emojis to source code, comments, logs, or user-facing strings.
 - Keep the library compatible with the Go version declared in `go.mod`.
 
+## Code review
+
+- Before inspecting code for defects, read this entire `AGENTS.md`, any applicable
+  nested instructions, and [REVIEW.md](REVIEW.md), in that order.
+- Follow the review standard's contract, reproduction, and responsibility checks
+  before reporting a finding or assigning severity.
+- Do not attribute caller-owned business logic errors or unsupported guarantees
+  to implementation, API design, or architecture defects in cacheq.
+- Keep optional capability suggestions separate from verified defects; a feature
+  proposal is not an existing API contract.
+
 ## Commands
 
 Run commands from the repository root.
@@ -104,6 +115,7 @@ meaning, contract, or reason for existing instead of translating its syntax.
 
 ## Testing
 
+- For every new feature, write unit tests and end-to-end tests before implementing.
 - Test observable behavior rather than implementation details.
 - Use table-driven tests when several cases share the same setup and assertion shape.
 - Cover success, failure, cancellation, and boundary cases when relevant.
@@ -114,6 +126,11 @@ meaning, contract, or reason for existing instead of translating its syntax.
 
 ## Document
 
-Upon completing a feature, create example documents (`xxxx.en-US.md` and `xxxx.zh-CN.md`) in the `docs` folder.
-
-If it is a fix, there is no need to add new documentation.
+- New features require matching `docs/xxxx.en-US.md` and `docs/xxxx.zh-CN.md` guides;
+  fixes update existing guides when needed.
+- Use formal technical documentation: purpose, runnable examples, API contracts,
+  and limitations. Avoid conversational wording.
+- Keep both languages aligned and verify example output.
+- Use `docs` as the website source. Register new guides in generation, navigation,
+  homepage, and README links. Build the website and verify both locales, links,
+  and search coverage.

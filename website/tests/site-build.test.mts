@@ -55,8 +55,8 @@ test("every published page has server-rendered content and working internal link
 	const files = await htmlFiles(build);
 	assert.equal(
 		files.filter((file) => file.endsWith("index.html")).length,
-		18,
-		"Each language must publish one homepage and eight guides without fallback duplicates",
+		34,
+		"Each language must publish one homepage and sixteen guides without fallback duplicates",
 	);
 	for (const file of files) {
 		const html = await readFile(file, "utf8");
@@ -78,9 +78,17 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			"docs/",
 			"docs/queries/",
 			"docs/query-options/",
+			"docs/query-filters/",
+			"docs/query-tags/",
 			"docs/cache/",
 			"docs/invalidation/",
 			"docs/observability/",
+			"docs/events/",
+			"docs/batching/",
+			"docs/updates/",
+			"docs/mutations/",
+			"docs/execution/",
+			"docs/bubbletea/",
 			"docs/mcp/",
 			"docs/versioning/",
 		]) {
@@ -115,7 +123,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			}
 		}
 	}
-	assert.equal(descriptions.size, 18);
+	assert.equal(descriptions.size, 34);
 	assert.ok((await readFile(path.join(build, "cacheq.png"))).length > 0);
 });
 
@@ -137,7 +145,115 @@ test("Go search results resolve to published sections and public source declarat
 	);
 	assert.ok(index.some((record) => record.title === "Client.Invalidate"));
 	assert.ok(index.some((record) => record.title === "Client.Stats"));
+	assert.ok(index.some((record) => record.title === "Client.SubscribeEvents"));
+	assert.ok(index.some((record) => record.title === "EventSubscription.Dropped"));
+	assert.ok(index.some((record) => record.title === "NewBatcher"));
 	assert.ok(index.some((record) => record.title === "Query"));
+	for (const declaration of [
+		"Update",
+		"ErrUpdateConflict",
+		"Mutation",
+		"MutationHandle.Mutate",
+		"NewExecutor",
+		"Executor.Stats",
+		"Client.InvalidateAndWait",
+		"RefreshResult",
+		"ErrRefreshInvalidated",
+		"ErrRefreshSuperseded",
+		"QueryFilter",
+		"Batcher.LoadMany",
+	]) {
+		assert.ok(
+			index.some((record) => record.title === declaration),
+			`Missing API search entry: ${declaration}`,
+		);
+	}
+	for (const locale of ["en", "zh-CN"]) {
+		const prefix = locale === "en" ? "" : "zh-CN/";
+		for (const [slug, declaration] of [
+			["query-filters", "QueryFilter"],
+			["query-tags", "QueryDefinition.Tags"],
+			["updates", "ErrUpdateConflict"],
+			["invalidation", "InvalidateAndWait"],
+			["mutations", "SyncErr"],
+			["execution", "MaxConcurrent"],
+			["batching", "LoadMany"],
+		]) {
+			assert.ok(
+				documents.some(
+					(record) =>
+						record.language === locale &&
+						record.url.startsWith(`/cacheq/${prefix}docs/${slug}/`) &&
+						record.content.includes(declaration),
+				),
+				`Missing ${locale} ${slug} search coverage`,
+			);
+		}
+		const route = `/cacheq/${prefix}docs/events/`;
+		assert.ok(
+			documents.some(
+				(record) =>
+					record.language === locale &&
+					record.url.startsWith(route) &&
+					record.content.includes("SubscribeEvents"),
+			),
+			`Diagnostic events are missing from ${locale} search results`,
+		);
+		assert.ok(
+			documents.some(
+				(record) =>
+					record.language === locale &&
+					record.url.startsWith(`/cacheq/${prefix}docs/batching/`) &&
+					record.content.includes("NewBatcher"),
+			),
+			`Batch loading is missing from ${locale} search results`,
+		);
+		assert.ok(
+			documents.some(
+				(record) =>
+					record.language === locale &&
+					record.url.startsWith(`/cacheq/${prefix}docs/bubbletea/`) &&
+					record.content.includes("Bubble Tea"),
+			),
+			`Bubble Tea is missing from ${locale} search results`,
+		);
+	}
 	for (const record of documents)
 		await assertDestination(record.url, path.join(build, "index.html"));
+});
+
+test("new feature guides are discoverable and render the maintained API documentation", async () => {
+	for (const locale of ["en", "zh-CN"]) {
+		const prefix = locale === "en" ? "" : "zh-CN/";
+		const homepage = await readFile(path.join(build, prefix, "index.html"), "utf8");
+		const queries = await readFile(path.join(build, prefix, "docs/queries/index.html"), "utf8");
+		for (const [slug, declarations] of [
+			["query-options", ["QueryOptions", "QueryDefinition", "Disable", "Prefetch"]],
+			["query-filters", ["QueryFilter", "Predicate", "InvalidateAndWait", "Cancel", "Remove"]],
+			[
+				"query-tags",
+				["QueryDefinition.Tags", "QueryFilter.Tags", "InvalidateAndWait", "Cancel", "Remove"],
+			],
+			["events", ["SubscribeEvents", "EventResultDiscarded", "Dropped()"]],
+			["updates", ["Update", "ErrUpdateConflict", "ErrNoData"]],
+			["mutations", ["Mutation", "SyncErr", "ErrMutationBusy", "OnSuccess", "InvalidateAndWait"]],
+			["invalidation", ["InvalidateAndWait", "RefetchAfterLoad", "ErrRefreshInvalidated"]],
+			["execution", ["NewExecutor", "MaxConcurrent", "ErrQueueFull"]],
+			["batching", ["NewBatcher", "LoadMany", "MaxBatchSize", "ErrBatchResultMissing"]],
+			["bubbletea", ["Bubble Tea", "examples/bubbletea", "QueryHandle"]],
+		] as const) {
+			const route = `/cacheq/${prefix}docs/${slug}/`;
+			assert.ok(homepage.includes(`href="${route}"`), `Missing ${locale} ${slug} homepage link`);
+			assert.ok(queries.includes(`href="${route}"`), `Missing ${locale} ${slug} sidebar link`);
+			const guide = await readFile(path.join(build, prefix, `docs/${slug}/index.html`), "utf8");
+			for (const declaration of declarations) assert.ok(guide.includes(declaration));
+			assert.ok(guide.includes(`docs/${slug}.${locale === "en" ? "en-US" : "zh-CN"}.md`));
+			if (slug === "bubbletea") {
+				assert.match(
+					guide,
+					/href="https:\/\/github.com\/Waterkyuu\/cacheq\/tree\/[^" ]+\/examples\/bubbletea\/"/,
+				);
+			}
+		}
+	}
 });

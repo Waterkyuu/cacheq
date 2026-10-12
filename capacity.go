@@ -20,7 +20,7 @@ func (c *Client) touchCapacityLocked(key any) {
 		c.stats.LRUEvictions++
 		// Retain the type binding while a handle or load still owns this key.
 		// Eviction clears only cached state and never cancels shared work or starts a refresh.
-		c.discardLocked(oldest)
+		c.discardLocked(oldest, ReasonCapacity)
 		c.stopGCLocked(oldest)
 		c.notifyLocked(oldest)
 	}
