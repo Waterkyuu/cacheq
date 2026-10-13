@@ -163,6 +163,7 @@ go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 | [自动批量加载](docs/batching.zh-CN.md) | 并发 key 组批、通过 LoadMany 加载已知 key、查询 API 集成、逐 key 结果和取消 |
 | [缓存与生命周期](docs/cache.zh-CN.md) | 所有缓存读写、配置、自动删除、取消、删除、关闭及错误处理 |
 | [共享结果缓存](docs/shared-cache.zh-CN.md) | 可选 Redis 缓存、Codec、原始新鲜期、按 key 失效、条件写入与故障处理 |
+| [共享失效通知与标签](docs/shared-invalidation.zh-CN.md) | 跨实例通知、远端标签版本、watcher 生命周期、连接恢复和 Redis 原子标签布局 |
 | [失效与刷新](docs/invalidation.zh-CN.md) | 单键、批量、条件失效，可等待刷新及有界补刷 |
 | [原子缓存更新](docs/updates.zh-CN.md) | 类型安全的缓存转换、共享只读值、并发冲突和显式重试契约 |
 | [写入与关联失效](docs/mutations.zh-CN.md) | 写入状态、可选等待刷新、关联失效及独立的同步错误 |

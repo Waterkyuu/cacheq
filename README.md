@@ -170,6 +170,7 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | [Automatic batch loading](docs/batching.en-US.md) | Concurrent-key batching, LoadMany for known keys, query API integration, per-key results, and cancellation |
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
 | [Shared result cache](docs/shared-cache.en-US.md) | Optional Redis caching, codecs, source freshness, per-key invalidation, conditional writes, and failure handling |
+| [Shared invalidation and tags](docs/shared-invalidation.en-US.md) | Cross-instance notifications, remote tag generations, watcher lifecycle, connection recovery, and atomic Redis tag layouts |
 | [Invalidation & refresh](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, awaitable refresh, and bounded follow-up loads |
 | [Atomic cache updates](docs/updates.en-US.md) | Conflict-safe typed transformations, immutable values, and explicit retry contracts |
 | [Mutations & synchronization](docs/mutations.en-US.md) | Write state, optional refresh waiting, associated invalidation, and separate synchronization errors |

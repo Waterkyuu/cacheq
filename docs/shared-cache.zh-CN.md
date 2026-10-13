@@ -70,7 +70,7 @@ shared read errors: 1
 
 示例使用支持并发访问的内存数据源代替数据库，使每次数据变化和真实回源次数都可以直接观察。A、B 使用不同的本地 Client，但共享同一条 Redis 记录。
 
-首次读取访问数据源，B 的首次读取从 Redis 恢复结果，A 的第二次读取直接命中本地缓存。共享失效后 A 获取 Bob，B 仍返回本地 Alice，符合远端失效不通知其他 Client 的契约。B 的显式本地失效会绕过共享数据并回源。关闭 Redis 连接后，新 Client C 回源成功，ReadErrors 增加。
+首次读取访问数据源，B 的首次读取从 Redis 恢复结果，A 的第二次读取直接命中本地缓存。共享失效后 A 获取 Bob，B 仍返回本地 Alice，符合未启用 WatchShared 时不接收通知的默认契约。B 的显式本地失效会绕过共享数据并回源。关闭 Redis 连接后，新 Client C 回源成功，ReadErrors 增加。
 
 示例使用保留的 `cacheq-demo` 命名空间，每次运行前重置该示例 key。生产记录不应使用这个命名空间。数据过期后仍会保留一个小型版本元数据 key；示例完成后可以使用 Ctrl+C 停止这个临时 Redis。
 
@@ -221,6 +221,7 @@ func printRead(
 | `SharedCacheOptions.Format` | 数据结构与 Codec 的格式版本 | 必须是非空字符串 |
 | `SharedCacheOptions.TTL` | 从数据源完成时间开始计算的共享新鲜度上限与记录保留时间 | 必须为正数 |
 | `SharedCacheOptions.Timeout` | 每次存储操作的截止时间 | 0：一秒；负数：配置错误 |
+| `SharedCacheOptions.ShareTags` | 将 QueryDefinition.Tags 登记到远端 | false；要求启用的 SharedTagStore |
 | `SharedCacheOptions.Codec` | 类型化结果编码与解码 | nil：`JSONCodec[V]` |
 | `redistore.Options.Prefix` | 区分应用和环境的 Redis 命名空间 | 空字符串：`cacheq`；禁止大括号 |
 
@@ -270,7 +271,7 @@ return err
 
 `InvalidateShared` 先检查本地 key、类型、Client 状态和 context，再使远端记录失效，最后调用本地 Invalidate。远端失败时不修改本地状态。如果远端已经成功，而 Client 在本地失效前关闭，远端操作不会回滚。超时或连接错误可能意味着远端结果不确定：重新执行远端失效可以安全地产生另一个版本，但不能因此盲目重试业务写入。
 
-不使用 RefetchNone 时，已启用订阅按照现有规则刷新。这个方法不等待刷新完成；需要观察完成结果时，使用已有本地刷新 API。它不会使其他 Client 的本地数据失效，也不处理远端标签。
+不使用 RefetchNone 时，已启用订阅按照现有规则刷新。这个方法不等待刷新完成；需要观察完成结果时，使用已有本地刷新 API。其他 Client 仅在配置 WatchShared 后接收失效。远端标签采用 InvalidateSharedTags，参见[共享失效通知与标签](shared-invalidation.zh-CN.md)。
 
 `shared.Invalidate(ctx)` 只执行远端操作。`client.Invalidate(key)` 只执行本地失效，不过新启动的刷新会绕过共享数据，并可能写入新的共享结果。
 
@@ -318,7 +319,7 @@ Redis 比较 G1 与 G2，拒绝旧写入
 | 读取失败、读取超时或返回空版本 | 回源；没有有效令牌时跳过共享写入 | ReadErrors |
 | 强制刷新或失效刷新 | 忽略共享数据，取得令牌并回源 | Bypasses |
 | 编码或存储写入失败 | 仍返回成功的数据源结果 | EncodeErrors 或 WriteErrors |
-| 回源期间版本发生变化 | 返回数据源结果，拒绝远端写入 | WriteConflicts |
+| 回源期间版本发生变化 | 返回数据源结果，拒绝远端写入，本地结果保持 stale | WriteConflicts |
 | 数据源失败 | 正常错误、重试与本地 stale 数据行为，不写入远端错误记录 | 已有 Client 统计 |
 | 调用方取消或查询超时 | 按已有规则取消查询 | 取消前完成的操作可能已计数 |
 | 显式远端失效失败 | 返回包装错误，保留 errors.Is 能力 | InvalidationErrors |
@@ -349,4 +350,4 @@ go build ./...
 
 核心单元测试覆盖跨 Client 复用、原始新鲜期、TTL 边界、nil 数据、Codec 故障、数据源失败、本地写入、取消、Close、请求合并顺序和旧写入拒绝。HTTP 测试验证预加载、订阅发布、真实回源次数和刷新。Redis 适配器测试启动关闭持久化的临时 Redis 进程，运行实际 Lua 脚本、检查数据过期，并模拟元数据丢失。没有 redis-server 时会明确跳过；设置 CACHEQ_REQUIRE_REDIS=1 后缺失服务器会失败，CI 使用这个要求。
 
-共享缓存支持一层共享结果存储、Redis、JSON，以及按 key 的失效版本保护。它不提供其他实例本地值的立即失效、远端标签索引、任意缓存链、错误缓存、分布式锁、Redis 原子 Update 或持久化查询状态。上述能力需要分别设计，不能从“共享缓存”推导出这些保证。
+共享缓存支持一层共享结果存储、Redis、JSON，以及按 key 的失效版本保护。可选通知和远端标签版本参见[共享失效通知与标签](shared-invalidation.zh-CN.md)。当前不支持任意缓存链、错误缓存、分布式锁、Redis 原子 Update 或持久化查询状态。

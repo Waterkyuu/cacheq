@@ -6,6 +6,8 @@ Query tags declare relationships between queries. Detail, list, and aggregate qu
 
 `Key` identifies a query; `Tags` groups related queries. Sharing a tag does not merge caches for different keys or change result-type constraints or loading policies.
 
+This guide specifies local tag registration and QueryFilter matching. Optional remote registration through `ShareTags` and cross-instance invalidation through `WatchShared` are covered by [shared invalidation and tags](shared-invalidation.en-US.md).
+
 ## Quick start
 
 This complete program assigns the same tag to tenant 42's user detail and list queries. It prefetches data, creates enabled subscriptions, changes the simulated backend value, and awaits both refreshes by tag. Tenant 99's data remains unchanged.

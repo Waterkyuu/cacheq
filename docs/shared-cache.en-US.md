@@ -68,7 +68,7 @@ C fallback: Bob, source calls: 4
 shared read errors: 1
 ```
 
-The example uses an atomic in-memory source instead of a database, making source changes and call counts explicit. A and B have separate local Clients but share one Redis record. The `B local` result reflects the local consistency contract: remote invalidation does not notify B. B's explicit local invalidation then bypasses Redis and reaches the source. Finally, the example closes its Redis connection: a new Client C still returns the source result and records a shared read error.
+The example uses an atomic in-memory source instead of a database, making source changes and call counts explicit. A and B have separate local Clients but share one Redis record. The `B local` result reflects the default local consistency contract: this example does not enable WatchShared, so B receives no notification. B's explicit local invalidation then bypasses Redis and reaches the source. Finally, the example closes its Redis connection: a new Client C still returns the source result and records a shared read error.
 
 The reserved `cacheq-demo` namespace is reset before each run. Do not use it for production records. Its small generation key remains after data expires; stop the disposable server with Ctrl+C after the demonstration.
 
@@ -219,6 +219,7 @@ Subsequent snippets use the program's query definition, Client `a`, and a non-ni
 | `SharedCacheOptions.Format` | Schema and codec version of the value | Required nonempty string |
 | `SharedCacheOptions.TTL` | Maximum shared freshness and record retention from source completion | Required positive duration |
 | `SharedCacheOptions.Timeout` | Deadline for each store call | Zero: one second; negative: invalid |
+| `SharedCacheOptions.ShareTags` | Register QueryDefinition.Tags remotely | false; requires an enabled SharedTagStore |
 | `SharedCacheOptions.Codec` | Typed value encoding and decoding | nil: `JSONCodec[V]` |
 | `redistore.Options.Prefix` | Redis namespace separating applications/environments | Empty: `cacheq`; braces rejected |
 
@@ -268,7 +269,7 @@ return err
 
 `InvalidateShared` validates the local key, type, Client state, and context, invalidates the remote record, then calls local Invalidate. Remote failure leaves local state unchanged. Remote success is not rolled back if the Client closes before local invalidation. A timeout or transport failure can have an uncertain remote outcome: retrying remote invalidation safely creates another generation, but business writes must not be blindly retried.
 
-Without RefetchNone, enabled observers refresh under existing local rules. The method does not await their completion; use the existing local refresh APIs when completion must be observed. It does not invalidate other local Clients or remote tags.
+Without RefetchNone, enabled observers refresh under existing local rules. The method does not await their completion; use the existing local refresh APIs when completion must be observed. Other local Clients are notified only through WatchShared. Remote tags use InvalidateSharedTags; see [shared invalidation and tags](shared-invalidation.en-US.md).
 
 `shared.Invalidate(ctx)` performs only the remote operation. `client.Invalidate(key)` performs only local invalidation, although a newly started refresh bypasses shared data and can write a new shared result.
 
@@ -316,7 +317,7 @@ Supply a concurrency-safe go-redis client and configure `ContextTimeoutEnabled`,
 | Read failure, read timeout, or empty version | Load source; skip shared write without a valid token | ReadErrors |
 | Forced/invalidation refresh | Ignore record data, obtain token, load source | Bypasses |
 | Encode or store write failure | Return successful source data | EncodeErrors or WriteErrors |
-| Token changed during source load | Return source data, reject remote write | WriteConflicts |
+| Token changed during source load | Return source data, reject remote write, keep the local result stale | WriteConflicts |
 | Source error | Normal query failure/retry and local stale-data behavior; no remote error record | Normal Client stats |
 | Caller cancellation or query timeout | Cancel query according to existing rules | Operations completed before cancellation may already be counted |
 | Explicit remote invalidation failure | Return wrapped error preserving errors.Is | InvalidationErrors |
@@ -347,4 +348,4 @@ go build ./...
 
 Root unit tests cover client reuse, original freshness, TTL boundaries, nil data, codec failures, source failures, local writes, cancellation, Close, merge ordering, and old-write rejection. HTTP tests verify prefetch, subscription publication, source call counts, and refresh. Adapter tests launch disposable Redis processes with persistence disabled, exercise actual Lua scripts, inspect payload expiry, and simulate metadata loss. They skip explicitly when redis-server is unavailable unless CACHEQ_REQUIRE_REDIS=1; CI requires it.
 
-The shared cache supports one shared result layer, Redis, JSON, and per-key invalidation fencing. It does not provide immediate cross-instance local invalidation, remote tag indexes, arbitrary cache chains, cached errors, distributed locks, Redis transactions for Update, or durable query state. Those are separate capabilities, not guarantees implied by shared caching.
+The shared cache supports one shared result layer, Redis, JSON, and per-key invalidation fencing. Optional notifications and remote tag generations are specified in [shared invalidation and tags](shared-invalidation.en-US.md). Arbitrary cache chains, cached errors, distributed locks, Redis transactions for Update, and durable query state are not supported.
