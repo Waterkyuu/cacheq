@@ -94,14 +94,14 @@ export default defineConfig({
 					translations: { "zh-CN": "可观测性" },
 				},
 				{
-					slug: "docs/mcp",
-					label: "MCP resource caching",
-					translations: { "zh-CN": "MCP 资源缓存" },
-				},
-				{
 					slug: "docs/events",
 					label: "Diagnostic events",
 					translations: { "zh-CN": "诊断事件" },
+				},
+				{
+					slug: "docs/mcp",
+					label: "MCP resource caching",
+					translations: { "zh-CN": "MCP 资源缓存" },
 				},
 				{
 					slug: "docs/bubbletea",

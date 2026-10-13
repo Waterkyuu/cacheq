@@ -81,16 +81,6 @@ export const chapters: Chapter[] = [
 		},
 	},
 	{
-		id: "mcp",
-		zh: "MCP 资源缓存",
-		en: "MCP resource caching",
-		description: {
-			en: "Integrate cacheq with an MCP server in Go: share resource reads across connections, preserve TTL, isolate private data, and invalidate cached values after mutations.",
-			"zh-CN":
-				"在 Go MCP 服务端接入 cacheq，跨连接共享资源读取，保留原始 TTL，隔离私有数据，并在修改后使缓存失效、通知客户端重新读取。",
-		},
-	},
-	{
 		id: "events",
 		zh: "诊断事件",
 		en: "Diagnostic events",
@@ -98,6 +88,16 @@ export const chapters: Chapter[] = [
 			en: "Subscribe to cacheq diagnostic events in Go. Filter by key, trace load causes and shared requests, inspect retries and removals, and monitor bounded event delivery.",
 			"zh-CN":
 				"订阅 cacheq 的 Go 诊断事件，按 key 过滤，记录加载来源与原因、请求合并、重试及缓存删除，并监控有界事件投递。",
+		},
+	},
+	{
+		id: "mcp",
+		zh: "MCP 资源缓存",
+		en: "MCP resource caching",
+		description: {
+			en: "Integrate cacheq with an MCP server in Go: share resource reads across connections, preserve TTL, isolate private data, and invalidate cached values after mutations.",
+			"zh-CN":
+				"在 Go MCP 服务端接入 cacheq，跨连接共享资源读取，保留原始 TTL，隔离私有数据，并在修改后使缓存失效、通知客户端重新读取。",
 		},
 	},
 	{

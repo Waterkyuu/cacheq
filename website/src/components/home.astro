@@ -91,20 +91,20 @@ const guides = [
 		api: "Stats",
 	},
 	{
-		slug: "mcp",
-		title: chinese ? "MCP 资源缓存" : "MCP resource caching",
-		description: chinese
-			? "共享资源读取，保留有效期，接收变化通知。"
-			: "Share resource reads, preserve TTL, and notify on changes.",
-		api: "FetchWithExpiry · Invalidate · Stats",
-	},
-	{
 		slug: "events",
 		title: chinese ? "诊断事件" : "Diagnostic events",
 		description: chinese
 			? "按 key 记录加载原因、请求合并和缓存删除。"
 			: "Trace load causes, shared requests, and removals by key.",
 		api: "SubscribeEvents · LoadID · Dropped",
+	},
+	{
+		slug: "mcp",
+		title: chinese ? "MCP 资源缓存" : "MCP resource caching",
+		description: chinese
+			? "共享资源读取，保留有效期，接收变化通知。"
+			: "Share resource reads, preserve TTL, and notify on changes.",
+		api: "FetchWithExpiry · Invalidate · Stats",
 	},
 	{
 		slug: "bubbletea",
