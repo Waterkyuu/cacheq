@@ -15,6 +15,9 @@ type QueryDefinition[V any] struct {
 	Key any
 	// Fetcher loads the result using application-owned HTTP, database, or other dependencies.
 	Fetcher Fetcher[V]
+	// Shared optionally reuses serialized results across processes; nil keeps all caching local.
+	// The shared key and format must consistently identify this result across every participating client.
+	Shared *SharedCache[V]
 	// Tags declares exact string labels to merge into this key when an operation is admitted.
 	// Labels are copied, remain while the Client retains this query, and do not affect cache identity.
 	Tags []string
@@ -62,5 +65,35 @@ func (d QueryDefinition[V]) request(defaults Options, trigger EventTrigger) quer
 	request := eraseFetcher(d.Fetcher, resolvePolicy(defaults, d.Options))
 	request.trigger = trigger
 	request.tags = slices.Clone(d.Tags)
+	if d.Shared != nil && d.Fetcher != nil {
+		request.shared = d.Shared.request(d.Fetcher, request.options)
+	}
 	return request
+}
+
+// InvalidateShared invalidates this definition's remote key before marking one client's local query stale.
+// A remote failure is returned without changing local state; remote success is not rolled back on local failure.
+// Other clients are not notified. Local refresh and same-key in-flight rules match Client.Invalidate.
+// Applications must commit their business write before calling this method.
+func (d QueryDefinition[V]) InvalidateShared(
+	ctx context.Context,
+	client *Client,
+	options ...InvalidateOptions,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if d.Shared == nil {
+		return ErrInvalidSharedCache
+	}
+	client.mu.Lock()
+	err := client.checkLocked(d.Key, reflect.TypeFor[V]())
+	client.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := d.Shared.Invalidate(ctx); err != nil {
+		return err
+	}
+	return client.Invalidate(d.Key, options...)
 }

@@ -74,6 +74,10 @@ type entry struct {
 	invalidated bool
 	// updatedAt records the last installation of usable data.
 	updatedAt time.Time
+	// fetchedAt preserves source freshness when sharedExpiresAt identifies a shared result.
+	fetchedAt time.Time
+	// sharedExpiresAt caps every consumer's freshness for a shared result; zero means no shared cap.
+	sharedExpiresAt time.Time
 	// err records the most recent failure while earlier data can remain available.
 	err error
 	// staleReason records the latest explicit stale cause without keeping removed-key history.
@@ -86,6 +90,8 @@ type queryRequest struct {
 	tags []string
 	// load produces data and an optional explicit expiration outside the client lock.
 	load Loader[any]
+	// shared optionally performs typed shared-cache access within the existing loader attempt.
+	shared *sharedQuery
 	// options supplies the initiator's retry, timeout, and ordinary freshness settings.
 	options Options
 	// ordinary distinguishes fetchers from loaders with authoritative absolute deadlines.
@@ -319,6 +325,11 @@ func (c *Client) startLocked(ctx context.Context, key any, request queryRequest)
 func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 	defer pending.cancel()
 	value, expiresAt, err := c.run(ctx, key, pending)
+	var source sharedResult
+	if result, ok := value.(sharedResult); ok {
+		source = result
+		value = result.value
+	}
 	if ctx.Err() != nil {
 		value, expiresAt, err = nil, time.Time{}, ctx.Err()
 	}
@@ -343,9 +354,10 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 			installsData := err == nil || c.options.Clock().Before(expiresAt)
 			if installsData {
 				cached.value, cached.hasData, cached.updatedAt = value, true, c.options.Clock()
+				cached.fetchedAt, cached.sharedExpiresAt = source.fetchedAt, source.expiresAt
 				cached.ordinary = pending.request.ordinary
 				if cached.ordinary {
-					expiresAt = cached.updatedAt.Add(pending.request.options.StaleTime)
+					expiresAt = c.ordinaryExpiry(cached, pending.request.options.StaleTime)
 				}
 				expiresAt = c.limitExpiry(cached.updatedAt, expiresAt)
 			}
@@ -441,6 +453,16 @@ func (c *Client) attempt(
 		c.emitEventLocked(event)
 	}
 	c.mu.Unlock()
+	if pending.request.shared != nil {
+		forced := pending.reason == ReasonInvalidated || pending.reason == ReasonRefetch
+		// Failed refreshes remain invalidated; reusing their old shared record would undo that invalidation.
+		bypass := forced || pending.reason == ReasonPreviousFailure
+		returnValue, sharedErr := pending.request.shared.load(ctx, bypass)
+		if sharedErr != nil {
+			return nil, time.Time{}, sharedErr
+		}
+		return returnValue, time.Time{}, nil
+	}
 	return pending.request.load(ctx)
 }
 
@@ -562,9 +584,22 @@ func (c *Client) entryFreshnessLocked(cached entry, staleTime time.Duration) (ti
 		return expiresAt, false
 	}
 	if cached.ordinary && !cached.invalidated {
-		expiresAt = c.limitExpiry(cached.updatedAt, cached.updatedAt.Add(staleTime))
+		expiresAt = c.ordinaryExpiry(cached, staleTime)
 	}
 	return expiresAt, c.options.Clock().Before(expiresAt)
+}
+
+// ordinaryExpiry applies consumer freshness to source time and caps it by shared and local age limits.
+func (c *Client) ordinaryExpiry(cached entry, staleTime time.Duration) time.Time {
+	start := cached.updatedAt
+	if !cached.sharedExpiresAt.IsZero() {
+		start = cached.fetchedAt
+	}
+	expiresAt := start.Add(staleTime)
+	if !cached.sharedExpiresAt.IsZero() && expiresAt.After(cached.sharedExpiresAt) {
+		expiresAt = cached.sharedExpiresAt
+	}
+	return c.limitExpiry(cached.updatedAt, expiresAt)
 }
 
 // withFreshnessLocked applies one consumer's freshness to ordinary, non-invalidated shared data.
