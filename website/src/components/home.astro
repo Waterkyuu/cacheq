@@ -27,6 +27,14 @@ const docs = `${base}${chinese ? "zh-CN/" : ""}docs/`;
 const logo = `${base}cacheq.png`;
 const guides = [
 	{
+		slug: "shared-invalidation",
+		title: chinese ? "共享失效通知与标签" : "Shared invalidation & tags",
+		description: chinese
+			? "订阅跨实例失效，按远端标签刷新关联查询。"
+			: "Subscribe to cross-instance invalidations and refresh queries by remote tag.",
+		api: "WatchShared · ShareTags · InvalidateSharedTags",
+	},
+	{
 		slug: "shared-cache",
 		title: chinese ? "共享结果缓存" : "Shared result cache",
 		description: chinese

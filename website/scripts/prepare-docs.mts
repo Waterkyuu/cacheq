@@ -71,6 +71,16 @@ export const chapters: Chapter[] = [
 		},
 	},
 	{
+		id: "shared-invalidation",
+		zh: "共享失效通知与标签",
+		en: "Shared invalidation & tags",
+		description: {
+			en: "Receive cacheq Redis invalidation notifications, register remote query tags, recover from connection gaps, and manage watcher ownership and conditional generation checks.",
+			"zh-CN":
+				"接收 cacheq Redis 失效通知，登记远端查询标签，修复连接中断区间，管理 watcher 生命周期并执行原子版本校验。",
+		},
+	},
+	{
 		id: "query-tags",
 		zh: "查询标签",
 		en: "Query tags",

@@ -64,6 +64,11 @@ export default defineConfig({
 					translations: { "zh-CN": "共享结果缓存" },
 				},
 				{
+					slug: "docs/shared-invalidation",
+					label: "Shared invalidation & tags",
+					translations: { "zh-CN": "共享失效通知与标签" },
+				},
+				{
 					slug: "docs/updates",
 					label: "Atomic cache updates",
 					translations: { "zh-CN": "原子缓存更新" },

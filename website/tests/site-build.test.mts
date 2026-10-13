@@ -55,8 +55,8 @@ test("every published page has server-rendered content and working internal link
 	const files = await htmlFiles(build);
 	assert.equal(
 		files.filter((file) => file.endsWith("index.html")).length,
-		36,
-		"Each language must publish one homepage and seventeen guides without fallback duplicates",
+		38,
+		"Each language must publish one homepage and eighteen guides without fallback duplicates",
 	);
 	for (const file of files) {
 		const html = await readFile(file, "utf8");
@@ -82,6 +82,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			"docs/query-tags/",
 			"docs/cache/",
 			"docs/shared-cache/",
+			"docs/shared-invalidation/",
 			"docs/invalidation/",
 			"docs/observability/",
 			"docs/events/",
@@ -124,7 +125,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			}
 		}
 	}
-	assert.equal(descriptions.size, 36);
+	assert.equal(descriptions.size, 38);
 	assert.ok((await readFile(path.join(build, "cacheq.png"))).length > 0);
 });
 
@@ -167,6 +168,10 @@ test("Go search results resolve to published sections and public source declarat
 		"SharedStore",
 		"NewSharedCache",
 		"QueryDefinition.InvalidateShared",
+		"Client.WatchShared",
+		"Client.InvalidateSharedTags",
+		"SharedWatcher",
+		"SharedTagStore",
 	]) {
 		assert.ok(
 			index.some((record) => record.title === declaration),
@@ -179,6 +184,7 @@ test("Go search results resolve to published sections and public source declarat
 			["query-filters", "QueryFilter"],
 			["query-tags", "QueryDefinition.Tags"],
 			["shared-cache", "InvalidateShared"],
+			["shared-invalidation", "WatchShared"],
 			["updates", "ErrUpdateConflict"],
 			["invalidation", "InvalidateAndWait"],
 			["mutations", "SyncErr"],
@@ -236,6 +242,10 @@ test("new feature guides are discoverable and render the maintained API document
 		for (const [slug, declarations] of [
 			["query-options", ["QueryOptions", "QueryDefinition", "Disable", "Prefetch"]],
 			["shared-cache", ["SharedCacheOptions", "SharedStore", "InvalidateShared", "WriteConflicts"]],
+			[
+				"shared-invalidation",
+				["WatchShared", "EnableTags", "ShareTags", "InvalidateSharedTags", "RegisteredTags"],
+			],
 			["query-filters", ["QueryFilter", "Predicate", "InvalidateAndWait", "Cancel", "Remove"]],
 			[
 				"query-tags",
