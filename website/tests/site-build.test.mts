@@ -55,8 +55,8 @@ test("every published page has server-rendered content and working internal link
 	const files = await htmlFiles(build);
 	assert.equal(
 		files.filter((file) => file.endsWith("index.html")).length,
-		34,
-		"Each language must publish one homepage and sixteen guides without fallback duplicates",
+		36,
+		"Each language must publish one homepage and seventeen guides without fallback duplicates",
 	);
 	for (const file of files) {
 		const html = await readFile(file, "utf8");
@@ -81,6 +81,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			"docs/query-filters/",
 			"docs/query-tags/",
 			"docs/cache/",
+			"docs/shared-cache/",
 			"docs/invalidation/",
 			"docs/observability/",
 			"docs/events/",
@@ -123,7 +124,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			}
 		}
 	}
-	assert.equal(descriptions.size, 34);
+	assert.equal(descriptions.size, 36);
 	assert.ok((await readFile(path.join(build, "cacheq.png"))).length > 0);
 });
 
@@ -162,6 +163,10 @@ test("Go search results resolve to published sections and public source declarat
 		"ErrRefreshSuperseded",
 		"QueryFilter",
 		"Batcher.LoadMany",
+		"SharedCache",
+		"SharedStore",
+		"NewSharedCache",
+		"QueryDefinition.InvalidateShared",
 	]) {
 		assert.ok(
 			index.some((record) => record.title === declaration),
@@ -173,6 +178,7 @@ test("Go search results resolve to published sections and public source declarat
 		for (const [slug, declaration] of [
 			["query-filters", "QueryFilter"],
 			["query-tags", "QueryDefinition.Tags"],
+			["shared-cache", "InvalidateShared"],
 			["updates", "ErrUpdateConflict"],
 			["invalidation", "InvalidateAndWait"],
 			["mutations", "SyncErr"],
@@ -229,6 +235,7 @@ test("new feature guides are discoverable and render the maintained API document
 		const queries = await readFile(path.join(build, prefix, "docs/queries/index.html"), "utf8");
 		for (const [slug, declarations] of [
 			["query-options", ["QueryOptions", "QueryDefinition", "Disable", "Prefetch"]],
+			["shared-cache", ["SharedCacheOptions", "SharedStore", "InvalidateShared", "WriteConflicts"]],
 			["query-filters", ["QueryFilter", "Predicate", "InvalidateAndWait", "Cancel", "Remove"]],
 			[
 				"query-tags",

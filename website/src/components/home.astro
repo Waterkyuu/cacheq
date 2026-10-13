@@ -27,6 +27,14 @@ const docs = `${base}${chinese ? "zh-CN/" : ""}docs/`;
 const logo = `${base}cacheq.png`;
 const guides = [
 	{
+		slug: "shared-cache",
+		title: chinese ? "共享结果缓存" : "Shared result cache",
+		description: chinese
+			? "通过 Redis 跨实例复用结果，保留新鲜期并按 key 失效。"
+			: "Reuse results across instances with Redis and explicit key invalidation.",
+		api: "SharedCache · Codec · InvalidateShared",
+	},
+	{
 		slug: "queries",
 		title: chinese ? "查询与条件请求" : "Queries & conditions",
 		description: chinese

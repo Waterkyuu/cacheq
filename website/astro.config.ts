@@ -59,6 +59,11 @@ export default defineConfig({
 					translations: { "zh-CN": "自动批量加载" },
 				},
 				{
+					slug: "docs/shared-cache",
+					label: "Shared result cache",
+					translations: { "zh-CN": "共享结果缓存" },
+				},
+				{
 					slug: "docs/updates",
 					label: "Atomic cache updates",
 					translations: { "zh-CN": "原子缓存更新" },

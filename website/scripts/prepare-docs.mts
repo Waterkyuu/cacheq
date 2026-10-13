@@ -51,6 +51,16 @@ export const chapters: Chapter[] = [
 		},
 	},
 	{
+		id: "shared-cache",
+		zh: "共享结果缓存",
+		en: "Shared result cache",
+		description: {
+			en: "Configure optional Redis result caching for typed cacheq queries. Preserve source freshness, invalidate shared keys, fence obsolete writes, and handle cache failures.",
+			"zh-CN":
+				"为 cacheq 类型化查询配置可选 Redis 结果缓存，保留数据源新鲜期，按 key 共享失效，拒绝旧值回填并处理缓存故障。",
+		},
+	},
+	{
 		id: "query-filters",
 		zh: "统一查询筛选",
 		en: "Query filters",
