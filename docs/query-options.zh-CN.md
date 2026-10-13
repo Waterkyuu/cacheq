@@ -67,12 +67,13 @@ observed: hello
 
 ## `QueryDefinition`：集中定义类型化查询
 
-查询定义包含四个字段：
+查询定义包含五个字段：
 
 | 字段 | 职责 |
 | --- | --- |
 | `Key` | 用非 nil、可比较的键标识查询，包含全部查询参数和身份范围 |
 | `Fetcher` | 通过业务的 HTTP、数据库或其他依赖加载 `V` |
+| `Shared` | 通过可选[共享结果缓存](shared-cache.zh-CN.md)复用序列化结果；nil 保持本地缓存 |
 | `Tags` | 声明用于关联查询分组的标签；登记与生命周期见[查询标签](query-tags.zh-CN.md) |
 | `Options` | 将同一份 `QueryOptions` 用于读取、订阅和预加载 |
 

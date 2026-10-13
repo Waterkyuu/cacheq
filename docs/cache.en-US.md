@@ -4,6 +4,8 @@
 
 A `Client` stores typed results, controls their freshness and retention, and owns shared loads. This guide covers local reads and writes, preloading, absolute expiry, eviction, cancellation, and resource release.
 
+For optional cross-process result reuse, see [shared result caching](shared-cache.en-US.md). Query state remains local; `Get`, `Set`, `Update`, removal, and cleanup retain local semantics.
+
 ## API snippet prerequisites
 
 Unless labeled as a complete program, Go blocks are partial snippets inside business functions. Snippets containing `return err` require a function returning `error`. `ctx` is a non-nil caller context; `client` is created at the application boundary and injected; `users` is a query handle from the [query guide](queries.en-US.md). Import `cacheq "github.com/Waterkyuu/cacheq"` and the standard-library packages used by each snippet.

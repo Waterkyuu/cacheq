@@ -67,12 +67,13 @@ Omitting options or leaving `Disable` false permits automatic loading. Disabling
 
 ## `QueryDefinition`: define a typed query once
 
-The definition has four fields:
+The definition has five fields:
 
 | Field | Responsibility |
 | --- | --- |
 | `Key` | Identify the query using a non-nil comparable key; include all query parameters and identity scope |
 | `Fetcher` | Load `V` using the application's HTTP, database, or other dependencies |
+| `Shared` | Optionally reuse serialized results through a [shared result cache](shared-cache.en-US.md); nil keeps caching local |
 | `Tags` | Declare labels for grouping related queries; registration and lifetime follow the [query tag contract](query-tags.en-US.md) |
 | `Options` | Supply the same `QueryOptions` to reading, subscribing, and prefetching |
 

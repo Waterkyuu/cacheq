@@ -1,5 +1,7 @@
 # 缓存读写、过期与生命周期
 
+跨进程结果复用参见[共享结果缓存](shared-cache.zh-CN.md)。查询状态仍保存在本地；`Get`、`Set`、`Update`、删除与清理保持本地操作语义。
+
 [English](cache.en-US.md) · [查询与条件请求](queries.zh-CN.md) · [缓存失效](invalidation.zh-CN.md)
 
 一个 `Client` 保存类型化结果，管理新鲜期、保留期和共享加载。本文介绍本地读写、预加载、绝对过期时间、淘汰、取消及资源释放。

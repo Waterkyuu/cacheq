@@ -35,14 +35,16 @@ how they execute and how consumers receive their results.
 | A view or long-running task needs to react to loading, results, errors, and refreshes | Subscribe to typed query updates; inspect diagnostic events to trace execution |
 | Reads and writes share a database or service with limited capacity | Bound active callbacks and queued work with a shared `Executor` |
 
-cacheq stores its cache and query state within one process. For simple local
-values that only need expiration, a TTL cache may be sufficient. Use external
-storage when data must persist or be shared across processes.
+cacheq owns query state and local results within one process. Selected queries can
+reuse serialized results across processes through an optional
+[shared result cache](docs/shared-cache.en-US.md), including a separate Redis adapter.
+For simple local values that only need expiration, a TTL cache may be sufficient.
 
 ## Features
 
 - Type-safe shared queries and caching.
 - Cache policies and lifecycle management.
+- Optional shared result caching with Redis and per-key invalidation.
 - Cache updates, mutations, and invalidation.
 - Automatic batch loading.
 - Shared execution budgets.
@@ -167,6 +169,7 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | [Query tags](docs/query-tags.en-US.md) | Declare related query groups, select by label, and manage registration and retention |
 | [Automatic batch loading](docs/batching.en-US.md) | Concurrent-key batching, LoadMany for known keys, query API integration, per-key results, and cancellation |
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
+| [Shared result cache](docs/shared-cache.en-US.md) | Optional Redis caching, codecs, source freshness, per-key invalidation, conditional writes, and failure handling |
 | [Invalidation & refresh](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, awaitable refresh, and bounded follow-up loads |
 | [Atomic cache updates](docs/updates.en-US.md) | Conflict-safe typed transformations, immutable values, and explicit retry contracts |
 | [Mutations & synchronization](docs/mutations.en-US.md) | Write state, optional refresh waiting, associated invalidation, and separate synchronization errors |
