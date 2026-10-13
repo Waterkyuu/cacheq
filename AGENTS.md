@@ -79,6 +79,9 @@ reference Task targets that are absent from `Taskfile.yml`.
 - Use idiomatic snake_case file names, such as `query_options.go`.
 - Keep functions focused and control flow easy to follow. Prefer early returns
   when they reduce nesting.
+- Do not repeat identical conditions in adjacent `if` blocks when their bodies can
+  share one guard without changing evaluation order or behavior. Combine such blocks
+  into a single conditional.
 - Wrap errors with useful context while preserving the original error for
   `errors.Is` and `errors.As`.
 - Accept interfaces at the consumer when substitution is needed; otherwise
