@@ -41,6 +41,7 @@ return 1
 	invalidateScript = `
 redis.call('SET', KEYS[1], ARGV[1])
 redis.call('DEL', KEYS[2])
+if ARGV[4] == '1' then redis.call('PUBLISH', ARGV[2], ARGV[3]) end
 return 1
 `
 )
@@ -56,6 +57,11 @@ type RedisClient interface {
 type Options struct {
 	// Prefix namespaces generated Redis keys; empty selects "cacheq" and braces are rejected for cluster safety.
 	Prefix string
+	// EnableTags places this namespace in one cluster slot for atomic key and tag generation checks.
+	// Tagged namespaces use a separate physical key layout; false preserves the per-key P0 layout.
+	EnableTags bool
+	// EnableNotifications publishes invalidations and allows watchers; false preserves P0 command permissions.
+	EnableNotifications bool
 }
 
 // Store owns an immutable Redis namespace and a borrowed command client.
@@ -66,6 +72,12 @@ type Store struct {
 	client RedisClient
 	// prefix separates this store from other applications and excludes Redis hash-tag delimiters.
 	prefix string
+	// enableTags selects the explicit namespace-wide tag generation layout.
+	enableTags bool
+	// enableNotifications keeps Pub/Sub commands opt-in for existing deployments and ACLs.
+	enableNotifications bool
+	// scope uniquely identifies this borrowed store instance for local watcher routing.
+	scope string
 }
 
 // New validates a Redis store configuration without opening a connection or accessing the server.
@@ -76,12 +88,26 @@ func New(client RedisClient, options Options) (*Store, error) {
 	if options.Prefix == "" {
 		options.Prefix = "cacheq"
 	}
-	return &Store{client: client, prefix: options.Prefix}, nil
+	if options.EnableNotifications {
+		if _, ok := client.(redisSubscriber); !ok {
+			return nil, cacheq.ErrSharedCapability
+		}
+	}
+	return &Store{
+		client:              client,
+		prefix:              options.Prefix,
+		enableTags:          options.EnableTags,
+		enableNotifications: options.EnableNotifications,
+		scope:               rand.Text(),
+	}, nil
 }
 
 // Read obtains an atomic snapshot, initializing a random generation even on a cache miss.
 // Missing metadata receives a new token and discards orphaned data; old tokens cannot regain write permission.
 func (s *Store) Read(ctx context.Context, key string) (cacheq.SharedRecord, error) {
+	if s.enableTags {
+		return s.ReadTagged(ctx, key, []string{})
+	}
 	if err := ctx.Err(); err != nil {
 		return cacheq.SharedRecord{}, err
 	}
@@ -117,6 +143,9 @@ func (s *Store) Write(ctx context.Context, key string, write cacheq.SharedWrite)
 	if write.TTL%time.Millisecond != 0 {
 		milliseconds++
 	}
+	if s.enableTags {
+		return s.writeTagged(ctx, key, write, milliseconds)
+	}
 	result, err := s.client.Eval(ctx, writeScript, s.keys(key), write.Version, write.Data, milliseconds).Int64()
 	if err != nil {
 		return false, fmt.Errorf("redis conditional write: %w", err)
@@ -126,20 +155,51 @@ func (s *Store) Write(ctx context.Context, key string, write cacheq.SharedWrite)
 
 // Invalidate fences all earlier readers by replacing the random generation before removing the payload.
 func (s *Store) Invalidate(ctx context.Context, key string) error {
+	_, err := s.InvalidateKey(ctx, key)
+	return err
+}
+
+// InvalidateKey replaces the generation and removes data, publishing its receipt atomically when notifications are enabled.
+func (s *Store) InvalidateKey(ctx context.Context, key string) (cacheq.SharedInvalidation, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return cacheq.SharedInvalidation{}, err
 	}
 	if key == "" {
-		return ErrInvalidOptions
+		return cacheq.SharedInvalidation{}, ErrInvalidOptions
 	}
-	if err := s.client.Eval(ctx, invalidateScript, s.keys(key), rand.Text()).Err(); err != nil {
-		return fmt.Errorf("redis invalidate: %w", err)
+	event := cacheq.SharedInvalidation{ID: rand.Text(), Key: key}
+	data, err := marshalInvalidation(event)
+	if err != nil {
+		return cacheq.SharedInvalidation{}, err
 	}
-	return nil
+	if err := s.client.Eval(ctx, invalidateScript, s.keys(key), event.ID, s.channel(), data, s.notificationFlag()).
+		Err(); err != nil {
+		return cacheq.SharedInvalidation{}, fmt.Errorf("redis invalidate: %w", err)
+	}
+	return event, nil
 }
 
 // keys uses a stable digest hash tag so cluster scripts operate on a single slot for every logical key.
 func (s *Store) keys(key string) []string {
 	base := fmt.Sprintf("%s:{%x}", s.prefix, sha256.Sum256([]byte(key)))
+	if s.enableTags {
+		base = fmt.Sprintf("%s:tagged:{%x}:%x", s.prefix, sha256.Sum256([]byte(s.prefix)), sha256.Sum256([]byte(key)))
+	}
 	return []string{base + ":version", base + ":data"}
+}
+
+// InvalidationScope returns an immutable process-local identity for this store instance.
+func (s *Store) InvalidationScope() string { return s.scope }
+
+// channel isolates notifications by namespace and key layout, including a wire protocol version.
+func (s *Store) channel() string {
+	return fmt.Sprintf("%s:invalidations:v1:tags=%t", s.prefix, s.enableTags)
+}
+
+// notificationFlag supplies the script's explicit Pub/Sub permission boundary.
+func (s *Store) notificationFlag() string {
+	if s.enableNotifications {
+		return "1"
+	}
+	return "0"
 }
