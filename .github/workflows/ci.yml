@@ -87,6 +87,39 @@ jobs:
       - run: go build -o "$RUNNER_TEMP/cacheq-mcp" .
       - run: go run .
 
+  redis:
+    name: Redis shared store
+    runs-on: ubuntu-latest
+    env:
+      CACHEQ_REQUIRE_REDIS: '1'
+    defaults:
+      run:
+        working-directory: store/redis
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: store/redis/go.sum
+      - name: Install local integration-test server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          command -v redis-server
+      - run: go mod verify
+      - name: Check adapter module metadata
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - run: go vet ./...
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: store/redis
+          args: --config ../../.golangci.yml --timeout=5m
+      - run: go test -race ./... -count=1
+      - run: go build ./...
+
   test:
     name: Test (${{ matrix.os }}, Go ${{ matrix.go }})
     runs-on: ${{ matrix.os }}
