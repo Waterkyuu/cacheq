@@ -512,3 +512,20 @@ func TestRedisDefaultInvalidationNeedsNoPubSubPermissions(t *testing.T) {
 		t.Fatalf("notifications were not opt-in: %v", err)
 	}
 }
+
+// TestRedisRingNotificationsRejected prevents one-shard subscriptions from silently missing other shards' invalidations.
+func TestRedisRingNotificationsRejected(t *testing.T) {
+	ring := redis.NewRing(
+		&redis.RingOptions{
+			Addrs:              map[string]string{"a": "127.0.0.1:1", "b": "127.0.0.1:2"},
+			HeartbeatFrequency: time.Hour,
+		},
+	)
+	defer ring.Close()
+	if _, err := New(ring, Options{}); err != nil {
+		t.Fatalf("P0 ring storage changed: %v", err)
+	}
+	if _, err := New(ring, Options{EnableNotifications: true}); !errors.Is(err, cacheq.ErrSharedCapability) {
+		t.Fatalf("independent Redis shards accepted namespace-wide Pub/Sub: %v", err)
+	}
+}

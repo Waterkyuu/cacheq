@@ -89,6 +89,10 @@ func New(client RedisClient, options Options) (*Store, error) {
 		options.Prefix = "cacheq"
 	}
 	if options.EnableNotifications {
+		// Ring shards are independent servers: subscribing on one shard cannot observe other shards' Lua publications.
+		if _, ring := client.(*redis.Ring); ring {
+			return nil, cacheq.ErrSharedCapability
+		}
 		if _, ok := client.(redisSubscriber); !ok {
 			return nil, cacheq.ErrSharedCapability
 		}
