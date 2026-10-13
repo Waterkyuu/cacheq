@@ -27,6 +27,8 @@ type SharedRecord struct {
 	Version string
 	// Data owns the serialized record; an empty slice denotes a cache miss.
 	Data []byte
+	// Tags owns the remote tag membership captured by the read; nil denotes an untagged record.
+	Tags []string
 }
 
 // SharedWrite conditionally installs one encoded result without changing its invalidation version.

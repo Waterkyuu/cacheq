@@ -67,6 +67,7 @@ func query[V any](client *Client, definition QueryDefinition[V]) *QueryHandle[V]
 	// Bind before registering a typed publisher so no concurrent writer can install another type.
 	_ = client.bindLocked(key, reflect.TypeFor[V]())
 	client.registerTagsLocked(key, request.tags)
+	client.registerSharedLocked(key, request)
 	observer := &subscription{
 		enabled: enabled,
 		request: request,
@@ -292,6 +293,7 @@ func (c *Client) setLocked(key, value any, typ reflect.Type) {
 	now := c.options.Clock()
 	cached := entry{
 		typ: typ, value: value, hasData: true, updatedAt: now, tags: c.entries[key].tags,
+		shared:    c.entries[key].shared,
 		expiresAt: c.limitExpiry(now, now.Add(c.options.StaleTime)), ordinary: true,
 	}
 	c.advanceRevisionLocked(&cached)
@@ -345,6 +347,7 @@ func (c *Client) fetch(
 		}
 		if !force && fresh {
 			c.registerTagsLocked(key, request.tags)
+			c.registerSharedLocked(key, request)
 			c.emitEventLocked(
 				Event{Key: key, Kind: EventCacheHit, Trigger: request.trigger, Reason: ReasonFresh, Err: cached.err},
 			)
@@ -362,6 +365,7 @@ func (c *Client) fetch(
 			return nil, err
 		}
 		c.registerTagsLocked(key, request.tags)
+		c.registerSharedLocked(key, request)
 		if force {
 			cached = c.entries[key]
 			cached.expiresAt = time.Time{}

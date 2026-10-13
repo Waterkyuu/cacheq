@@ -78,6 +78,8 @@ type entry struct {
 	fetchedAt time.Time
 	// sharedExpiresAt caps every consumer's freshness for a shared result; zero means no shared cap.
 	sharedExpiresAt time.Time
+	// shared retains remote notification identity independently of data freshness and local writes.
+	shared sharedBinding
 	// err records the most recent failure while earlier data can remain available.
 	err error
 	// staleReason records the latest explicit stale cause without keeping removed-key history.
@@ -336,6 +338,8 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	duration := c.loadNow().Sub(pending.startedAt)
+	// A changed remote generation rejects persistence and also prevents this older snapshot becoming locally fresh.
+	pending.invalidated = pending.invalidated || source.invalidated
 	c.stats.TotalLoadDuration += duration
 	switch {
 	case err == nil:
@@ -355,6 +359,11 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 			if installsData {
 				cached.value, cached.hasData, cached.updatedAt = value, true, c.options.Clock()
 				cached.fetchedAt, cached.sharedExpiresAt = source.fetchedAt, source.expiresAt
+				for _, tag := range source.tags {
+					if !matchesQueryTags(cached.shared.tags, []string{tag}) {
+						cached.shared.tags = append(cached.shared.tags, tag)
+					}
+				}
 				cached.ordinary = pending.request.ordinary
 				if cached.ordinary {
 					expiresAt = c.ordinaryExpiry(cached, pending.request.options.StaleTime)
@@ -457,7 +466,20 @@ func (c *Client) attempt(
 		forced := pending.reason == ReasonInvalidated || pending.reason == ReasonRefetch
 		// Failed refreshes remain invalidated; reusing their old shared record would undo that invalidation.
 		bypass := forced || pending.reason == ReasonPreviousFailure
-		returnValue, sharedErr := pending.request.shared.load(ctx, bypass)
+		returnValue, sharedErr := pending.request.shared.load(ctx, bypass, func(tags []string) {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.pending[key] != pending || c.closed {
+				return
+			}
+			cached := c.entries[key]
+			for _, tag := range tags {
+				if !matchesQueryTags(cached.shared.tags, []string{tag}) {
+					cached.shared.tags = append(cached.shared.tags, tag)
+				}
+			}
+			c.entries[key] = cached
+		})
 		if sharedErr != nil {
 			return nil, time.Time{}, sharedErr
 		}
@@ -551,7 +573,7 @@ func (c *Client) discardLocked(key any, reason EventReason) {
 	cached := c.entries[key]
 	c.forgetCapacityLocked(key)
 	if len(c.observers[key]) > 0 || c.pending[key] != nil {
-		c.entries[key] = entry{typ: cached.typ, tags: cached.tags}
+		c.entries[key] = entry{typ: cached.typ, tags: cached.tags, shared: cached.shared}
 	} else {
 		delete(c.entries, key)
 	}

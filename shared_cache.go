@@ -47,6 +47,9 @@ type SharedCacheOptions[V any] struct {
 	Timeout time.Duration
 	// Codec converts V to bytes; nil selects JSONCodec[V].
 	Codec Codec[V]
+	// ShareTags registers QueryDefinition.Tags remotely; the store must implement SharedTagStore.
+	// False keeps query labels local while still honoring any tags already attached to the shared record.
+	ShareTags bool
 }
 
 // SharedStats counts storage activity for one SharedCache across all clients using it.
@@ -96,6 +99,11 @@ func NewSharedCache[V any](store SharedStore, options SharedCacheOptions[V]) (*S
 	if store == nil || invalidIdentity || invalidTiming {
 		return nil, ErrInvalidSharedCache
 	}
+	if options.ShareTags {
+		if tagged, ok := store.(SharedTagStore); !ok || !tagged.TagsEnabled() {
+			return nil, ErrSharedCapability
+		}
+	}
 	if options.Timeout == 0 {
 		options.Timeout = time.Second
 	}
@@ -116,12 +124,24 @@ func (s *SharedCache[V]) Stats() SharedStats {
 // It does not change any Client's local state; use QueryDefinition.InvalidateShared to update one client too.
 // Other clients retain local results until normal freshness checks or explicit local invalidation.
 func (s *SharedCache[V]) Invalidate(ctx context.Context) error {
+	_, err := s.invalidate(ctx)
+	return err
+}
+
+// invalidate retains a committed receipt when the store can publish notifications.
+func (s *SharedCache[V]) invalidate(ctx context.Context) (SharedInvalidation, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return SharedInvalidation{}, err
 	}
 	operation, cancel := context.WithTimeout(ctx, s.options.Timeout)
 	defer cancel()
-	err := s.store.Invalidate(operation, s.options.Key)
+	var event SharedInvalidation
+	var err error
+	if store, ok := s.store.(SharedInvalidationStore); ok {
+		event, err = store.InvalidateKey(operation, s.options.Key)
+	} else {
+		err = s.store.Invalidate(operation, s.options.Key)
+	}
 	if err == nil {
 		err = operation.Err()
 	}
@@ -129,10 +149,10 @@ func (s *SharedCache[V]) Invalidate(ctx context.Context) error {
 	defer s.mu.Unlock()
 	if err != nil {
 		s.stats.InvalidationErrors++
-		return fmt.Errorf("invalidate shared key %q: %w", s.options.Key, err)
+		return SharedInvalidation{}, fmt.Errorf("invalidate shared key %q: %w", s.options.Key, err)
 	}
 	s.stats.Invalidations++
-	return nil
+	return event, nil
 }
 
 // sharedEnvelope preserves source timestamps independently of local installation and codec format.
@@ -155,26 +175,50 @@ type sharedResult struct {
 	fetchedAt time.Time
 	// expiresAt is the absolute shared freshness cap.
 	expiresAt time.Time
+	// tags preserves the remote membership accompanying the result's invalidation snapshot.
+	tags []string
+	// invalidated marks a locally usable result stale when remote conditional persistence rejects its snapshot.
+	invalidated bool
 }
 
 // sharedQuery is a typed callback erased at the query definition boundary.
 type sharedQuery struct {
+	// scope identifies the optional process-local notification source.
+	scope string
+	// key identifies the remote result independently of its local Go key.
+	key string
+	// tags copies declared labels only when remote registration was requested.
+	tags []string
 	// load runs storage and the original fetcher outside Client.mu.
-	load func(context.Context, bool) (sharedResult, error)
+	load func(context.Context, bool, func([]string)) (sharedResult, error)
 }
 
 // request captures the original fetcher and consumer policy for one admitted query operation.
-func (s *SharedCache[V]) request(fetch Fetcher[V], options Options) *sharedQuery {
-	return &sharedQuery{load: func(ctx context.Context, bypass bool) (sharedResult, error) {
-		return s.load(ctx, fetch, options, bypass)
-	}}
+func (s *SharedCache[V]) request(fetch Fetcher[V], options Options, tags []string) *sharedQuery {
+	request := &sharedQuery{key: s.options.Key, tags: []string{}}
+	if store, ok := s.store.(SharedInvalidationStore); ok {
+		request.scope = store.InvalidationScope()
+	}
+	if s.options.ShareTags {
+		request.tags = append(request.tags, tags...)
+	}
+	request.load = func(ctx context.Context, bypass bool, register func([]string)) (sharedResult, error) {
+		return s.load(ctx, fetch, options, bypass, request.tags, register)
+	}
+	return request
 }
 
 // read captures a generation even when bypassing data, allowing the later write to be fenced.
-func (s *SharedCache[V]) read(ctx context.Context) (SharedRecord, error) {
+func (s *SharedCache[V]) read(ctx context.Context, tags []string) (SharedRecord, error) {
 	operation, cancel := context.WithTimeout(ctx, s.options.Timeout)
 	defer cancel()
-	record, err := s.store.Read(operation, s.options.Key)
+	var record SharedRecord
+	var err error
+	if s.options.ShareTags {
+		record, err = s.store.(SharedTagStore).ReadTagged(operation, s.options.Key, tags)
+	} else {
+		record, err = s.store.Read(operation, s.options.Key)
+	}
 	if err == nil {
 		err = operation.Err()
 	}
@@ -190,8 +234,25 @@ func (s *SharedCache[V]) load(
 	fetch Fetcher[V],
 	options Options,
 	bypass bool,
+	tags []string,
+	register func([]string),
 ) (sharedResult, error) {
-	record, readErr := s.read(ctx)
+	record, readErr := s.read(ctx, tags)
+	if readErr == nil && len(record.Tags) > 0 {
+		register(record.Tags)
+		// A tag notification can arrive before its previously unknown relationship is installed locally.
+		// Confirm the snapshot after registration so that gap cannot restore an invalidated shared value.
+		confirmed, err := s.read(ctx, tags)
+		if err != nil {
+			readErr = err
+		} else {
+			register(confirmed.Tags)
+			if confirmed.Version != record.Version {
+				confirmed.Data = nil
+			}
+			record = confirmed
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return sharedResult{}, err
 	}
@@ -202,6 +263,7 @@ func (s *SharedCache[V]) load(
 		s.count(func(stats *SharedStats) { stats.Bypasses++ })
 	} else if readErr == nil {
 		if result, ok := s.decode(record.Data, options); ok {
+			result.tags = append([]string{}, record.Tags...)
 			s.count(func(stats *SharedStats) { stats.Hits++ })
 			return result, nil
 		}
@@ -215,9 +277,14 @@ func (s *SharedCache[V]) load(
 		return sharedResult{}, err
 	}
 	fetchedAt := options.Clock()
-	result := sharedResult{value: value, fetchedAt: fetchedAt, expiresAt: fetchedAt.Add(s.options.TTL)}
+	result := sharedResult{
+		value:     value,
+		fetchedAt: fetchedAt,
+		expiresAt: fetchedAt.Add(s.options.TTL),
+		tags:      append([]string{}, record.Tags...),
+	}
 	if readErr == nil {
-		s.write(ctx, record.Version, value, result, options.Clock)
+		result.invalidated = s.write(ctx, record.Version, value, result, options.Clock)
 	}
 	return result, nil
 }
@@ -258,22 +325,22 @@ func (s *SharedCache[V]) write(
 	value V,
 	result sharedResult,
 	clock func() time.Time,
-) {
+) bool {
 	data, err := s.options.Codec.Encode(value)
 	if err != nil {
 		s.count(func(stats *SharedStats) { stats.EncodeErrors++ })
-		return
+		return false
 	}
 	data, err = json.Marshal(sharedEnvelope{
 		Format: s.options.Format, FetchedAt: result.fetchedAt, ExpiresAt: result.expiresAt, Data: data,
 	})
 	if err != nil {
 		s.count(func(stats *SharedStats) { stats.EncodeErrors++ })
-		return
+		return false
 	}
 	ttl := result.expiresAt.Sub(clock())
 	if ttl <= 0 || ctx.Err() != nil {
-		return
+		return false
 	}
 	operation, cancel := context.WithTimeout(ctx, s.options.Timeout)
 	defer cancel()
@@ -291,6 +358,7 @@ func (s *SharedCache[V]) write(
 			stats.WriteConflicts++
 		}
 	})
+	return err == nil && !written
 }
 
 // count changes cumulative counters under their own lock, outside the client state machine.

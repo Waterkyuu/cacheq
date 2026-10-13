@@ -66,14 +66,15 @@ func (d QueryDefinition[V]) request(defaults Options, trigger EventTrigger) quer
 	request.trigger = trigger
 	request.tags = slices.Clone(d.Tags)
 	if d.Shared != nil && d.Fetcher != nil {
-		request.shared = d.Shared.request(d.Fetcher, request.options)
+		request.shared = d.Shared.request(d.Fetcher, request.options, request.tags)
 	}
 	return request
 }
 
 // InvalidateShared invalidates this definition's remote key before marking one client's local query stale.
 // A remote failure is returned without changing local state; remote success is not rolled back on local failure.
-// Other clients are not notified. Local refresh and same-key in-flight rules match Client.Invalidate.
+// Other clients receive notifications only through WatchShared; duplicate operation receipts are suppressed.
+// Local refresh and same-key in-flight rules match Client.Invalidate.
 // Applications must commit their business write before calling this method.
 func (d QueryDefinition[V]) InvalidateShared(
 	ctx context.Context,
@@ -92,8 +93,9 @@ func (d QueryDefinition[V]) InvalidateShared(
 	if err != nil {
 		return err
 	}
-	if err := d.Shared.Invalidate(ctx); err != nil {
+	event, err := d.Shared.invalidate(ctx)
+	if err != nil {
 		return err
 	}
-	return client.Invalidate(d.Key, options...)
+	return client.applySharedKey(d.Key, event, lastInvalidateOptions(options))
 }
