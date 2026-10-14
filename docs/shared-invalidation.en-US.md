@@ -25,8 +25,8 @@ redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 From the repository root, in another terminal:
 
 ```sh
-cd store/redis
-REDIS_ADDR=127.0.0.1:16379 go run ./example_invalidation
+cd examples/redis
+REDIS_ADDR=127.0.0.1:16379 go run ./shared_invalidation
 ```
 
 Expected output:
@@ -45,10 +45,10 @@ source calls: 4
 
 Two Clients reuse a `User` detail and a `[]User` list through Redis. A commits the source change and invalidates their shared label. B receives stale snapshots for both result types without manual local invalidation, retains Alice during the stale interval, and explicitly fetches Bob. `RefetchNone` and disabled handles make this example's source call counts deterministic. Production applications can use the default observed-query refresh policy.
 
-The example resets only the reserved `cacheq-invalidation-demo` namespace's demonstration label. Metadata remains until that disposable Redis server is stopped. The complete program is maintained at [store/redis/example_invalidation/main.go](../store/redis/example_invalidation/main.go).
+The example resets only the reserved `cacheq-invalidation-demo` namespace's demonstration label. Metadata remains until that disposable Redis server is stopped. The complete program is maintained at [examples/redis/shared_invalidation/main.go](../examples/redis/shared_invalidation/main.go).
 
 ```go
-// Command example_invalidation demonstrates typed remote tag invalidation and local notification delivery.
+// Command shared_invalidation demonstrates typed remote tag invalidation and local notification delivery.
 package main
 
 import (

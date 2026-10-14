@@ -147,6 +147,12 @@ cd examples/mcp
 go run .
 ```
 
+## Redis examples
+
+[Source and run instructions](examples/redis/) demonstrate shared results, cache failure fallback, remote tags, and cross-instance invalidation notifications. These examples require Go 1.26+ and a local Redis server.
+
+See the [shared cache guide](docs/shared-cache.en-US.md) and [shared invalidation guide](docs/shared-invalidation.en-US.md) for setup, expected output, and API contracts.
+
 ## Reproducible benchmarks
 
 Compare **no cache, first load, and cache hits** for **100 sequential reads** of the same data in the [benchmark guide](benchmarks/benchmarks.en-US.md). The main table reports total time and actual loader calls; internal cost and concurrency diagnostics are documented separately.

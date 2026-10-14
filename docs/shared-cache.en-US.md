@@ -39,7 +39,7 @@ A forced refresh still joins an existing same-key load, as before. It does not u
 
 The core module requires Go 1.22 or later. The optional Redis module requires Go 1.26 or later because it uses go-redis v9.23.0. Redis must support `EVAL`, `GET`, `SET` with `PX`, and `DEL`; the adapter uses a writable primary connection.
 
-These instructions use the checked-out implementation. The adapter is a separate module with a local replacement for the root module; a published adapter version is not assumed.
+These instructions use the checked-out implementation. The examples are a separate module with local replacements for the root module and Redis adapter; a published adapter version is not assumed.
 
 In one terminal, start a disposable local Redis server on a free port:
 
@@ -50,8 +50,8 @@ redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 In another terminal, from the repository root:
 
 ```sh
-cd store/redis
-REDIS_ADDR=127.0.0.1:16379 go run ./example
+cd examples/redis
+REDIS_ADDR=127.0.0.1:16379 go run ./shared_cache
 ```
 
 Expected output:
@@ -72,10 +72,10 @@ The example uses an atomic in-memory source instead of a database, making source
 
 The reserved `cacheq-demo` namespace is reset before each run. Do not use it for production records. Its small generation key remains after data expires; stop the disposable server with Ctrl+C after the demonstration.
 
-The complete program below is maintained in [store/redis/example/main.go](../store/redis/example/main.go). It includes connection settings, a typed source, local Clients, explicit invalidation, and cleanup.
+The complete program below is maintained in [examples/redis/shared_cache/main.go](../examples/redis/shared_cache/main.go). It includes connection settings, a typed source, local Clients, explicit invalidation, and cleanup.
 
 ```go
-// Command example demonstrates shared reads, explicit invalidation, and cache failure fallback.
+// Command shared_cache demonstrates shared reads, explicit invalidation, and cache failure fallback.
 package main
 
 import (

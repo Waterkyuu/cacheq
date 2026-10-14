@@ -140,6 +140,12 @@ cd examples/mcp
 go run .
 ```
 
+## Redis 示例
+
+[源码与运行说明](examples/redis/)演示共享结果、缓存故障回源、远端标签和跨实例失效通知。示例需要 Go 1.26+ 与本地 Redis 服务。
+
+配置、预期输出与 API 契约见[共享缓存文档](docs/shared-cache.zh-CN.md)和[共享失效文档](docs/shared-invalidation.zh-CN.md)。
+
 ## 可复现的 benchmark
 
 对同一份数据**串行读取 100 次**，比较**无缓存、首次加载和缓存命中**，见 [benchmark 文档](benchmarks/benchmarks.zh-CN.md)。主表展示总耗时和实际加载次数，内部开销与并发诊断单独说明。

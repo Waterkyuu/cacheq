@@ -25,8 +25,8 @@ redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 在另一个终端，从仓库根目录执行：
 
 ```sh
-cd store/redis
-REDIS_ADDR=127.0.0.1:16379 go run ./example_invalidation
+cd examples/redis
+REDIS_ADDR=127.0.0.1:16379 go run ./shared_invalidation
 ```
 
 预期输出：
@@ -45,10 +45,10 @@ source calls: 4
 
 两个 Client 通过 Redis 复用 `User` 详情和 `[]User` 列表。A 提交数据源修改后，使二者共有的标签失效。B 无须手动本地失效，就能收到两个不同类型结果的 stale 快照；在 stale 期间保留 Alice，再通过显式读取获取 Bob。示例使用 `RefetchNone` 和禁用的查询对象，确保回源次数确定。生产应用可以采用默认的已观察查询刷新策略。
 
-示例只重置保留命名空间 `cacheq-invalidation-demo` 中的示例标签。元数据保留到这个临时 Redis 停止。完整程序维护于 [store/redis/example_invalidation/main.go](../store/redis/example_invalidation/main.go)。
+示例只重置保留命名空间 `cacheq-invalidation-demo` 中的示例标签。元数据保留到这个临时 Redis 停止。完整程序维护于 [examples/redis/shared_invalidation/main.go](../examples/redis/shared_invalidation/main.go)。
 
 ```go
-// Command example_invalidation demonstrates typed remote tag invalidation and local notification delivery.
+// Command shared_invalidation demonstrates typed remote tag invalidation and local notification delivery.
 package main
 
 import (

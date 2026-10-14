@@ -39,7 +39,7 @@ Definition.Fetch / Definition.Prefetch / Definition.Query
 
 核心模块要求 Go 1.22 或更高版本。可选 Redis 模块使用 go-redis v9.23.0，要求 Go 1.26 或更高版本。Redis 需要支持 `EVAL`、`GET`、带 `PX` 的 `SET` 和 `DEL`；适配器使用可写主节点连接。
 
-以下步骤使用当前检出的实现。适配器是独立模块，通过本地 replacement 引用仓库根模块，不假设已经发布可安装的适配器版本。
+以下步骤使用当前检出的实现。示例是独立模块，通过本地 `replace` 引用仓库根模块和 Redis 适配器，不假设已经发布可安装的适配器版本。
 
 在一个终端中，使用空闲端口启动不启用持久化的本地 Redis：
 
@@ -50,8 +50,8 @@ redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 在另一个终端中，从仓库根目录执行：
 
 ```sh
-cd store/redis
-REDIS_ADDR=127.0.0.1:16379 go run ./example
+cd examples/redis
+REDIS_ADDR=127.0.0.1:16379 go run ./shared_cache
 ```
 
 预期输出：
@@ -74,10 +74,10 @@ shared read errors: 1
 
 示例使用保留的 `cacheq-demo` 命名空间，每次运行前重置该示例 key。生产记录不应使用这个命名空间。数据过期后仍会保留一个小型版本元数据 key；示例完成后可以使用 Ctrl+C 停止这个临时 Redis。
 
-完整程序维护于 [store/redis/example/main.go](../store/redis/example/main.go)，包含连接配置、类型化数据源、本地 Client、显式失效和资源清理。
+完整程序维护于 [examples/redis/shared_cache/main.go](../examples/redis/shared_cache/main.go)，包含连接配置、类型化数据源、本地 Client、显式失效和资源清理。
 
 ```go
-// Command example demonstrates shared reads, explicit invalidation, and cache failure fallback.
+// Command shared_cache demonstrates shared reads, explicit invalidation, and cache failure fallback.
 package main
 
 import (
