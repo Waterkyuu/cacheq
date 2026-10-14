@@ -1,4 +1,4 @@
-// Command example_invalidation demonstrates typed remote tag invalidation and local notification delivery.
+// Command shared_invalidation demonstrates typed remote tag invalidation and local notification delivery.
 package main
 
 import (

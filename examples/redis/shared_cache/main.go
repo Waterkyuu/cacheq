@@ -1,4 +1,4 @@
-// Command example demonstrates shared reads, explicit invalidation, and cache failure fallback.
+// Command shared_cache demonstrates shared reads, explicit invalidation, and cache failure fallback.
 package main
 
 import (
