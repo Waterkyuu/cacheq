@@ -1,87 +1,45 @@
 # Shared result caching with Redis
 
-[简体中文](shared-cache.zh-CN.md) · [Cache and lifecycle](cache.en-US.md) · [Invalidation](invalidation.en-US.md)
+[简体中文](shared-cache.zh-CN.md)
 
-## Overview
+Use `store/redis` to share query results between service instances reading the same user profile, reducing repeated database or API calls. This guide starts with a minimal program in which A loads the profile and B reuses it from Redis, then covers application integration, invalidation after writes, and configuration.
 
-A cacheq `Client` owns typed query state inside one process. If two service instances each create a Client, their local caches are independent: a cache hit in instance A does not populate instance B. Both instances can therefore read the same resource from a database or HTTP service even while A already has a fresh result.
+## Installation
 
-An optional shared cache adds another place to reuse successful results. A checks its local cache, then Redis, then the authoritative source. B follows the same path and can reuse the result A stored in Redis. This reduces repeated source reads across instances and can help newly started instances reuse existing results.
+You need Go 1.26+, this cacheq checkout, and an installed `redis-server`. The core library requires only Go 1.22+; `store/redis` is a separate module whose go-redis dependency requires Go 1.26+.
 
-The source remains authoritative. Redis contains disposable serialized results. Cacheq still owns local subscriptions, loading state, type checks, request merging, retries, and local retention. Redis does not store goroutines, callbacks, subscription channels, Go type identities, or errors.
+The following setup uses local source without assuming an installable adapter release. Run from the **cacheq repository root** to create an independent temporary example module:
 
-Shared caching is useful when multiple instances repeatedly read the same resources and those resources tolerate a defined freshness window. Applications using only one process, or results requiring every read to reach the source, may not benefit. Redis introduces network and serialization cost; compare it with the actual source cost before enabling it broadly.
-
-## Read and refresh flow
-
-```text
-Definition.Fetch / Definition.Prefetch / Definition.Query
-  |
-  +-- local result is fresh --> return local result
-  |
-  +-- start or join one local same-key load
-        |
-        +-- normal read: obtain shared version and record
-        |     +-- fresh, compatible record --> decode --> publish locally
-        |     +-- miss, expired record, or cache error --> source
-        |
-        +-- forced or invalidation refresh: obtain version, ignore shared data --> source
-              |
-              +-- source error --> normal cacheq error/stale-data behavior
-              +-- source success --> encode --> conditional shared write --> publish locally
+```sh
+CACHEQ_SOURCE_DIR="$(pwd)"
+CACHEQ_DEMO_DIR="$(mktemp -d)"
+cd "$CACHEQ_DEMO_DIR"
+go mod init example.com/cacheq-redis-demo
+go mod edit -replace="github.com/Waterkyuu/cacheq=$CACHEQ_SOURCE_DIR"
+go mod edit -replace="github.com/Waterkyuu/cacheq/store/redis=$CACHEQ_SOURCE_DIR/store/redis"
+go get github.com/Waterkyuu/cacheq/store/redis@v0.0.0
 ```
 
-Storage and codec calls run outside the Client lock. The existing Executor slot covers the whole attempt, including shared-cache access; store timeouts are separate from the source timeout. Retries retain the initiating consumer's normal policy. Cache read/write failures alone do not trigger query retries. Source failures can trigger retries.
+The two replacements point to the core and Redis adapter source. For an existing project, configure these paths in its `go.mod` and add the dependency without running `go mod init` again.
 
-A forced refresh still joins an existing same-key load, as before. It does not upgrade or restart a load already reading Redis. A newly started forced refresh bypasses shared data. Local invalidation of an active load leaves its eventual result stale and follows existing `RefetchAfterLoad` rules. After a failed refresh, newly started attempts continue to bypass shared data until a successful load or local write replaces the invalidated state.
-
-## Requirements and quick start
-
-The core module requires Go 1.22 or later. The optional Redis module requires Go 1.26 or later because it uses go-redis v9.23.0. Redis must support `EVAL`, `GET`, `SET` with `PX`, and `DEL`; the adapter uses a writable primary connection.
-
-These instructions use the checked-out implementation. The examples are a separate module with local replacements for the root module and Redis adapter; a published adapter version is not assumed.
-
-In one terminal, start a disposable local Redis server on a free port:
+Open another terminal, start a disposable Redis server, and leave it running:
 
 ```sh
 redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 ```
 
-In another terminal, from the repository root:
+The program connects to `127.0.0.1:16379`. Use a writable primary connection that permits `EVAL` and the scripts' `GET`, `SET` (including `PX`), and `DEL` commands. Reads can initialize cache metadata too.
 
-```sh
-cd examples/redis
-REDIS_ADDR=127.0.0.1:16379 go run ./shared_cache
-```
+## Quick start
 
-Expected output:
-
-```text
-A first: Alice, source calls: 1
-B shared: Alice, source calls: 1
-A local: Alice, source calls: 1
-A refreshed: Bob, source calls: 2
-B local: Alice, source calls: 2
-B refreshed: Bob, source calls: 3
-shared hits: 1, writes: 3, bypasses: 2
-C fallback: Bob, source calls: 4
-shared read errors: 1
-```
-
-The example uses an atomic in-memory source instead of a database, making source changes and call counts explicit. A and B have separate local Clients but share one Redis record. The `B local` result reflects the default local consistency contract: this example does not enable WatchShared, so B receives no notification. B's explicit local invalidation then bypasses Redis and reaches the source. Finally, the example closes its Redis connection: a new Client C still returns the source result and records a shared read error.
-
-The reserved `cacheq-demo` namespace is reset before each run. Do not use it for production records. Its small generation key remains after data expires; stop the disposable server with Ctrl+C after the demonstration.
-
-The complete program below is maintained in [examples/redis/shared_cache/main.go](../examples/redis/shared_cache/main.go). It includes connection settings, a typed source, local Clients, explicit invalidation, and cleanup.
+Save the following complete program as `main.go` in the temporary module directory created above (`$CACHEQ_DEMO_DIR`). It uses an in-memory database substitute and counts source calls to show whether B reuses A's result.
 
 ```go
-// Command shared_cache demonstrates shared reads, explicit invalidation, and cache failure fallback.
 package main
 
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync/atomic"
 	"time"
 
@@ -90,262 +48,257 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// User represents the immutable result shared by the example's query clients.
+// User contains the profile fields shared between service instances.
 type User struct {
-	// Name is the display name returned by the simulated authoritative source.
+	// Name is the user's display name.
 	Name string
 }
 
-// main runs the example and reports setup or query failures to the shell.
+// main demonstrates a source read followed by reuse in a separate local Client.
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-}
-
-// run uses two clients and a simulated source to make each cache layer's effects observable.
-func run() error {
-	addr := os.Getenv("REDIS_ADDR")
-	if addr == "" {
-		addr = "127.0.0.1:6379"
-	}
-	remote := redis.NewClient(&redis.Options{
-		Addr: addr, ContextTimeoutEnabled: true, DialTimeout: time.Second,
-		ReadTimeout: time.Second, WriteTimeout: time.Second, MaxRetries: -1,
-	})
-	defer func() { _ = remote.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	// The application owns the Redis connection and closes it at shutdown.
+	remote := redis.NewClient(&redis.Options{
+		Addr: "127.0.0.1:16379", ContextTimeoutEnabled: true,
+		DialTimeout: time.Second, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, MaxRetries: -1,
+	})
+	defer func() { _ = remote.Close() }()
 	if err := remote.Ping(ctx).Err(); err != nil {
-		return fmt.Errorf("connect to example Redis: %w", err)
+		panic(err)
 	}
-	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-demo"})
+	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
 	if err != nil {
-		return err
+		panic(err)
 	}
+
+	// This configuration describes one shared user profile, not the entire cache.
 	shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
-		Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
-		Timeout: 200 * time.Millisecond,
+		Key: "tenant:42:user:7:v1", Format: "user.json.v1",
+		TTL: 5 * time.Minute, Timeout: 200 * time.Millisecond,
 	})
 	if err != nil {
-		return err
+		panic(err)
 	}
-	// Reset this reserved demonstration key so repeated runs have identical output.
+	// Reset only this demonstration record so repeated runs have the same output.
 	if err := shared.Invalidate(ctx); err != nil {
-		return err
+		panic(err)
 	}
+
+	// A concurrency-safe in-memory source stands in for a database or API.
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
 	definition := cacheq.QueryDefinition[User]{
-		Key: "user:7", Shared: shared,
+		Key: "tenant:42:user:7", Shared: shared,
 		Fetcher: func(context.Context) (User, error) {
 			calls.Add(1)
 			return source.Load().(User), nil
 		},
 	}
+
 	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	defer a.Close()
 	defer b.Close()
-	if err := printRead(ctx, "A first", a, definition, &calls); err != nil {
-		return err
-	}
-	if err := printRead(ctx, "B shared", b, definition, &calls); err != nil {
-		return err
-	}
-	if err := printRead(ctx, "A local", a, definition, &calls); err != nil {
-		return err
-	}
-	// A business write must succeed before invalidating its cached results.
-	source.Store(User{Name: "Bob"})
-	if err := definition.InvalidateShared(ctx, a, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone}); err != nil {
-		return err
-	}
-	if err := printRead(ctx, "A refreshed", a, definition, &calls); err != nil {
-		return err
-	}
-	if err := printRead(ctx, "B local", b, definition, &calls); err != nil {
-		return err
-	}
-	if err := b.Invalidate(definition.Key, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone}); err != nil {
-		return err
-	}
-	if err := printRead(ctx, "B refreshed", b, definition, &calls); err != nil {
-		return err
-	}
-	stats := shared.Stats()
-	fmt.Printf("shared hits: %d, writes: %d, bypasses: %d\n", stats.Hits, stats.Writes, stats.Bypasses)
-	// Closing only the borrowed Redis connection simulates an unavailable cache without stopping the source.
-	if err := remote.Close(); err != nil {
-		return err
-	}
-	c := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	defer c.Close()
-	if err := printRead(ctx, "C fallback", c, definition, &calls); err != nil {
-		return err
-	}
-	fmt.Printf("shared read errors: %d\n", shared.Stats().ReadErrors)
-	return nil
-}
 
-// printRead reports the typed result and actual source calls for one explicit query read.
-func printRead(
-	ctx context.Context,
-	label string,
-	client *cacheq.Client,
-	definition cacheq.QueryDefinition[User],
-	calls *atomic.Int64,
-) error {
-	value, err := definition.Fetch(ctx, client)
+	first, err := definition.Fetch(ctx, a)
 	if err != nil {
-		return err
+		panic(err)
 	}
-	fmt.Printf("%s: %s, source calls: %d\n", label, value.Name, calls.Load())
-	return nil
+	fmt.Printf("A: %s, source calls: %d\n", first.Name, calls.Load())
+
+	second, err := definition.Fetch(ctx, b)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("B: %s, source calls: %d\n", second.Name, calls.Load())
+	fmt.Printf("shared hits: %d\n", shared.Stats().Hits)
 }
 ```
 
-Subsequent snippets use the program's query definition, Client `a`, and a non-nil `ctx`, inside an error-returning business function.
-
-## Configuration, keys, and serialization
-
-| Configuration | Responsibility | Default or validation |
-| --- | --- | --- |
-| `QueryDefinition.Key` | Identity and static type binding inside one Client | Existing comparable-key rules |
-| `QueryDefinition.Shared` | Optional typed shared-cache configuration | nil: local-only behavior |
-| `SharedCacheOptions.Key` | Stable cross-process result identity | Required nonempty string |
-| `SharedCacheOptions.Format` | Schema and codec version of the value | Required nonempty string |
-| `SharedCacheOptions.TTL` | Maximum shared freshness and record retention from source completion | Required positive duration |
-| `SharedCacheOptions.Timeout` | Deadline for each store call | Zero: one second; negative: invalid |
-| `SharedCacheOptions.ShareTags` | Register QueryDefinition.Tags remotely | false; requires an enabled SharedTagStore |
-| `SharedCacheOptions.Codec` | Typed value encoding and decoding | nil: `JSONCodec[V]` |
-| `redistore.Options.Prefix` | Redis namespace separating applications/environments | Empty: `cacheq`; braces rejected |
-
-Local keys can be comparable structs or other supported Go values. They are not automatically converted into remote keys. Supply the shared key explicitly, including tenant, resource, parameters, authorization scope, and schema version when they affect results. Avoid pointer addresses, `fmt.Sprint` of arbitrary values, and secrets in key identities.
-
-All clients sharing a remote key must agree on result semantics, Format, and codec. Use a different key when changing incompatible schemas or representations. Format checking prevents accidental decoding; it is not a schema migration system. Incompatible callers using one key will overwrite one another's records after falling back to the source.
-
-The outer envelope stores Format, source completion time, absolute shared expiry, and encoded bytes. The default value codec uses standard JSON. Exported fields, nil pointers, empty values, and zero values follow `encoding/json` rules; cached nil is distinct from a miss because the envelope still exists. Functions, channels, unsupported cycles, pointer identity, and unexported fields are not preserved. Implement `Codec[V]` for another representation, with concurrency-safe methods.
-
-The result type remains bound locally by cacheq. No reflection-based cross-process type registry is introduced. Definitions for the same local key must use consistent loaders and shared configurations; joining a load preserves its initiator's configuration.
-
-## Freshness, retention, and time
-
-Shared caching preserves two different timestamps:
-
-- **FetchedAt** is when the successful source callback completed. It travels with the shared record and determines consumer freshness.
-- **UpdatedAt** is when this Client installed usable data. It remains the local Snapshot timestamp and the start of local MaxAge.
-
-For a successful shared query, effective freshness ends at the earliest of:
-
-```text
-FetchedAt + this consumer's StaleTime
-shared record's absolute ExpiresAt
-local UpdatedAt + MaxAge, when MaxAge is enabled
-```
-
-If A loads at 12:00:00 and B restores at 12:00:30 with StaleTime of one minute, B is fresh only until 12:01:00. Restoring does not grant another minute. With shared TTL of five minutes, a consumer's ten-minute StaleTime is capped by 12:05:00. Zero or negative StaleTime still makes data immediately stale and prevents ordinary shared reuse.
-
-Redis payload TTL uses the remaining absolute lifetime, including time spent encoding. Sub-millisecond Redis TTLs round up, but the envelope deadline is checked before reuse. No hit renews Redis TTL. Different machines need reasonably synchronized clocks; a record dated after the reader's clock is treated as a miss.
-
-Shared expiry ends freshness, not all local data availability. Local stale data can remain visible during refresh until MaxAge or other local removal policies release it. GCTime and LRU eviction affect only the local Client and do not delete Redis data. MaxAge retains its existing local-installation meaning; it is not an end-to-end source-age guarantee.
-
-## Business writes and explicit invalidation
-
-Commit the database/API write first, then invalidate cached results:
-
-```go
-// The business write has already committed successfully.
-if err := definition.InvalidateShared(ctx, a, cacheq.InvalidateOptions{
-    Refetch: cacheq.RefetchNone,
-}); err != nil {
-    return err
-}
-_, err := definition.Fetch(ctx, a)
-return err
-```
-
-`InvalidateShared` validates the local key, type, Client state, and context, invalidates the remote record, then calls local Invalidate. Remote failure leaves local state unchanged. Remote success is not rolled back if the Client closes before local invalidation. A timeout or transport failure can have an uncertain remote outcome: retrying remote invalidation safely creates another generation, but business writes must not be blindly retried.
-
-Without RefetchNone, enabled observers refresh under existing local rules. The method does not await their completion; use the existing local refresh APIs when completion must be observed. Other local Clients are notified only through WatchShared. Remote tags use InvalidateSharedTags; see [shared invalidation and tags](shared-invalidation.en-US.md).
-
-`shared.Invalidate(ctx)` performs only the remote operation. `client.Invalidate(key)` performs only local invalidation, although a newly started refresh bypasses shared data and can write a new shared result.
-
-`Set` and `Update` remain local writes, including after a shared load. They reset local freshness normally and do not automatically publish serialized data. `Get`, `Snapshot`, `Remove`, `Clear`, GC, capacity eviction, and Client.Close perform no remote deletion. This keeps network failures and connection lifetime explicit at the application boundary.
-
-## Concurrent invalidation contract
-
-Consider this controlled ordering:
-
-```text
-A reads remote generation G1 and starts fetching old source data
-B commits a business write
-B invalidates: replace G1 with G2 and delete payload atomically
-A finishes its old fetch and attempts to store it using G1
-Redis compares G1 with G2 and rejects the write
-```
-
-The rejected write increments WriteConflicts. A's source call can still return successfully: a cache conflict is not a source failure. If the same Client was locally invalidated while loading, its installed result remains stale under existing cacheq rules.
-
-This protection applies to loads that captured their token before a successful remote invalidation. It does not order business transactions, compare the true age of source replicas, or prevent two loaders in the same generation from finishing out of order. Request merging remains scoped to one Client; there is no distributed lock or cross-instance singleflight.
-
-## Redis storage and operational boundaries
-
-Each logical shared key maps to two physical Redis keys:
-
-```text
-<prefix>:{<SHA-256 of logical key>}:version
-<prefix>:{<SHA-256 of logical key>}:data
-```
-
-The identical hash tag keeps both keys in the same Redis Cluster slot. Atomic Lua scripts implement reads, conditional writes, and invalidations. A read can initialize metadata, so a read-only replica or GET-only credential is insufficient. Redis Cluster is supported by key placement; integration tests here use a standalone local server, not a live cluster or Sentinel failover.
-
-Generation tokens are random and generation keys have no TTL. Budget one small persistent metadata key per touched query identity, even after its data expires. Unbounded identity cardinality therefore requires an application capacity/namespace lifecycle policy. If metadata disappears, the next read creates a new token and deletes orphaned data; a write with absent or obsolete metadata is rejected. Restoring older Redis snapshots or losing acknowledged writes during failover can roll back generations and lies outside this protocol's durability guarantee.
-
-Supply a concurrency-safe go-redis client and configure `ContextTimeoutEnabled`, dial, read, write, and retry settings for the application's budget. Context cancellation is cooperative; a driver or callback ignoring it cannot be forcibly terminated by cacheq. Borrowed connections are closed by the application, never by Client.Close.
-
-## Failure handling and observability
-
-| Condition | Query behavior | Shared counter |
-| --- | --- | --- |
-| Fresh local result | Return local data, no network call | None |
-| Fresh shared record | Decode and install locally | Hits |
-| Missing, expired, or consumer-stale record | Load source | Misses |
-| Invalid envelope, Format mismatch, or codec decode failure | Load source | Misses and DecodeErrors |
-| Read failure, read timeout, or empty version | Load source; skip shared write without a valid token | ReadErrors |
-| Forced/invalidation refresh | Ignore record data, obtain token, load source | Bypasses |
-| Encode or store write failure | Return successful source data | EncodeErrors or WriteErrors |
-| Token changed during source load | Return source data, reject remote write, keep the local result stale | WriteConflicts |
-| Source error | Normal query failure/retry and local stale-data behavior; no remote error record | Normal Client stats |
-| Caller cancellation or query timeout | Cancel query according to existing rules | Operations completed before cancellation may already be counted |
-| Explicit remote invalidation failure | Return wrapped error preserving errors.Is | InvalidationErrors |
-
-`shared.Stats()` belongs to that SharedCache object and accumulates across its participating Clients. It is not a server-wide metric and separate processes do not automatically combine counters. Existing Client Stats still describes local cache decisions and loads; a shared hit occurs inside a local load. Export these snapshots into application monitoring as needed.
-
-## Implementing a storage adapter
-
-A new adapter implements Read, Write, and Invalidate with the SharedStore contract. A miss must still return a nonempty generation. Conditional comparison and installation must be atomic with respect to invalidation. Returning unconditional success from Write defeats old-write protection. Every returned Data slice must be owned by the recipient, and storage callbacks must honor context and be concurrency-safe.
-
-Core code and custom adapters using only its contracts can remain on Go 1.22. The Redis adapter's dependency requirement is isolated in its own go.mod. Repository checks do not automatically traverse nested modules, so CI separately checks adapter module metadata, lint, race tests, build, and dependencies.
-
-## Tests and limitations
-
-From the repository root:
+Run from the directory containing `main.go`:
 
 ```sh
-task fmt
-task lint
-task test
-task build
-cd store/redis
-go vet ./...
-golangci-lint run --config ../../.golangci.yml --timeout=5m
-CACHEQ_REQUIRE_REDIS=1 go test -race ./... -count=1
-go build ./...
+go run .
 ```
 
-Root unit tests cover client reuse, original freshness, TTL boundaries, nil data, codec failures, source failures, local writes, cancellation, Close, merge ordering, and old-write rejection. HTTP tests verify prefetch, subscription publication, source call counts, and refresh. Adapter tests launch disposable Redis processes with persistence disabled, exercise actual Lua scripts, inspect payload expiry, and simulate metadata loss. They skip explicitly when redis-server is unavailable unless CACHEQ_REQUIRE_REDIS=1; CI requires it.
+Expected output:
 
-The shared cache supports one shared result layer, Redis, JSON, and per-key invalidation fencing. Optional notifications and remote tag generations are specified in [shared invalidation and tags](shared-invalidation.en-US.md). Arbitrary cache chains, cached errors, distributed locks, Redis transactions for Update, and durable query state are not supported.
+```text
+A: Alice, source calls: 1
+B: Alice, source calls: 1
+shared hits: 1
+```
+
+A has neither a local nor a shared result, so it runs the Fetcher and writes the result to Redis. B also has an empty local cache, but reads Alice from Redis: the source call count remains 1. Subsequent fresh reads by either Client use that Client's local cache.
+
+Each run resets only the demonstration record in the `cacheq-quickstart` namespace for repeatable output. This is demonstration setup; do not clear caches at application startup or use this namespace for production data. When finished, stop the disposable server with Ctrl+C in its terminal.
+
+## Usage
+
+### Integrate with an application
+
+Follow the program's initialization order:
+
+1. Create the go-redis client `remote` at application startup, then wrap it with `redistore.New` to create `store`. It implements cacheq's `SharedStore` interface for Redis operations and can serve multiple queries. `redistore.New` performs no server I/O; the example's Ping detects connection problems early.
+2. Create `NewSharedCache[V]` for each query identity, where `V` is the result type. The example's `shared` describes only user 7 in tenant 42; other users need different keys. Reuse the configuration instead of recreating it for every request.
+3. Assign `shared` to `QueryDefinition.Shared`. Replace the demonstration Fetcher with a database or API read that uses its supplied context and returns `User` and an error. The `source` and `calls` variables are demonstration data and instrumentation, not application requirements.
+4. Call `definition.Fetch(ctx, client)` in request handling to obtain a `User` or error. Use the request context and reuse a Client within the application so requests share local results. A and B simulate two independent instances.
+
+Different processes create their own connections, stores, and query configurations. To share results, they must agree on the Redis address, database, Prefix, EnableTags setting, shared key, Format, and codec. Keep results for different tenants, permissions, or query parameters under different keys.
+
+At shutdown, close the Clients before the application-owned Redis connection. `Client.Close()` neither closes `remote` nor deletes Redis data. The example's defers run in that order.
+
+### Invalidate a result after updating the source
+
+Commit the database or API write before calling `definition.InvalidateShared`. It invalidates the Redis record first, then the query in the supplied Client. A subsequent read loads from the source.
+
+Insert this snippet at the end of the quick start's main function, after its last output line. It reuses `source`, `definition`, `ctx`, `a`, and `calls`, simulating a successful business write by changing the in-memory source:
+
+```go
+// Simulate a successful database or API write before invalidating the cache.
+source.Store(User{Name: "Bob"})
+if err := definition.InvalidateShared(ctx, a, cacheq.InvalidateOptions{
+	Refetch: cacheq.RefetchNone,
+}); err != nil {
+	panic(err)
+}
+updated, err := definition.Fetch(ctx, a)
+if err != nil {
+	panic(err)
+}
+fmt.Printf("A refreshed: %s, source calls: %d\n", updated.Name, calls.Load())
+```
+
+Additional output:
+
+```text
+A refreshed: Bob, source calls: 2
+```
+
+`RefetchNone` marks data stale without starting an automatic refresh; the next Fetch performs the read here. Without that option, enabled observed queries can refresh under the default policy, but InvalidateShared itself does not wait for refresh completion.
+
+B can still return its local Alice until its freshness deadline or local invalidation. This example has no cross-instance notifications. To have other instances process invalidations promptly, configure EnableNotifications and WatchShared using [shared invalidation and tags](shared-invalidation.en-US.md). Enable remote tags when grouping several shared keys.
+
+### Refresh only the current Client
+
+To have only B reload its data, insert this code after the previous snippet. It reuses `b` and the existing query definition:
+
+```go
+if err := b.Invalidate(definition.Key, cacheq.InvalidateOptions{
+	Refetch: cacheq.RefetchNone,
+}); err != nil {
+	panic(err)
+}
+refreshed, err := definition.Fetch(ctx, b)
+if err != nil {
+	panic(err)
+}
+fmt.Printf("B refreshed: %s, source calls: %d\n", refreshed.Name, calls.Load())
+```
+
+Additional output:
+
+```text
+B refreshed: Bob, source calls: 3
+```
+
+A newly started read after local invalidation bypasses the Redis payload and loads the source, increasing the call count. This operation does not directly notify other Clients.
+
+Choose an invalidation API by its scope:
+
+| API | Effect |
+| --- | --- |
+| `definition.InvalidateShared(ctx, client)` | Invalidate the shared record, then the supplied Client's query; other watchers can receive the event asynchronously when notifications are enabled |
+| `shared.Invalidate(ctx)` | Perform shared invalidation without directly operating on a Client; enabled watchers can still process it asynchronously |
+| `client.Invalidate(key)` | Invalidate only this Client's query; a subsequent newly started load bypasses shared data |
+
+## Configuration
+
+### Query identity and serialization
+
+| Field | Purpose | Required or default | Constraints |
+| --- | --- | --- | --- |
+| `QueryDefinition.Key` | Query identity within this Client | Required | Use a supported comparable value containing result-affecting tenant, permission, and parameter scope; use consistent result types and loading configurations for the same key |
+| `QueryDefinition.Shared` | Connect the query to shared caching | Default nil: local caching only | The `V` in `SharedCache[V]` matches the query result type |
+| `SharedCacheOptions.Key` | Cross-instance record identity | Required nonempty string | Not derived automatically from the local key; the example uses `tenant:42:user:7:v1` |
+| `SharedCacheOptions.Format` | Result schema and encoding version | Required nonempty string | The example uses `user.json.v1`; incompatible upgrades also need a new shared key |
+| `SharedCacheOptions.Codec` | Encode and decode results | Default `JSONCodec[V]` | JSON preserves only serializable fields; custom `Codec[V]` methods must support concurrent calls |
+
+Key determines whether two callers refer to the same data; Format determines how to interpret it. Incompatible callers using one key replace each other's records and repeatedly load the source even when their formats differ. Format validation is not data migration.
+
+Default JSON supports encodable zero values, empty values, and nil; a cached nil remains a valid result. Unexported fields, functions, channels, and pointer identity are not preserved. Shared keys should contain neither secrets nor identities based on pointer addresses or arbitrary `fmt.Sprint` output.
+
+### Freshness and timeouts
+
+| Field | Purpose | Required or default | Constraints |
+| --- | --- | --- | --- |
+| `Options.StaleTime` | How long a source result can be reused as fresh | Default 0: immediately stale | Configure a positive value on the Client or query consumer to reuse shared records; the example uses one minute |
+| `SharedCacheOptions.TTL` | Maximum shared freshness and storage lifetime from source completion | Required positive duration | The example uses five minutes; hits do not renew it |
+| `SharedCacheOptions.Timeout` | Timeout for each shared store call | 0 selects one second; negative is invalid | The example uses 200 milliseconds; it does not bound the Fetcher |
+
+For example, A loads Alice from the source at 12:00:00. B hits Redis at 12:00:30 with a one-minute StaleTime, so B is fresh only until 12:01:00. The hit does not restart freshness. That record cannot be reused as fresh after the deadline even if its Redis TTL has time remaining. With a ten-minute StaleTime and a five-minute shared TTL, freshness still ends at 12:05:00.
+
+GCTime and capacity eviction manage only local data, without deleting Redis records. MaxAge starts when data is installed locally and can remove it earlier; it does not guarantee age measured from the original source read. See [cache and lifecycle](cache.en-US.md).
+
+Timeout bounds each store call separately, not the whole query. Request contexts and query timeout policies still control loading lifetime. Also configure go-redis context, connection, socket, and retry budgets. The example enables ContextTimeoutEnabled and disables driver retries with `MaxRetries: -1`.
+
+### Redis namespace and optional capabilities
+
+| Field | Purpose | Required or default | Constraints |
+| --- | --- | --- | --- |
+| `redistore.Options.Prefix` | Isolate Redis namespaces by application or environment | Empty selects `cacheq` | Braces are rejected; use your own production namespace |
+| `redistore.Options.EnableNotifications` | Publish invalidations and allow watcher subscriptions | Default false | Requires additional Pub/Sub permissions; enable on every publisher |
+| `redistore.Options.EnableTags` | Enable remote tag invalidation across keys | Default false | Uses a separate data layout; one namespace occupies one Cluster slot |
+| `SharedCacheOptions.ShareTags` | Register QueryDefinition.Tags remotely | Default false | Requires enabled store tag support; existing tags on the same shared record are still honored |
+
+See [shared invalidation and tags](shared-invalidation.en-US.md) for notification/tag examples, permissions, watcher cleanup, and Cluster tradeoffs.
+
+## Error handling and common problems
+
+Fetch still follows the source outcome: a Redis read failure falls back to the source, while encoding or shared write failures do not turn a successful source read into a query error. Source failures return query errors and follow configured retry and local stale-data policies. Caller cancellation or query timeouts can still terminate the query.
+
+Explicit invalidation does not silently degrade: if the remote InvalidateShared operation fails, it returns an error and leaves local state unchanged. After a successful business write, handle cache synchronization failure separately instead of blindly retrying the business write. A transport timeout can mean that the remote operation already ran. Retrying invalidation is safe, but a committed remote invalidation is not rolled back if subsequent local processing fails.
+
+| Symptom | Cause to check | Action |
+| --- | --- | --- |
+| `go run` cannot find the adapter or requires a newer Go version | Incorrect local replacement paths or an older toolchain | Check both source replacements and use Go 1.26+ |
+| The quick start's Ping fails | Redis is stopped, or its address or permissions are wrong | Check the server at `127.0.0.1:16379`; this is a demonstration startup check, not a cacheq requirement |
+| B loads the source again and ReadErrors increases | Redis connection, ACL, or operation timeout | Check connection settings, writable-primary access, and script permissions; use the statistics below to distinguish failure from an ordinary miss |
+| Hits stays at 0 without read errors | StaleTime is 0, the record expired, or reads always hit local data | Set positive freshness and use a new Client to verify shared hits; local hits do not increment shared Hits |
+| DecodeErrors increases and the source runs | Format mismatch, damaged record, or codec decoding failure | Align types, Format, and Codec; use a new key for incompatible results |
+| Source reads succeed but EncodeErrors or WriteErrors increases | The result cannot be encoded or the Redis write fails | Check result fields and Codec, then connection, timeout, and permissions; local results remain usable |
+| B returns old data after A invalidates | B has fresh local data without a watcher | Invalidate B locally or configure WatchShared |
+| Configuration construction fails | Empty key or Format, nonpositive TTL, or missing tag support | Check the configuration tables; invalid shared options return ErrInvalidSharedCache and missing capabilities return ErrSharedCapability |
+
+Add this snippet at the end of the quick start's main function to inspect the existing `shared` object's statistics:
+
+```go
+stats := shared.Stats()
+fmt.Printf("hits=%d misses=%d read_errors=%d write_errors=%d\n",
+	stats.Hits, stats.Misses, stats.ReadErrors, stats.WriteErrors)
+```
+
+`shared.Stats()` counts only operations using this SharedCache object, not Redis-wide or cross-process activity. Bypasses counts attempts that skip shared data after forced refresh or invalidation. WriteConflicts counts shared writes rejected after invalidation during a load. Client statistics continue to describe local caching and loading.
+
+## Behavior and limitations
+
+- Reads try fresh local data, then a fresh Redis record, then the source. Newly started forced or invalidation refreshes skip Redis data but still obtain a version for the subsequent conditional write. If the same key is already loading, refresh joins that load without restarting or upgrading it. After a failed refresh, new loads continue to bypass shared data until a successful load or local write replaces the invalidated state.
+- Shared reads preserve the original source completion time. Hits do not extend TTL; the end of shared freshness does not immediately remove local stale data. Keep clocks reasonably synchronized across machines; records dated after the reader's current time are treated as misses.
+- If a record is invalidated after a load obtains its shared version but before it writes back, that load cannot write its old result back to Redis. A rejected write increments WriteConflicts. Successful source data can still be returned, but the local result remains stale. This protection neither orders database transactions nor orders loaders finishing within the same version.
+- Same-key request merging occurs only within one Client, without a distributed lock. Several instances can load the source simultaneously on a shared miss. Shared caching does not persist query errors, subscriptions, or durable query state.
+- Set and Update change local data without writing to Redis. Get and Snapshot do not read Redis. Remove, Clear, GC, and Client.Close do not delete shared records or publish invalidations.
+- The default Redis layout keeps one expiring payload key and one version metadata key without a TTL per shared identity. Metadata still occupies space after data expires; plan capacity by query identity count. After metadata loss, the next read creates a new version and discards orphaned data.
+- The adapter uses atomic Lua scripts and places each record's physical keys in one Cluster slot in the default layout. Tests use standalone Redis, without live Cluster or Sentinel failover coverage. Snapshot rollback or failover losing acknowledged writes has no stronger durability guarantee than Redis itself.
+- Store and Codec calls run outside the Client lock; an Executor slot covers the entire load. Shared cache failures alone do not trigger query retries; source failures follow the query retry policy. Cancellation is cooperative, so both the driver and Fetcher must honor context.
+
+## Complete examples and related guides
+
+- [Complete Redis examples and run instructions](../examples/redis/): run shared_cache for shared reads, explicit invalidation, and Redis failure fallback; run shared_invalidation for tags and cross-instance notifications.
+- [Shared invalidation and tags](shared-invalidation.en-US.md): promptly mark other instances' local data stale and invalidate related detail/list queries together.
+- [Cache and lifecycle](cache.en-US.md): configure local freshness, retention, and resource cleanup.
+- [Invalidation and refresh](invalidation.en-US.md): choose automatic refresh policies and wait for local refresh completion.
+- [SharedStore contract](../shared_store.go): atomic operations, version checks, context, and data ownership when implementing custom storage.
