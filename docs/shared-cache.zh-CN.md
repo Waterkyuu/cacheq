@@ -34,6 +34,23 @@ redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 
 在前面创建的临时模块目录（`$CACHEQ_DEMO_DIR`）中，将以下完整程序保存为 `main.go`。程序用内存变量模拟数据库，通过调用次数验证 B 是否复用了 A 的结果。
 
+示例要共享的数据是 `User{Name: "Alice"}`，对应“租户 42 的用户 7 的资料”。程序先创建 Redis 连接 `remote`，再把连接交给 Redis 存储适配器 `store`。`store` 负责执行存储操作；`shared` 则把这个存储与某一份数据的 key、类型和缓存规则组合起来。
+
+`cacheq.NewSharedCache[User](store, options)` 返回 `*cacheq.SharedCache[User]`，用于配置这份资料的共享缓存。下面逐项解释示例中的参数：
+
+| 写法 | 在本例中的具体含义 |
+| --- | --- |
+| `[User]` | 共享结果的 Go 类型是 `User`。缓存写入时编码 User，命中时解码回 User；返回的 `shared` 本身不包含 Alice 的资料 |
+| 第一个参数 `store` | 使用前面创建的 Redis 存储适配器执行读取、写入和失效；多个用户的共享配置可以复用这个适配器 |
+| `Key: "tenant:42:user:7:v1"` | 这条共享记录的身份：租户 42、用户 7、数据版本 v1。查询用户 8 时，使用 `tenant:42:user:8:v1` 等不同 key |
+| `Format: "user.json.v1"` | 标记记录使用 User 的第 1 版 JSON 数据结构。读取方只复用 Format 相同的记录；这个字符串由应用约定，无需注册，也不会自动选择编码器。本例未设置 Codec，所以默认使用 JSON |
+| `TTL: 5 * time.Minute` | 从数据源读取完成起，共享结果最多保留 5 分钟；能否当作新鲜结果复用还取决于 Client 的 `StaleTime`，下例设置为 1 分钟 |
+| `Timeout: 200 * time.Millisecond` | 每次共享存储读取、写入或按 key 失效最多等待 200 毫秒；它不限制数据库或 API 的 Fetcher 耗时 |
+
+`Key` 中的冒号、`tenant`、`user` 和 `v1` 都是本例的命名约定，cacheq 不会解析它们或自动实施租户权限检查。应用负责为不同数据分配不同 key，并在读取前完成鉴权。
+
+创建 `shared` 只校验并保存配置，不会读取用户资料或写入 Redis。后面将它赋给 `QueryDefinition.Shared`，才把共享规则接到查询上；调用 `definition.Fetch(ctx, a)` 时，查询会先检查本地缓存，再按这份规则访问 Redis，必要时调用 Fetcher。不同 Client 各自保存本地结果，通过 Redis 复用同一份共享记录。
+
 ```go
 package main
 
@@ -69,15 +86,23 @@ func main() {
 	if err := remote.Ping(ctx).Err(); err != nil {
 		panic(err)
 	}
+	// Store adapts the borrowed connection to cacheq operations in this namespace.
 	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
 	if err != nil {
 		panic(err)
 	}
 
-	// This configuration describes one shared user profile, not the entire cache.
+	// Bind one User record's identity and caching rules to the Redis adapter.
+	// Construction validates configuration without reading or writing Redis.
 	shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
-		Key: "tenant:42:user:7:v1", Format: "user.json.v1",
-		TTL: 5 * time.Minute, Timeout: 200 * time.Millisecond,
+		// Key identifies this tenant's user profile across service instances.
+		Key: "tenant:42:user:7:v1",
+		// Format must match the schema and encoding expected by every reader.
+		Format: "user.json.v1",
+		// TTL caps shared freshness and retention from source completion.
+		TTL: 5 * time.Minute,
+		// Timeout bounds each store call, not the source Fetcher.
+		Timeout: 200 * time.Millisecond,
 	})
 	if err != nil {
 		panic(err)
@@ -91,14 +116,19 @@ func main() {
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
+	// Definition connects the shared rules to a local query identity and source.
 	definition := cacheq.QueryDefinition[User]{
-		Key: "tenant:42:user:7", Shared: shared,
+		Key: "tenant:42:user:7",
+		// Shared enables Redis reuse when this query needs to load data.
+		Shared: shared,
+		// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
 		Fetcher: func(context.Context) (User, error) {
 			calls.Add(1)
 			return source.Load().(User), nil
 		},
 	}
 
+	// Both Clients use the same shared configuration and keep separate local results.
 	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	defer a.Close()

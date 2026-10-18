@@ -69,6 +69,12 @@ configuration, a public API call, result handling, error handling, and cleanup.
 Use small, concrete input values. Explain which values to replace in a real
 application. Include required service addresses and environment variables.
 
+Before the first program, explain the key objects and how they connect. For each
+feature-specific constructor, explain its type argument, dependencies, concrete
+option values, and returned object. State whether construction performs I/O or
+only saves configuration, and which later call uses it. A configuration table
+later in the guide does not replace these first-use explanations.
+
 Demonstrate the smallest useful scenario. Keep unrelated capabilities out of this
 program. For Redis shared caching, demonstrate a source read followed by another
 Client reusing that result; add invalidation and notifications in later sections.
