@@ -44,11 +44,9 @@ func TestMutationAwaitedSuccess(t *testing.T) {
 	h := Mutation(c, func(_ context.Context, value int) (int, error) {
 		backend.Store(int32(value))
 		return value, nil
-	}, MutationOptions[int, int]{
-		OnSuccess: func(ctx context.Context, _, _ int) error {
-			_, err := c.InvalidateAndWait(ctx, "key")
-			return err
-		},
+	}, func(ctx context.Context, _, _ int) error {
+		_, err := c.InvalidateAndWait(ctx, "key")
+		return err
 	})
 	t.Cleanup(h.Close)
 	done := make(chan mutationRefreshResult, 1)
@@ -89,12 +87,14 @@ func TestMutationRefreshFailure(t *testing.T) {
 	q := Query(c, "key", func(context.Context) (int, error) { return 0, failure })
 	t.Cleanup(q.Close)
 	writes := 0
-	h := Mutation(c, func(context.Context, int) (int, error) { writes++; return 2, nil }, MutationOptions[int, int]{
-		OnSuccess: func(ctx context.Context, _, _ int) error {
+	h := Mutation(
+		c,
+		func(context.Context, int) (int, error) { writes++; return 2, nil },
+		func(ctx context.Context, _, _ int) error {
 			_, err := c.InvalidateAndWait(ctx, "key")
 			return errors.Join(updateFailure, err)
 		},
-	})
+	)
 	t.Cleanup(h.Close)
 	result, err := h.Mutate(context.Background(), 2)
 	if err != nil || result.Data != 2 || !errors.Is(result.SyncErr, failure) ||
@@ -126,12 +126,14 @@ func TestMutationRefreshCancellation(t *testing.T) {
 				}
 			})
 			t.Cleanup(q.Close)
-			h := Mutation(c, func(context.Context, int) (int, error) { return 2, nil }, MutationOptions[int, int]{
-				OnSuccess: func(ctx context.Context, _, _ int) error {
+			h := Mutation(
+				c,
+				func(context.Context, int) (int, error) { return 2, nil },
+				func(ctx context.Context, _, _ int) error {
 					_, err := c.InvalidateAndWait(ctx, "key")
 					return err
 				},
-			})
+			)
 			t.Cleanup(h.Close)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -191,14 +193,12 @@ func TestMutationRefreshLateSuccess(t *testing.T) {
 	h := Mutation(c, func(context.Context, int) (int, error) {
 		cancel()
 		return 2, nil
-	}, MutationOptions[int, int]{
-		OnSuccess: func(ctx context.Context, _, _ int) error {
-			// Mark a confirmed commit stale even when the subsequent wait can no longer begin.
-			if err := c.Invalidate("key", InvalidateOptions{RefetchAfterLoad: true}); err != nil {
-				return err
-			}
-			return ctx.Err()
-		},
+	}, func(ctx context.Context, _, _ int) error {
+		// Mark a confirmed commit stale even when the subsequent wait can no longer begin.
+		if err := c.Invalidate("key", InvalidateOptions{RefetchAfterLoad: true}); err != nil {
+			return err
+		}
+		return ctx.Err()
 	})
 	t.Cleanup(h.Close)
 	result, err := h.Mutate(ctx, 2)

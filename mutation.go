@@ -20,8 +20,10 @@ type MutationHandle[I, V any] struct {
 	stopLifetime func() bool
 	// write performs one application-owned write without automatic retries.
 	write Mutator[I, V]
-	// options holds the copied success callback and write execution policy.
-	options MutationOptions[I, V]
+	// onSuccess synchronizes cache state after a committed write, or is nil to skip synchronization.
+	onSuccess func(context.Context, V, I) error
+	// options holds the copied write execution policy.
+	options MutationOptions
 	// state retains the latest execution snapshot under mu.
 	state MutationSnapshot[V]
 	// updates retains the newest unread snapshot without blocking execution.
@@ -35,16 +37,22 @@ type MutationHandle[I, V any] struct {
 }
 
 // Mutation constructs an idle handle without executing a write. The last option wins.
+// Input and result types are inferred from write and onSuccess and checked together at compile time.
+// onSuccess receives the committed result and original input once outside internal locks; nil skips it.
+// Mutate stays Pending through synchronization and reports callback errors through SyncErr.
+// Late write success still invokes onSuccess with the possibly canceled context.
+// Captured state and input/result references remain application-owned and require synchronization.
 // Nil writes and closed clients are reported through Snapshot, Updates, and Mutate.
 // The caller owns Close; Client closure also cancels execution and closes Updates asynchronously.
 func Mutation[I, V any](
 	client *Client,
 	write Mutator[I, V],
-	options ...MutationOptions[I, V],
+	onSuccess func(context.Context, V, I) error,
+	options ...MutationOptions,
 ) *MutationHandle[I, V] {
 	ctx, cancel := context.WithCancel(client.ctx) // #nosec G118 -- Close owns this handle's lifetime.
 	h := &MutationHandle[I, V]{
-		client: client, ctx: ctx, cancel: cancel, write: write,
+		client: client, ctx: ctx, cancel: cancel, write: write, onSuccess: onSuccess,
 		updates: make(chan MutationSnapshot[V], 1),
 	}
 	for _, option := range options {
@@ -150,10 +158,10 @@ func (h *MutationHandle[I, V]) admitLocked() error {
 
 // synchronize waits for application-owned post-commit work without treating its error as write failure.
 func (h *MutationHandle[I, V]) synchronize(ctx context.Context, input I, value V) error {
-	if h.options.OnSuccess == nil {
+	if h.onSuccess == nil {
 		return nil
 	}
-	return h.options.OnSuccess(ctx, value, input)
+	return h.onSuccess(ctx, value, input)
 }
 
 // Snapshot returns the latest execution outcome without starting work.
