@@ -107,7 +107,7 @@ func (s *sharedTestStore) Invalidate(ctx context.Context, key string) error {
 }
 
 // newSharedDefinition supplies one explicit storage key and the default JSON codec.
-func newSharedDefinition(t *testing.T, store SharedStore, load Fetcher[int]) QueryDefinition[int] {
+func newSharedDefinition(t *testing.T, store SharedStore, load Fetcher[int]) Definition[int] {
 	t.Helper()
 	shared, err := NewSharedCache[int](store, SharedCacheOptions[int]{
 		Key: "tenant:42:answer", Format: "answer.v1", TTL: time.Hour,
@@ -115,7 +115,9 @@ func newSharedDefinition(t *testing.T, store SharedStore, load Fetcher[int]) Que
 	if err != nil {
 		t.Fatal(err)
 	}
-	return QueryDefinition[int]{Key: "local-answer", Fetcher: load, Shared: shared}
+	definition := QueryDefinition("local-answer", load)
+	definition.Shared = shared
+	return definition
 }
 
 // TestSharedCacheReuse restores typed data across clients without renewing its source freshness.
@@ -373,11 +375,8 @@ func TestSharedCacheRecordBoundaries(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				definition := QueryDefinition[*int]{
-					Key:     "nil",
-					Shared:  shared,
-					Fetcher: func(context.Context) (*int, error) { return nil, nil },
-				}
+				definition := QueryDefinition("nil", func(context.Context) (*int, error) { return nil, nil })
+				definition.Shared = shared
 				if _, err := definition.Fetch(context.Background(), c1); err != nil {
 					t.Fatal(err)
 				}
@@ -419,11 +418,8 @@ func TestSharedCacheTimeoutFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := QueryDefinition[int]{
-		Key:     "key",
-		Shared:  shared,
-		Fetcher: func(ctx context.Context) (int, error) { return 7, ctx.Err() },
-	}
+	d := QueryDefinition("key", func(ctx context.Context) (int, error) { return 7, ctx.Err() })
+	d.Shared = shared
 	c := NewClient(Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)
 	if value, err := d.Fetch(context.Background(), c); err != nil || value != 7 {

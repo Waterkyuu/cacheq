@@ -7,25 +7,75 @@ import (
 	"time"
 )
 
+// TestQueryDefinitionOptions preserves Client defaults and applies only the last loading policy.
+func TestQueryDefinitionOptions(t *testing.T) {
+	zero := time.Duration(0)
+	for _, tc := range []struct {
+		// name identifies the policy selection case.
+		name string
+		// options supplies the constructor's loading policy arguments.
+		options []QueryOptions
+		// calls is the number of source reads expected after two explicit fetches.
+		calls int
+	}{
+		{name: "defaults", options: []QueryOptions{}, calls: 1},
+		{name: "override", options: []QueryOptions{{StaleTime: &zero}}, calls: 2},
+		{name: "last wins", options: []QueryOptions{{StaleTime: &zero}, {}}, calls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newAgeClient(t, Options{StaleTime: time.Hour})
+			calls := 0
+			definition := QueryDefinition("answer", func(context.Context) (int, error) {
+				calls++
+				return 42, nil
+			}, tc.options...)
+			for range 2 {
+				value, err := definition.Fetch(context.Background(), c)
+				if err != nil || value != 42 {
+					t.Fatalf("fetch = %d, %v", value, err)
+				}
+			}
+			if calls != tc.calls {
+				t.Fatalf("source calls = %d, want %d", calls, tc.calls)
+			}
+		})
+	}
+}
+
+// TestQueryDefinitionNilFetcher infers a typed nil loader without validating or loading until use.
+func TestQueryDefinitionNilFetcher(t *testing.T) {
+	c, _ := newAgeClient(t, Options{StaleTime: time.Hour})
+	var load Fetcher[int]
+	definition := QueryDefinition("answer", load)
+	if _, err := definition.Fetch(context.Background(), c); !errors.Is(err, ErrNoFetcher) {
+		t.Fatal(err)
+	}
+	if err := Set(c, "answer", 42); err != nil {
+		t.Fatal(err)
+	}
+	if value, err := definition.Fetch(context.Background(), c); err != nil || value != 42 {
+		t.Fatalf("cached fetch = %d, %v", value, err)
+	}
+	if _, err := QueryDefinition[int]("missing", nil).Fetch(context.Background(), c); !errors.Is(err, ErrNoFetcher) {
+		t.Fatal(err)
+	}
+}
+
 // TestQueryDefinition reuses one definition across clients and loading entry points without owning a cache.
 func TestQueryDefinition(t *testing.T) {
 	hour, retries := time.Hour, 1
 	calls := 0
 	failure := errors.New("offline")
-	definition := QueryDefinition[int]{
-		Key: "user",
-		Fetcher: func(context.Context) (int, error) {
-			calls++
-			if calls == 1 {
-				return 0, failure
-			}
-			return calls, nil
-		},
-		Options: QueryOptions{
-			Disable: true, StaleTime: &hour, Retry: &retries,
-			RetryDelay: func(int) time.Duration { return 0 },
-		},
-	}
+	definition := QueryDefinition("user", func(context.Context) (int, error) {
+		calls++
+		if calls == 1 {
+			return 0, failure
+		}
+		return calls, nil
+	}, QueryOptions{
+		Disable: true, StaleTime: &hour, Retry: &retries,
+		RetryDelay: func(int) time.Duration { return 0 },
+	})
 	if calls != 0 {
 		t.Fatal("constructing a definition loaded data")
 	}
@@ -61,14 +111,10 @@ func TestQueryDefinitionErrors(t *testing.T) {
 			c, _ := newAgeClient(t, Options{})
 			failure := errors.New("read rejected")
 			calls := 0
-			definition := QueryDefinition[int]{
-				Key: "user",
-				Fetcher: func(context.Context) (int, error) {
-					calls++
-					return 0, failure
-				},
-				Options: QueryOptions{Disable: true},
-			}
+			definition := QueryDefinition("user", func(context.Context) (int, error) {
+				calls++
+				return 0, failure
+			}, QueryOptions{Disable: true})
 			var err error
 			switch api {
 			case "fetch":

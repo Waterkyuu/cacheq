@@ -264,12 +264,9 @@ func TestSharedUnknownTagNotificationConfirmsSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := QueryDefinition[int]{
-		Key:     "detail",
-		Shared:  shared,
-		Tags:    []string{"declared"},
-		Fetcher: func(context.Context) (int, error) { return 7, nil },
-	}
+	d := QueryDefinition("detail", func(context.Context) (int, error) { return 7, nil })
+	d.Shared = shared
+	d.Tags = []string{"declared"}
 	bootstrap := NewClient(Options{StaleTime: time.Hour})
 	t.Cleanup(bootstrap.Close)
 	if _, err := d.Fetch(context.Background(), bootstrap); err != nil {
@@ -295,12 +292,9 @@ func TestSharedUnknownTagNotificationConfirmsSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sentinel := QueryDefinition[int]{
-		Key:     "sentinel",
-		Shared:  sentinelShared,
-		Tags:    []string{"remote-only"},
-		Fetcher: func(context.Context) (int, error) { return 1, nil },
-	}
+	sentinel := QueryDefinition("sentinel", func(context.Context) (int, error) { return 1, nil })
+	sentinel.Shared = sentinelShared
+	sentinel.Tags = []string{"remote-only"}
 	if _, err := sentinel.Fetch(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
@@ -363,12 +357,9 @@ func TestSharedTagsLocalSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := QueryDefinition[int]{
-		Key:     "detail",
-		Shared:  shared,
-		Tags:    []string{"tenant:42:users"},
-		Fetcher: func(context.Context) (int, error) { return 7, nil },
-	}
+	d := QueryDefinition("detail", func(context.Context) (int, error) { return 7, nil })
+	d.Shared = shared
+	d.Tags = []string{"tenant:42:users"}
 	c := NewClient(Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)
 	ctx := context.Background()

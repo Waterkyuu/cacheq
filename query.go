@@ -42,12 +42,12 @@ type QueryHandle[V any] struct {
 // Invalid keys, incompatible result types, and nil fetchers are reported through Snapshot and Updates.
 // Disabled handles still receive shared updates and may explicitly Refetch. Close releases the subscription.
 func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOptions) *QueryHandle[V] {
-	definition := QueryDefinition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
+	definition := QueryDefinition(key, fetch, options...)
 	return query(client, definition)
 }
 
 // query registers a typed subscription and its definition's labels before starting automatic work.
-func query[V any](client *Client, definition QueryDefinition[V]) *QueryHandle[V] {
+func query[V any](client *Client, definition Definition[V]) *QueryHandle[V] {
 	key := definition.Key
 	enabled := !definition.Options.Disable
 	request := definition.request(client.options, TriggerQuery)
@@ -193,7 +193,7 @@ func Fetch[V any](
 	fetch Fetcher[V],
 	options ...QueryOptions,
 ) (V, error) {
-	definition := QueryDefinition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
+	definition := QueryDefinition(key, fetch, options...)
 	return definition.Fetch(ctx, client)
 }
 
@@ -240,7 +240,7 @@ func Prefetch[V any](
 	fetch Fetcher[V],
 	options ...QueryOptions,
 ) error {
-	definition := QueryDefinition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
+	definition := QueryDefinition(key, fetch, options...)
 	return definition.Prefetch(ctx, client)
 }
 

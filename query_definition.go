@@ -6,10 +6,10 @@ import (
 	"slices"
 )
 
-// QueryDefinition describes a typed query without owning cached data or a subscription.
+// Definition describes a typed query without owning cached data or a subscription.
 // Constructing a definition performs no loading. Clients own execution, caching, and lifetimes.
 // Definitions are copied when used; captured loader state remains application-owned.
-type QueryDefinition[V any] struct {
+type Definition[V any] struct {
 	// Key identifies the query and must include all parameters and identity scope affecting the result.
 	// The same comparable-key and static-result-type rules as Query and Fetch apply.
 	Key any
@@ -26,9 +26,17 @@ type QueryDefinition[V any] struct {
 	Options QueryOptions
 }
 
+// QueryDefinition creates a reusable typed query, inferring its result type from fetch.
+// Construction performs no loading or validation; operations validate using their Client.
+// Only the last options value applies; omitted fields inherit Client defaults at execution.
+// Set Shared and Tags on the returned definition before use to configure shared caching and grouping.
+func QueryDefinition[V any](key any, fetch Fetcher[V], options ...QueryOptions) Definition[V] {
+	return Definition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
+}
+
 // Fetch waits for this definition's result using the supplied Client and caller context.
 // Disable does not suppress this explicit read; validation and errors follow Fetch's contract.
-func (d QueryDefinition[V]) Fetch(ctx context.Context, client *Client) (V, error) {
+func (d Definition[V]) Fetch(ctx context.Context, client *Client) (V, error) {
 	value, err := client.fetch(
 		ctx,
 		d.Key,
@@ -42,13 +50,13 @@ func (d QueryDefinition[V]) Fetch(ctx context.Context, client *Client) (V, error
 
 // Query creates a subscription using this definition's key, loader, and copied options.
 // The caller owns the returned handle's Close; Disable controls automatic loading.
-func (d QueryDefinition[V]) Query(client *Client) *QueryHandle[V] {
+func (d Definition[V]) Query(client *Client) *QueryHandle[V] {
 	return query(client, d)
 }
 
 // Prefetch warms this definition's cached data and returns any loading error.
 // Disable does not suppress this explicit read; it creates no persistent subscription.
-func (d QueryDefinition[V]) Prefetch(ctx context.Context, client *Client) error {
+func (d Definition[V]) Prefetch(ctx context.Context, client *Client) error {
 	_, err := client.fetch(
 		ctx,
 		d.Key,
@@ -61,7 +69,7 @@ func (d QueryDefinition[V]) Prefetch(ctx context.Context, client *Client) error 
 }
 
 // request captures the definition's policy and labels for one read or subscription.
-func (d QueryDefinition[V]) request(defaults Options, trigger EventTrigger) queryRequest {
+func (d Definition[V]) request(defaults Options, trigger EventTrigger) queryRequest {
 	request := eraseFetcher(d.Fetcher, resolvePolicy(defaults, d.Options))
 	request.trigger = trigger
 	request.tags = slices.Clone(d.Tags)
@@ -76,7 +84,7 @@ func (d QueryDefinition[V]) request(defaults Options, trigger EventTrigger) quer
 // Other clients receive notifications only through WatchShared; duplicate operation receipts are suppressed.
 // Local refresh and same-key in-flight rules match Client.Invalidate.
 // Applications must commit their business write before calling this method.
-func (d QueryDefinition[V]) InvalidateShared(
+func (d Definition[V]) InvalidateShared(
 	ctx context.Context,
 	client *Client,
 	options ...InvalidateOptions,
