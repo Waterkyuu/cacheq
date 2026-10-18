@@ -77,6 +77,11 @@ type SharedStats struct {
 	Invalidations uint64
 	// InvalidationErrors counts failed explicit remote invalidations, also returned to the caller.
 	InvalidationErrors uint64
+	// LastError retains the latest counted failure with its operation, shared key, and expected format.
+	// Wrapping preserves errors.Is and errors.As; successful operations do not clear it.
+	// Nil means no failure has been counted. Concurrent failures are ordered by statistics recording.
+	// Treat retained errors as immutable; snapshots do not clone underlying errors.
+	LastError error
 }
 
 // SharedCache owns immutable typed storage configuration and independently synchronized counters.
@@ -145,13 +150,10 @@ func (s *SharedCache[V]) invalidate(ctx context.Context) (SharedInvalidation, er
 	if err == nil {
 		err = operation.Err()
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err != nil {
-		s.stats.InvalidationErrors++
-		return SharedInvalidation{}, fmt.Errorf("invalidate shared key %q: %w", s.options.Key, err)
+		return SharedInvalidation{}, s.recordError("invalidate", err)
 	}
-	s.stats.Invalidations++
+	s.count(func(stats *SharedStats) { stats.Invalidations++ })
 	return event, nil
 }
 
@@ -257,7 +259,7 @@ func (s *SharedCache[V]) load(
 		return sharedResult{}, err
 	}
 	if readErr != nil {
-		s.count(func(stats *SharedStats) { stats.ReadErrors++ })
+		_ = s.recordError("read", readErr)
 	}
 	if bypass {
 		s.count(func(stats *SharedStats) { stats.Bypasses++ })
@@ -295,10 +297,16 @@ func (s *SharedCache[V]) decode(data []byte, options Options) (sharedResult, boo
 		return sharedResult{}, false
 	}
 	var envelope sharedEnvelope
-	err := json.Unmarshal(data, &envelope)
-	validTimes := envelope.ExpiresAt.After(envelope.FetchedAt)
-	if err != nil || envelope.Format != s.options.Format || !validTimes {
-		s.count(func(stats *SharedStats) { stats.DecodeErrors++ })
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		_ = s.recordError("decode", fmt.Errorf("decode envelope: %w", err))
+		return sharedResult{}, false
+	}
+	if envelope.Format != s.options.Format {
+		_ = s.recordError("decode", fmt.Errorf("incompatible record format %q", envelope.Format))
+		return sharedResult{}, false
+	}
+	if !envelope.ExpiresAt.After(envelope.FetchedAt) {
+		_ = s.recordError("decode", errors.New("invalid envelope timestamps: ExpiresAt must follow FetchedAt"))
 		return sharedResult{}, false
 	}
 	now := options.Clock()
@@ -312,7 +320,7 @@ func (s *SharedCache[V]) decode(data []byte, options Options) (sharedResult, boo
 	}
 	value, err := s.options.Codec.Decode(envelope.Data)
 	if err != nil {
-		s.count(func(stats *SharedStats) { stats.DecodeErrors++ })
+		_ = s.recordError("decode", fmt.Errorf("decode value: %w", err))
 		return sharedResult{}, false
 	}
 	return sharedResult{value: value, fetchedAt: envelope.FetchedAt, expiresAt: envelope.ExpiresAt}, true
@@ -328,14 +336,14 @@ func (s *SharedCache[V]) write(
 ) bool {
 	data, err := s.options.Codec.Encode(value)
 	if err != nil {
-		s.count(func(stats *SharedStats) { stats.EncodeErrors++ })
+		_ = s.recordError("encode", fmt.Errorf("encode value: %w", err))
 		return false
 	}
 	data, err = json.Marshal(sharedEnvelope{
 		Format: s.options.Format, FetchedAt: result.fetchedAt, ExpiresAt: result.expiresAt, Data: data,
 	})
 	if err != nil {
-		s.count(func(stats *SharedStats) { stats.EncodeErrors++ })
+		_ = s.recordError("encode", fmt.Errorf("encode envelope: %w", err))
 		return false
 	}
 	ttl := result.expiresAt.Sub(clock())
@@ -348,17 +356,40 @@ func (s *SharedCache[V]) write(
 	if err == nil {
 		err = operation.Err()
 	}
+	if err != nil {
+		_ = s.recordError("write", err)
+		return false
+	}
 	s.count(func(stats *SharedStats) {
-		switch {
-		case err != nil:
-			stats.WriteErrors++
-		case written:
+		if written {
 			stats.Writes++
-		default:
+		} else {
 			stats.WriteConflicts++
 		}
 	})
-	return err == nil && !written
+	return !written
+}
+
+// recordError atomically retains one failure and its counter without changing source fallback policy.
+func (s *SharedCache[V]) recordError(operation string, cause error) error {
+	// Best-effort cache failures must remain inspectable even when the source query succeeds.
+	err := fmt.Errorf("%s shared key %q (format %q): %w", operation, s.options.Key, s.options.Format, cause)
+	s.count(func(stats *SharedStats) {
+		switch operation {
+		case "read":
+			stats.ReadErrors++
+		case "decode":
+			stats.DecodeErrors++
+		case "encode":
+			stats.EncodeErrors++
+		case "write":
+			stats.WriteErrors++
+		case "invalidate":
+			stats.InvalidationErrors++
+		}
+		stats.LastError = err
+	})
+	return err
 }
 
 // count changes cumulative counters under their own lock, outside the client state machine.

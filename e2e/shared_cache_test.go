@@ -2,6 +2,8 @@ package e2e_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -99,5 +101,70 @@ func TestHTTPSharedCache(t *testing.T) {
 	}
 	if api.count("/users/42") != 3 {
 		t.Fatal("invalidation reused old shared result")
+	}
+}
+
+// unavailableHTTPSharedStore injects a cache read failure independently of the HTTP source.
+type unavailableHTTPSharedStore struct {
+	// SharedStore supplies the unchanged write and invalidation behavior.
+	cacheq.SharedStore
+	// err is the original dependency error retained by shared diagnostics.
+	err error
+}
+
+// Read returns the injected failure so the query must use its HTTP source.
+func (s unavailableHTTPSharedStore) Read(context.Context, string) (cacheq.SharedRecord, error) {
+	return cacheq.SharedRecord{}, s.err
+}
+
+// TestHTTPSharedCacheDiagnostics preserves source success and failure independently of cache diagnostics.
+func TestHTTPSharedCacheDiagnostics(t *testing.T) {
+	api := newUserAPI(t)
+	cause := errors.New("cache connection unavailable")
+	shared, err := cacheq.NewSharedCache(unavailableHTTPSharedStore{
+		SharedStore: &httpSharedStore{}, err: cause,
+	}, cacheq.SharedCacheOptions[user]{
+		Key: "tenant:42:user:42", Format: "user.json.v1", TTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := cacheq.QueryDefinition("user:42", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Shared = shared
+	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	t.Cleanup(client.Close)
+	if value, err := d.Fetch(context.Background(), client); err != nil || value.Name != "Alice" {
+		t.Fatalf("HTTP fallback = %+v, %v", value, err)
+	}
+	stats := shared.Stats()
+	if !errors.Is(stats.LastError, cause) || stats.ReadErrors != 1 || stats.Writes != 0 {
+		t.Fatalf("cache diagnostics = %+v", stats)
+	}
+	for _, part := range []string{"read", "tenant:42:user:42", "user.json.v1"} {
+		if !strings.Contains(stats.LastError.Error(), part) {
+			t.Fatalf("missing %q context: %v", part, stats.LastError)
+		}
+	}
+	if _, err := d.Fetch(context.Background(), client); err != nil || api.count("/users/42") != 1 {
+		t.Fatalf("local reuse = %v, HTTP calls = %d", err, api.count("/users/42"))
+	}
+	if shared.Stats().LastError != stats.LastError {
+		t.Fatal("local hit erased diagnostic history")
+	}
+	api.failNext(1)
+	peer := cacheq.NewClient(cacheq.Options{})
+	t.Cleanup(peer.Close)
+	if _, err := d.Fetch(
+		context.Background(),
+		peer,
+	); err == nil || err.Error() != "HTTP status 503" ||
+		errors.Is(err, cause) {
+		t.Fatalf("source error replaced by cache error: %v", err)
+	}
+	if !errors.Is(shared.Stats().LastError, cause) || shared.Stats().ReadErrors != 2 {
+		t.Fatalf("cache failure lost after source failure: %+v", shared.Stats())
 	}
 }

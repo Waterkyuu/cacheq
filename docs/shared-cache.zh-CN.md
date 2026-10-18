@@ -299,10 +299,10 @@ B refreshed: Bob, source calls: 3
 | --- | --- | --- |
 | `go run` 报找不到适配器或要求更新 Go | 本地替换路径错误，或 Go 版本不足 | 检查两个 `replace` 是否指向当前源码，使用 Go 1.26+ |
 | 示例的 `Ping` 报错 | Redis 未启动、地址或权限错误 | 确认服务监听 `127.0.0.1:16379`；该检查是演示的启动检查，不是 cacheq 强制要求 |
-| B 再次回源，`ReadErrors` 增加 | Redis 连接、ACL 或操作超时 | 检查连接选项、可写主节点和脚本权限；用下方统计区分故障和普通未命中 |
+| B 再次回源，`ReadErrors` 增加 | Redis 连接、ACL 或操作超时 | 查看 `shared.Stats().LastError`，再检查连接选项、可写主节点和脚本权限 |
 | `Hits` 为 0，但没有读错误 | `StaleTime` 为 0、记录已过期，或始终命中本地缓存 | 配置正新鲜期，用新的 Client 验证共享命中；本地命中不会增加共享 Hits |
-| `DecodeErrors` 增加并回源 | Format 不匹配、记录损坏或 Codec 解码失败 | 对齐类型、Format 和 Codec；不兼容结果改用新 key |
-| 数据源读取成功，但 `EncodeErrors` 或 `WriteErrors` 增加 | 结果不能编码，或 Redis 写入失败 | 检查结果字段和 Codec，再检查连接、超时及权限；本地结果仍可用 |
+| `DecodeErrors` 增加并回源 | Format 不匹配、记录损坏或 Codec 解码失败 | 从 LastError 查看失败阶段或记录的实际格式；对齐类型、Format 和 Codec，不兼容结果改用新 key |
+| 数据源读取成功，但 `EncodeErrors` 或 `WriteErrors` 增加 | 结果不能编码，或 Redis 写入失败 | 从 LastError 查看原始 Codec 或存储错误；本地结果仍可用 |
 | A 失效后 B 仍读到旧值 | B 的本地结果仍新鲜，且未启用 watcher | 显式使 B 本地失效，或配置 `WatchShared` |
 | 构造配置时报错 | key、Format 为空，TTL 非正数，或缺少标签能力 | 按配置表检查；无效共享配置返回 `ErrInvalidSharedCache`，缺少能力返回 `ErrSharedCapability` |
 
@@ -312,9 +312,25 @@ B refreshed: Bob, source calls: 3
 stats := shared.Stats()
 fmt.Printf("hits=%d misses=%d read_errors=%d write_errors=%d\n",
 	stats.Hits, stats.Misses, stats.ReadErrors, stats.WriteErrors)
+fmt.Printf("last_error=%v\n", stats.LastError)
+```
+
+完整示例成功运行时的新增输出：
+
+```text
+hits=1 misses=1 read_errors=0 write_errors=0
+last_error=<nil>
 ```
 
 `shared.Stats()` 只累计这个 `SharedCache` 对象参与的操作，不是 Redis 服务端或所有进程的全局指标。`Bypasses` 表示强制刷新或失效后绕过共享数据的尝试；`WriteConflicts` 表示加载期间发生失效、共享写入被拒绝。Client 自身的统计继续描述本地缓存和加载。
+
+`SharedStats.LastError` 保留最近一次被计数的共享缓存失败。错误信息包含操作（`read`、`decode`、`encode`、`write` 或 `invalidate`）、逻辑共享 Key 和预期 Format。Codec 与封套处理失败还包含具体阶段；格式不匹配会报告实际存储格式，封套时间戳非法或存储返回空版本也有明确原因。cacheq 不主动附加缓存载荷；底层错误仍保留自身的诊断详情。错误文本用于诊断，不是稳定的解析接口。
+
+底层存储、Codec 和 JSON 错误保留在包装链中。使用 `errors.Is(stats.LastError, context.DeadlineExceeded)` 判断存储操作超时，或通过 `errors.As` 检查驱动、Codec 的具体错误类型；使用这些函数时需导入标准库 `errors` 包。调用 LastError.Error 前应检查是否为 nil。自定义错误在被保留期间必须保持不可变。
+
+诊断与对应的现有错误计数在同一同步边界内记录。首次计数失败前 LastError 为 nil；成功读取、写入、本地命中和失效不会清除它，后续计数失败会替换它，但不会改变先前返回的快照。仅保留一个错误：如果解码失败，随后回源结果又编码失败，两项计数都会增加，LastError 则描述编码失败。并发失败按统计记录顺序确定先后，不按操作启动时间排序。它是诊断历史，不表示当前健康状态，也不是逐请求错误日志。
+
+记录缺失、过期、新鲜期为零和条件写入冲突不会设置 LastError。数据源失败仍作为查询错误返回，不替换共享缓存诊断。允许继续回源的存储超时会被保留；调用方取消仍按原有规则终止查询。存储调用前被拒绝的操作，以及在错误计数前因查询取消而终止的读取，不产生诊断。显式共享 key 失效失败会保留诊断，同时继续向调用方返回错误。直接存储操作、Client 标签失效和 watcher 失败不属于该 SharedCache 对象的统计范围；watcher 失败仍通过 SharedWatchStats.LastError 查看。
 
 ## 行为与限制
 

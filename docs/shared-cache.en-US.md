@@ -299,10 +299,10 @@ Explicit invalidation does not silently degrade: if the remote InvalidateShared 
 | --- | --- | --- |
 | `go run` cannot find the adapter or requires a newer Go version | Incorrect local replacement paths or an older toolchain | Check both source replacements and use Go 1.26+ |
 | The example's Ping fails | Redis is stopped, or its address or permissions are wrong | Check the server at `127.0.0.1:16379`; this is a demonstration startup check, not a cacheq requirement |
-| B loads the source again and ReadErrors increases | Redis connection, ACL, or operation timeout | Check connection settings, writable-primary access, and script permissions; use the statistics below to distinguish failure from an ordinary miss |
+| B loads the source again and ReadErrors increases | Redis connection, ACL, or operation timeout | Inspect `shared.Stats().LastError`, then check connection settings, writable-primary access, and script permissions |
 | Hits stays at 0 without read errors | StaleTime is 0, the record expired, or reads always hit local data | Set positive freshness and use a new Client to verify shared hits; local hits do not increment shared Hits |
-| DecodeErrors increases and the source runs | Format mismatch, damaged record, or codec decoding failure | Align types, Format, and Codec; use a new key for incompatible results |
-| Source reads succeed but EncodeErrors or WriteErrors increases | The result cannot be encoded or the Redis write fails | Check result fields and Codec, then connection, timeout, and permissions; local results remain usable |
+| DecodeErrors increases and the source runs | Format mismatch, damaged record, or codec decoding failure | Inspect LastError for the failing stage or actual record format; align types, Format, and Codec, using a new key for incompatible results |
+| Source reads succeed but EncodeErrors or WriteErrors increases | The result cannot be encoded or the Redis write fails | Inspect LastError for the original codec or storage error; local results remain usable |
 | B returns old data after A invalidates | B has fresh local data without a watcher | Invalidate B locally or configure WatchShared |
 | Configuration construction fails | Empty key or Format, nonpositive TTL, or missing tag support | Check the configuration tables; invalid shared options return ErrInvalidSharedCache and missing capabilities return ErrSharedCapability |
 
@@ -312,9 +312,25 @@ Add this snippet at the end of the complete example's main function at the end t
 stats := shared.Stats()
 fmt.Printf("hits=%d misses=%d read_errors=%d write_errors=%d\n",
 	stats.Hits, stats.Misses, stats.ReadErrors, stats.WriteErrors)
+fmt.Printf("last_error=%v\n", stats.LastError)
+```
+
+Additional output for the successful complete example:
+
+```text
+hits=1 misses=1 read_errors=0 write_errors=0
+last_error=<nil>
 ```
 
 `shared.Stats()` counts only operations using this SharedCache object, not Redis-wide or cross-process activity. Bypasses counts attempts that skip shared data after forced refresh or invalidation. WriteConflicts counts shared writes rejected after invalidation during a load. Client statistics continue to describe local caching and loading.
+
+`SharedStats.LastError` retains the latest counted shared-cache failure. Its error message identifies the operation (`read`, `decode`, `encode`, `write`, or `invalidate`), logical shared Key, and expected Format. Codec and envelope failures also identify the failed stage. A format mismatch reports the actual stored format; invalid envelope timestamps and empty store versions receive explanatory errors. cacheq does not append the cached payload; underlying errors retain their own diagnostic details. Error message text is diagnostic output, not a stable parsing API.
+
+Underlying store, codec, and JSON errors remain in the wrapping chain. Use `errors.Is(stats.LastError, context.DeadlineExceeded)` to identify a store deadline, or `errors.As` to inspect a driver or codec error type; import the standard `errors` package when using these functions. Applications must check for nil before calling LastError.Error. Custom errors must remain immutable while retained.
+
+The diagnostic and its existing error counter are recorded together under synchronization. LastError is nil before the first counted failure. Successful reads, writes, local hits, and invalidations do not clear it; a later counted failure replaces it without changing previously returned snapshots. Only one error is retained: if decoding fails and the fallback result then fails encoding, both counters increase and LastError describes encoding. Concurrent failures are ordered by statistics recording, not by operation start time. This is diagnostic history, not a current health indicator or a per-request error log.
+
+Missing or expired records, zero freshness, and conditional-write conflicts do not set LastError. Source failures remain query errors and do not replace the shared-cache diagnostic. A shared-store timeout that permits source fallback is retained; caller cancellation still terminates the query under the existing rules. Operations rejected before storage, and reads abandoned by query cancellation before error accounting, do not create a diagnostic. Explicit shared-key invalidation retains its failure and still returns it to the caller. Direct store operations, client tag invalidation, and watcher failures are outside this SharedCache object's counters; watcher failures remain available through SharedWatchStats.LastError.
 
 ## Behavior and limitations
 
