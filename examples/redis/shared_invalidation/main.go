@@ -70,14 +70,20 @@ func run() error {
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
-	detail := cacheq.QueryDefinition[User]{
-		Key: "detail", Tags: tags, Shared: detailShared, Options: cacheq.QueryOptions{Disable: true},
-		Fetcher: func(context.Context) (User, error) { calls.Add(1); return source.Load().(User), nil },
-	}
-	list := cacheq.QueryDefinition[[]User]{
-		Key: "list", Tags: tags, Shared: listShared, Options: cacheq.QueryOptions{Disable: true},
-		Fetcher: func(context.Context) ([]User, error) { calls.Add(1); return []User{source.Load().(User)}, nil },
-	}
+	detail := cacheq.QueryDefinition(
+		"detail",
+		func(context.Context) (User, error) { calls.Add(1); return source.Load().(User), nil },
+		cacheq.QueryOptions{Disable: true},
+	)
+	detail.Tags = tags
+	detail.Shared = detailShared
+	list := cacheq.QueryDefinition(
+		"list",
+		func(context.Context) ([]User, error) { calls.Add(1); return []User{source.Load().(User)}, nil },
+		cacheq.QueryOptions{Disable: true},
+	)
+	list.Tags = tags
+	list.Shared = listShared
 	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	defer a.Close()

@@ -47,7 +47,7 @@ type SharedCacheOptions[V any] struct {
 	Timeout time.Duration
 	// Codec converts V to bytes; nil selects JSONCodec[V].
 	Codec Codec[V]
-	// ShareTags registers QueryDefinition.Tags remotely; the store must implement SharedTagStore.
+	// ShareTags registers Definition.Tags remotely; the store must implement SharedTagStore.
 	// False keeps query labels local while still honoring any tags already attached to the shared record.
 	ShareTags bool
 }
@@ -80,7 +80,7 @@ type SharedStats struct {
 }
 
 // SharedCache owns immutable typed storage configuration and independently synchronized counters.
-// Attach it to QueryDefinition.Shared; it never owns the store's connection lifetime.
+// Attach it to Definition.Shared; it never owns the store's connection lifetime.
 type SharedCache[V any] struct {
 	// store owns the remote persistence mechanism and invalidation protocol.
 	store SharedStore
@@ -121,7 +121,7 @@ func (s *SharedCache[V]) Stats() SharedStats {
 }
 
 // Invalidate changes this key's remote generation and removes its shared record.
-// It does not change any Client's local state; use QueryDefinition.InvalidateShared to update one client too.
+// It does not change any Client's local state; use Definition.InvalidateShared to update one client too.
 // Other clients retain local results until normal freshness checks or explicit local invalidation.
 func (s *SharedCache[V]) Invalidate(ctx context.Context) error {
 	_, err := s.invalidate(ctx)

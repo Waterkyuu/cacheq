@@ -61,13 +61,11 @@ func run() error {
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
-	definition := cacheq.QueryDefinition[User]{
-		Key: "user:7", Shared: shared,
-		Fetcher: func(context.Context) (User, error) {
-			calls.Add(1)
-			return source.Load().(User), nil
-		},
-	}
+	definition := cacheq.QueryDefinition("user:7", func(context.Context) (User, error) {
+		calls.Add(1)
+		return source.Load().(User), nil
+	})
+	definition.Shared = shared
 	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	defer a.Close()
@@ -118,7 +116,7 @@ func printRead(
 	ctx context.Context,
 	label string,
 	client *cacheq.Client,
-	definition cacheq.QueryDefinition[User],
+	definition cacheq.Definition[User],
 	calls *atomic.Int64,
 ) error {
 	value, err := definition.Fetch(ctx, client)
