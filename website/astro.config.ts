@@ -4,31 +4,31 @@ import react from "@astrojs/react";
 
 export default defineConfig({
 	site: "https://waterkyuu.github.io",
-	base: "/cacheq",
+	base: "/soroi",
 	trailingSlash: "always",
 	outDir: "./build",
 	publicDir: "../assets",
 	integrations: [
 		react(),
 		starlight({
-			title: "cacheq",
+			title: "soroi",
 			description: "One client, many types. Shared cache and background refresh for Go.",
-			logo: { src: "../assets/cacheq.png", alt: "cacheq" },
-			favicon: "/cacheq.png",
+			logo: { src: "../assets/soroi.png", alt: "soroi" },
+			favicon: "/soroi.png",
 			head: [
 				{
 					tag: "meta",
-					attrs: { property: "og:image", content: "https://waterkyuu.github.io/cacheq/cacheq.png" },
+					attrs: { property: "og:image", content: "https://waterkyuu.github.io/soroi/soroi.png" },
 				},
-				{ tag: "meta", attrs: { property: "og:image:alt", content: "cacheq logo" } },
+				{ tag: "meta", attrs: { property: "og:image:alt", content: "soroi logo" } },
 				{
 					tag: "meta",
 					attrs: {
 						name: "twitter:image",
-						content: "https://waterkyuu.github.io/cacheq/cacheq.png",
+						content: "https://waterkyuu.github.io/soroi/soroi.png",
 					},
 				},
-				{ tag: "meta", attrs: { name: "twitter:image:alt", content: "cacheq logo" } },
+				{ tag: "meta", attrs: { name: "twitter:image:alt", content: "soroi logo" } },
 				// The existing square logo fits a summary card without a landscape crop.
 				{ tag: "meta", attrs: { name: "twitter:card", content: "summary" } },
 			],
@@ -119,7 +119,7 @@ export default defineConfig({
 					translations: { "zh-CN": "Bubble Tea 示例" },
 				},
 			],
-			social: [{ icon: "github", label: "GitHub", href: "https://github.com/Waterkyuu/cacheq" }],
+			social: [{ icon: "github", label: "GitHub", href: "https://github.com/Waterkyuu/soroi" }],
 			customCss: ["./src/css/custom.css"],
 			pagefind: false,
 			expressiveCode: { themes: ["github-light", "github-dark"] },

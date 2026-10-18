@@ -6,25 +6,25 @@ import (
 	"testing"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // TestHTTPQueryFilter reuses one tenant selection for awaited HTTP refresh and cache removal.
 func TestHTTPQueryFilter(t *testing.T) {
 	api := newUserAPI(t)
-	c := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	c := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)
-	detail := cacheq.Query(
+	detail := soroi.Query(
 		c,
 		"tenant:42:user",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
 	)
-	list := cacheq.Query(
+	list := soroi.Query(
 		c,
 		"tenant:42:users",
 		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
 	)
-	other := cacheq.Query(
+	other := soroi.Query(
 		c,
 		"tenant:99:user",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
@@ -32,10 +32,10 @@ func TestHTTPQueryFilter(t *testing.T) {
 	t.Cleanup(detail.Close)
 	t.Cleanup(list.Close)
 	t.Cleanup(other.Close)
-	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
-	await(t, list, func(s cacheq.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
-	await(t, other, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
-	filter := cacheq.QueryFilter{Keys: []any{"tenant:42:users", "tenant:42:user", "tenant:42:user"}}
+	await(t, detail, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	await(t, list, func(s soroi.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
+	await(t, other, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	filter := soroi.QueryFilter{Keys: []any{"tenant:42:users", "tenant:42:user", "tenant:42:user"}}
 	api.update(t, user{Name: "Bob"})
 	results, err := c.InvalidateAndWait(context.Background(), filter)
 	if err != nil || len(results) != 2 || !results[0].Refreshed || !results[1].Refreshed {
@@ -67,24 +67,24 @@ func TestHTTPQueryFilterCancellation(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			first, second := newHeldHTTPResponse(t), newHeldHTTPResponse(t)
 			api := newHeldListAPI(t, [2]*heldHTTPResponse{first, second})
-			c := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+			c := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 			t.Cleanup(c.Close)
 			load := readJSON[[]user](api.server.Client(), api.server.URL+"/users")
-			one := cacheq.Query(
+			one := soroi.Query(
 				c,
 				"one",
 				load,
-				cacheq.QueryOptions{Disable: true},
+				soroi.QueryOptions{Disable: true},
 			)
-			two := cacheq.Query(
+			two := soroi.Query(
 				c,
 				"two",
 				load,
-				cacheq.QueryOptions{Disable: true},
+				soroi.QueryOptions{Disable: true},
 			)
 			t.Cleanup(one.Close)
 			t.Cleanup(two.Close)
-			if err := cacheq.Set(c, "one", []user{{Name: "cached"}}); err != nil {
+			if err := soroi.Set(c, "one", []user{{Name: "cached"}}); err != nil {
 				t.Fatal(err)
 			}
 			finished := make(chan error, 1)
@@ -92,7 +92,7 @@ func TestHTTPQueryFilterCancellation(t *testing.T) {
 			first.awaitStarted(t)
 			go func() { _, _ = two.Refetch(context.Background()) }()
 			second.awaitStarted(t)
-			filter := cacheq.QueryFilter{Predicate: func(key any) bool { return key == "one" }}
+			filter := soroi.QueryFilter{Predicate: func(key any) bool { return key == "one" }}
 			var err error
 			if operation == "cancel" {
 				err = c.Cancel(filter)
@@ -124,7 +124,7 @@ func TestHTTPQueryFilterCancellation(t *testing.T) {
 				t.Fatal("unrelated HTTP load was canceled")
 			}
 			second.deliver()
-			await(t, two, func(s cacheq.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
+			await(t, two, func(s soroi.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
 		})
 	}
 }

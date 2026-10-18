@@ -1,4 +1,4 @@
-package cacheq
+package soroi
 
 // touchCapacityLocked records use of a completed result or error and enforces the configured capacity.
 func (c *Client) touchCapacityLocked(key any) {

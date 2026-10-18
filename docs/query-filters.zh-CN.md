@@ -10,7 +10,7 @@
 
 以下完整程序选择租户 42 的详情与列表，先标记为过期，再删除缓存。租户 99 的数据不受影响。`RefetchNone` 表示本次失效不启动刷新。
 
-在已添加 cacheq 依赖的 Go 模块中，将程序保存为 `main.go`，运行 `go run .`。示例不需要 HTTP 服务或数据库。
+在已添加 soroi 依赖的 Go 模块中，将程序保存为 `main.go`，运行 `go run .`。示例不需要 HTTP 服务或数据库。
 
 ```go
 package main
@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // ResourceKey identifies a resource within a tenant.
@@ -32,43 +32,43 @@ type ResourceKey struct {
 
 // main invalidates and removes tenant 42's cached results without affecting tenant 99.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	defer client.Close()
 
 	detailKey := ResourceKey{TenantID: 42, Resource: "profile"}
 	listKey := ResourceKey{TenantID: 42, Resource: "users"}
 	otherKey := ResourceKey{TenantID: 99, Resource: "profile"}
-	if err := cacheq.Set(client, detailKey, "Alice"); err != nil {
+	if err := soroi.Set(client, detailKey, "Alice"); err != nil {
 		panic(err)
 	}
-	if err := cacheq.Set(client, listKey, []string{"Alice"}); err != nil {
+	if err := soroi.Set(client, listKey, []string{"Alice"}); err != nil {
 		panic(err)
 	}
-	if err := cacheq.Set(client, otherKey, "Carol"); err != nil {
+	if err := soroi.Set(client, otherKey, "Carol"); err != nil {
 		panic(err)
 	}
 
-	filter := cacheq.QueryFilter{
+	filter := soroi.QueryFilter{
 		Predicate: func(key any) bool {
 			resource, ok := key.(ResourceKey)
 			return ok && resource.TenantID == 42
 		},
 	}
-	if err := client.Invalidate(filter, cacheq.InvalidateOptions{
-		Refetch: cacheq.RefetchNone,
+	if err := client.Invalidate(filter, soroi.InvalidateOptions{
+		Refetch: soroi.RefetchNone,
 	}); err != nil {
 		panic(err)
 	}
-	fmt.Println("detail stale:", cacheq.Get[string](client, detailKey).Stale)
-	fmt.Println("list stale:", cacheq.Get[[]string](client, listKey).Stale)
-	fmt.Println("other tenant stale:", cacheq.Get[string](client, otherKey).Stale)
+	fmt.Println("detail stale:", soroi.Get[string](client, detailKey).Stale)
+	fmt.Println("list stale:", soroi.Get[[]string](client, listKey).Stale)
+	fmt.Println("other tenant stale:", soroi.Get[string](client, otherKey).Stale)
 
 	if err := client.Remove(filter); err != nil {
 		panic(err)
 	}
-	fmt.Println("detail retained:", cacheq.Get[string](client, detailKey).HasData)
-	fmt.Println("list retained:", cacheq.Get[[]string](client, listKey).HasData)
-	fmt.Println("other tenant data:", cacheq.Get[string](client, otherKey).Data)
+	fmt.Println("detail retained:", soroi.Get[string](client, detailKey).HasData)
+	fmt.Println("list retained:", soroi.Get[[]string](client, listKey).HasData)
+	fmt.Println("other tenant data:", soroi.Get[string](client, otherKey).Data)
 }
 ```
 
@@ -94,9 +94,9 @@ other tenant data: Carol
 | 单个查询键 | `"users"` | 精确指定该键 |
 | `[]any` | `[]any{"users", "user:42"}` | 指定多个键，按首次出现的顺序处理并去重 |
 | `func(any) bool` | `func(key any) bool { return key == "users" }` | 从 Client 已有查询中选出返回 true 的键 |
-| `QueryFilter` 值 | `cacheq.QueryFilter{Keys: []any{"users"}}` | 组合键列表和条件函数，供多个操作复用 |
+| `QueryFilter` 值 | `soroi.QueryFilter{Keys: []any{"users"}}` | 组合键列表和条件函数，供多个操作复用 |
 
-查询键必须满足 cacheq 的可比较键要求。键按 Go 精确相等规则匹配，动态类型必须一致；字符串和数组不进行前缀匹配。只有 `[]any` 表示批量参数，`[]string` 等其他切片类型不能直接作为批量参数。
+查询键必须满足 soroi 的可比较键要求。键按 Go 精确相等规则匹配，动态类型必须一致；字符串和数组不进行前缀匹配。只有 `[]any` 表示批量参数，`[]string` 等其他切片类型不能直接作为批量参数。
 
 “已有查询”是指 Client 仍持有缓存状态、活动加载或订阅的键，包括暂时没有数据的已订阅查询。仅调用 `QueryDefinition` 不会向 Client 注册查询。
 
@@ -115,7 +115,7 @@ other tenant data: Carol
 以下局部片段使用快速开始中的 `ResourceKey` 类型，可放在业务函数内：
 
 ```go
-filter := cacheq.QueryFilter{
+filter := soroi.QueryFilter{
 	Keys: []any{
 		ResourceKey{TenantID: 42, Resource: "profile"},
 		ResourceKey{TenantID: 99, Resource: "profile"},
@@ -131,11 +131,11 @@ filter := cacheq.QueryFilter{
 
 | 筛选配置 | 选中范围 |
 | --- | --- |
-| `cacheq.QueryFilter{}` | 全部已有查询 |
-| `cacheq.QueryFilter{Keys: nil}` | 全部已有查询 |
-| `cacheq.QueryFilter{Keys: []any{}}` | 零个查询 |
-| `cacheq.QueryFilter{Keys: []any{"users"}}` | 已有的 `"users"` 查询 |
-| `cacheq.QueryFilter{Predicate: func(key any) bool { return key == "users" }}` | 已有的 `"users"` 查询 |
+| `soroi.QueryFilter{}` | 全部已有查询 |
+| `soroi.QueryFilter{Keys: nil}` | 全部已有查询 |
+| `soroi.QueryFilter{Keys: []any{}}` | 零个查询 |
+| `soroi.QueryFilter{Keys: []any{"users"}}` | 已有的 `"users"` 查询 |
+| `soroi.QueryFilter{Predicate: func(key any) bool { return key == "users" }}` | 已有的 `"users"` 查询 |
 
 未指定键列表时，处理顺序没有保证。筛选值保存的是条件，不是上次匹配的结果；每次操作都会重新选择查询。
 
@@ -169,12 +169,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main waits for an enabled query to reload a changed backend value.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	defer client.Close()
 	ctx := context.Background()
 
@@ -183,14 +183,14 @@ func main() {
 	load := func(context.Context) (string, error) {
 		return backend.Load().(string), nil
 	}
-	if err := cacheq.Prefetch(ctx, client, "profile", load); err != nil {
+	if err := soroi.Prefetch(ctx, client, "profile", load); err != nil {
 		panic(err)
 	}
-	query := cacheq.Query(client, "profile", load)
+	query := soroi.Query(client, "profile", load)
 	defer query.Close()
 
 	backend.Store("Bob")
-	filter := cacheq.QueryFilter{Keys: []any{"profile"}}
+	filter := soroi.QueryFilter{Keys: []any{"profile"}}
 	results, err := client.InvalidateAndWait(ctx, filter)
 	if err != nil {
 		panic(err)

@@ -1,22 +1,22 @@
-# Getting started with cacheq
+# Getting started with soroi
 
 [简体中文](getting-started.zh-CN.md)
 
-cacheq is a typed query client for Go. It provides in-process caching, same-key request sharing, and subscriptions to query state. It supports server handlers, background jobs, and interactive applications.
+soroi is a typed query client for Go. It provides in-process caching, same-key request sharing, and subscriptions to query state. It supports server handlers, background jobs, and interactive applications.
 
 ## Installation
 
-Requires Go 1.22 or later. The cacheq core library has no external dependencies.
+Requires Go 1.22 or later. The soroi core library has no external dependencies.
 
 ```sh
-go get github.com/Waterkyuu/cacheq
+go get github.com/Waterkyuu/soroi
 ```
 
 Create a client at the application boundary, inject it into consumers, and close it when the application stops. The cache is in process memory; it does not synchronize across services.
 
 ## Quick start
 
-Save this complete program as `main.go` in a module importing cacheq, then run `go run .`. The local loader requires no network service.
+Save this complete program as `main.go` in a module importing soroi, then run `go run .`. The local loader requires no network service.
 
 ```go
 package main
@@ -27,7 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // User contains the profile fields required by this application.
@@ -38,7 +38,7 @@ type User struct {
 
 // main shares one cached result between a subscription and an imperative read.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 
 	var calls atomic.Int32
@@ -46,10 +46,10 @@ func main() {
 		calls.Add(1)
 		return User{Name: "Alice"}, nil
 	}
-	profile := cacheq.Query(client, "user:42", loadUser)
+	profile := soroi.Query(client, "user:42", loadUser)
 	defer profile.Close()
 
-	user, err := cacheq.Fetch(
+	user, err := soroi.Fetch(
 		context.Background(),
 		client,
 		"user:42",

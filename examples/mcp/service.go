@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -51,7 +51,7 @@ type updateOutput struct {
 // service owns a shared backend cache and separates MCP notification streams by credential.
 type service struct {
 	// cache deduplicates backend reads across authenticated MCP connections.
-	cache *cacheq.Client
+	cache *soroi.Client
 	// store owns the authoritative documents modified by the tool.
 	store *documentStore
 	// load is the backend read dependency, replaceable before serving requests in tests.
@@ -67,12 +67,12 @@ type service struct {
 }
 
 // newService builds an authenticated local MCP endpoint with one shared cache.
-func newService(store *documentStore, options cacheq.Options) *service {
+func newService(store *documentStore, options soroi.Options) *service {
 	if options.Clock == nil {
 		options.Clock = time.Now
 	}
 	s := &service{
-		cache: cacheq.NewClient(options), store: store, load: store.read,
+		cache: soroi.NewClient(options), store: store, load: store.read,
 		now: options.Clock, ttl: time.Minute, servers: make(map[string]*mcp.Server),
 	}
 	// These literal credentials exist only for this self-contained example.
@@ -106,7 +106,7 @@ func (s *service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // scopedServer exposes one principal's resource and sends changes only within that scope.
 func (s *service) scopedServer(principal string) *mcp.Server {
 	key := resourceKey{scope: sha256.Sum256([]byte(principal)), uri: resourceURI}
-	server := mcp.NewServer(&mcp.Implementation{Name: "cacheq-resources", Version: "1.0.0"}, &mcp.ServerOptions{
+	server := mcp.NewServer(&mcp.Implementation{Name: "soroi-resources", Version: "1.0.0"}, &mcp.ServerOptions{
 		SupportedProtocolVersions: []string{protocolVersion},
 		SubscribeHandler: func(_ context.Context, req *mcp.SubscribeRequest) error {
 			if req.Params.URI != resourceURI {
@@ -119,7 +119,7 @@ func (s *service) scopedServer(principal string) *mcp.Server {
 	})
 	server.AddResource(&mcp.Resource{URI: resourceURI, Name: "settings", MIMEType: "text/plain"},
 		func(ctx context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-			value, err := cacheq.FetchWithExpiry(
+			value, err := soroi.FetchWithExpiry(
 				ctx,
 				s.cache,
 				key,
@@ -136,7 +136,7 @@ func (s *service) scopedServer(principal string) *mcp.Server {
 				return nil, err
 			}
 			// Use the effective cache deadline, including MaxAge, instead of issuing a new TTL on a hit.
-			deadline := cacheq.Get[resourceValue](s.cache, key).ExpiresAt
+			deadline := soroi.Get[resourceValue](s.cache, key).ExpiresAt
 			if value.expiresAt.Before(deadline) {
 				deadline = value.expiresAt
 			}
@@ -157,7 +157,7 @@ func (s *service) scopedServer(principal string) *mcp.Server {
 				return nil, updateOutput{}, fmt.Errorf("settings text must not be empty")
 			}
 			s.store.write(principal, input.Text)
-			if err := s.cache.Invalidate(key, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone}); err != nil {
+			if err := s.cache.Invalidate(key, soroi.InvalidateOptions{Refetch: soroi.RefetchNone}); err != nil {
 				return nil, updateOutput{}, fmt.Errorf("invalidate updated settings: %w", err)
 			}
 			if err := server.ResourceUpdated(

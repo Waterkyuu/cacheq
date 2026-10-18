@@ -6,7 +6,7 @@ script=$(cd "$(dirname "$0")" && pwd)/dependabot_merge.sh
 sandbox=$(mktemp -d)
 trap 'rm -r -- "$sandbox"' EXIT HUP INT TERM
 mkdir "$sandbox/bin"
-export GH_REPO=Waterkyuu/cacheq
+export GH_REPO=Waterkyuu/soroi
 export DEPENDABOT_HEAD_BRANCH=dependabot/npm_and_yarn/website/react-19.3.0
 export DEPENDABOT_HEAD_SHA=checked-commit
 export DEPENDABOT_TEST_PR="$sandbox/pr.json"
@@ -47,17 +47,17 @@ expect_no_merge() {
 printf '[{"state":"SUCCESS"}]\n' > "$DEPENDABOT_TEST_CHECKS"
 for scenario in human fork stale base; do
   case "$scenario" in
-    human) set_pr waterkyuu Waterkyuu/cacheq checked-commit main ;;
-    fork) set_pr 'dependabot[bot]' other/cacheq checked-commit main ;;
-    stale) set_pr 'dependabot[bot]' Waterkyuu/cacheq newer-commit main ;;
-    base) set_pr 'dependabot[bot]' Waterkyuu/cacheq checked-commit feature ;;
+    human) set_pr waterkyuu Waterkyuu/soroi checked-commit main ;;
+    fork) set_pr 'dependabot[bot]' other/soroi checked-commit main ;;
+    stale) set_pr 'dependabot[bot]' Waterkyuu/soroi newer-commit main ;;
+    base) set_pr 'dependabot[bot]' Waterkyuu/soroi checked-commit feature ;;
   esac
   expect_no_merge
 done
 printf '[]\n' > "$DEPENDABOT_TEST_PR"
 expect_no_merge
 
-set_pr 'dependabot[bot]' Waterkyuu/cacheq checked-commit main
+set_pr 'dependabot[bot]' Waterkyuu/soroi checked-commit main
 for checks in '[]' '[{"state":"FAILURE"}]' '[{"state":"PENDING"}]' \
   '[{"state":"CANCELLED"}]' '[{"state":"SKIPPED"}]' \
   '[{"state":"SUCCESS"},{"state":"FAILURE"}]'; do

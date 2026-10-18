@@ -31,7 +31,7 @@ go mod download
 
 ## Usage
 
-The snippets below extend an application's `run() error` function and are not standalone programs. Reuse `ctx`, the service lifetime context, and `remote`, the configured `*redis.Client`, from [Create a Redis store](shared-cache.en-US.md#create-a-redis-store). The application owns that connection and its timeouts. Use the imports `context`, `fmt`, `time`, `github.com/Waterkyuu/cacheq`, and `redistore "github.com/Waterkyuu/cacheq/store/redis"`. The complete program below includes all setup and imports.
+The snippets below extend an application's `run() error` function and are not standalone programs. Reuse `ctx`, the service lifetime context, and `remote`, the configured `*redis.Client`, from [Create a Redis store](shared-cache.en-US.md#create-a-redis-store). The application owns that connection and its timeouts. Use the imports `context`, `fmt`, `time`, `github.com/Waterkyuu/soroi`, and `redistore "github.com/Waterkyuu/soroi/store/redis"`. The complete program below includes all setup and imports.
 
 The existing query returns this profile type, declared at package level:
 
@@ -45,11 +45,11 @@ type User struct {
 
 ### Enable notifications on the store
 
-Replace the application's existing `redistore.New` call with the configuration below. `EnableNotifications` defaults to false; true publishes invalidations and permits subscriptions. Keep the existing application's Prefix in production; `cacheq-notification-usage` is an example namespace. Every writer requiring notification propagation must enable publishing. Redis ACLs need `PUBLISH` and `SUBSCRIBE` in addition to the [shared cache commands](shared-cache.en-US.md#installation).
+Replace the application's existing `redistore.New` call with the configuration below. `EnableNotifications` defaults to false; true publishes invalidations and permits subscriptions. Keep the existing application's Prefix in production; `soroi-notification-usage` is an example namespace. Every writer requiring notification propagation must enable publishing. Redis ACLs need `PUBLISH` and `SUBSCRIBE` in addition to the [shared cache commands](shared-cache.en-US.md#installation).
 
 ```go
 store, err := redistore.New(remote, redistore.Options{
-	Prefix: "cacheq-notification-usage", EnableNotifications: true,
+	Prefix: "soroi-notification-usage", EnableNotifications: true,
 })
 if err != nil {
 	return err
@@ -60,12 +60,12 @@ The returned `store` borrows `remote`; construction validates configuration with
 
 ### Bind an existing query to the notification store
 
-Reuse `definition`, the application's `cacheq.Definition[User]` created by `QueryDefinition` as in [Define a query](shared-cache.en-US.md#define-a-query-using-the-shared-cache). Its Fetcher reads the committed user profile from the application's source. `User` is the profile result type declared above.
+Reuse `definition`, the application's `soroi.Definition[User]` created by `QueryDefinition` as in [Define a query](shared-cache.en-US.md#define-a-query-using-the-shared-cache). Its Fetcher reads the committed user profile from the application's source. `User` is the profile result type declared above.
 
 `NewSharedCache` infers `User` from `SharedCacheOptions[User]`. The key includes tenant, record identity, and schema version; `Format` selects the JSON schema and `TTL` caps shared freshness at five minutes. Keep the application's existing key, format, and TTL when updating a configuration. Attach the returned shared cache to the definition before using it with a Client.
 
 ```go
-shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+shared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 	Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
 })
 if err != nil {
@@ -78,11 +78,11 @@ Neither construction nor assignment performs Redis I/O. A later load binds the q
 
 ### Start one watcher for the Client and store
 
-Reuse `client`, the application's long-lived `*cacheq.Client` (`a` in the complete example). Call `WatchShared` once at startup for this Client/store pair. It performs subscription I/O, waits for admission, and returns a `*SharedWatcher`; setup failures return an error without retaining a reader. Existing queries bound to this store become stale to repair the pre-subscription gap.
+Reuse `client`, the application's long-lived `*soroi.Client` (`a` in the complete example). Call `WatchShared` once at startup for this Client/store pair. It performs subscription I/O, waits for admission, and returns a `*SharedWatcher`; setup failures return an error without retaining a reader. Existing queries bound to this store become stale to repair the pre-subscription gap.
 
 ```go
-watch, err := client.WatchShared(ctx, store, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+watch, err := client.WatchShared(ctx, store, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 })
 if err != nil {
 	return err
@@ -110,8 +110,8 @@ After the authoritative database or API write succeeds, call `definition.Invalid
 
 ```go
 // The database or API write has already committed successfully.
-if err := definition.InvalidateShared(ctx, client, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+if err := definition.InvalidateShared(ctx, client, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 }); err != nil {
 	return fmt.Errorf("invalidate committed user change: %w", err)
 }
@@ -125,13 +125,13 @@ Skip this section when key invalidation is sufficient. To group detail and list 
 
 ```go
 tagStore, err := redistore.New(remote, redistore.Options{
-	Prefix: "cacheq-tag-usage", EnableNotifications: true, EnableTags: true,
+	Prefix: "soroi-tag-usage", EnableNotifications: true, EnableTags: true,
 })
 if err != nil {
 	return err
 }
-tagWatch, err := client.WatchShared(ctx, tagStore, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+tagWatch, err := client.WatchShared(ctx, tagStore, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 })
 if err != nil {
 	return err
@@ -148,7 +148,7 @@ Enable `ShareTags` in `SharedCacheOptions[User]` and assign `Definition.Tags` be
 The following code copies the existing definition, preserving its source Fetcher, and uses a new local key so no fresh local result skips the initial shared read. The label includes the tenant and groups this detail record with any list record declaring the same label. `NewSharedCache` validates without I/O; `tagged.Fetch` performs the shared read that registers membership, including on a Redis cache hit.
 
 ```go
-tagShared, err := cacheq.NewSharedCache(tagStore, cacheq.SharedCacheOptions[User]{
+tagShared, err := soroi.NewSharedCache(tagStore, soroi.SharedCacheOptions[User]{
 	Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
 	ShareTags: true,
 })
@@ -178,7 +178,7 @@ if err := client.InvalidateSharedTags(
 	operation,
 	tagStore,
 	[]string{"tenant:42:users"},
-	cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+	soroi.InvalidateOptions{Refetch: soroi.RefetchNone},
 ); err != nil {
 	return fmt.Errorf("invalidate committed users change: %w", err)
 }
@@ -209,7 +209,7 @@ watch.Close()
 
 The program below combines remote tags and two Clients to invalidate a user detail and list after a committed source change. It is maintained at [examples/redis/shared_invalidation/main.go](../examples/redis/shared_invalidation/main.go). To run an edited copy, save it as `main.go` in a new `invalidation-guide` directory inside the configured `examples/redis` module, then run it from that module with `REDIS_ADDR=127.0.0.1:16379 go run ./invalidation-guide`.
 
-The example resets only the reserved `cacheq-invalidation-demo` namespace's demonstration label, so repeated runs produce the same output. Metadata remains until the disposable Redis server is stopped. `RefetchNone` and disabled handles make the source call counts deterministic; production applications can use the default observed-query refresh policy.
+The example resets only the reserved `soroi-invalidation-demo` namespace's demonstration label, so repeated runs produce the same output. Metadata remains until the disposable Redis server is stopped. `RefetchNone` and disabled handles make the source call counts deterministic; production applications can use the default observed-query refresh policy.
 
 ```go
 // Command shared_invalidation demonstrates typed remote tag invalidation and local notification delivery.
@@ -222,8 +222,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
-	redistore "github.com/Waterkyuu/cacheq/store/redis"
+	"github.com/Waterkyuu/soroi"
+	redistore "github.com/Waterkyuu/soroi/store/redis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -259,18 +259,18 @@ func run() error {
 	}
 	store, err := redistore.New(
 		remote,
-		redistore.Options{Prefix: "cacheq-invalidation-demo", EnableTags: true, EnableNotifications: true},
+		redistore.Options{Prefix: "soroi-invalidation-demo", EnableTags: true, EnableNotifications: true},
 	)
 	if err != nil {
 		return err
 	}
-	detailShared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+	detailShared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 		Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute, ShareTags: true,
 	})
 	if err != nil {
 		return err
 	}
-	listShared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[[]User]{
+	listShared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[[]User]{
 		Key: "tenant:42:users:v1", Format: "users.json.v1", TTL: 5 * time.Minute, ShareTags: true,
 	})
 	if err != nil {
@@ -284,36 +284,36 @@ func run() error {
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
-	detail, err := cacheq.QueryDefinition(
+	detail, err := soroi.QueryDefinition(
 		"detail",
 		func(context.Context) (User, error) { calls.Add(1); return source.Load().(User), nil },
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		return err
 	}
 	detail.Tags = tags
 	detail.Shared = detailShared
-	list, err := cacheq.QueryDefinition(
+	list, err := soroi.QueryDefinition(
 		"list",
 		func(context.Context) ([]User, error) { calls.Add(1); return []User{source.Load().(User)}, nil },
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		return err
 	}
 	list.Tags = tags
 	list.Shared = listShared
-	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	a := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+	b := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer a.Close()
 	defer b.Close()
-	watchA, err := a.WatchShared(ctx, store, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	watchA, err := a.WatchShared(ctx, store, soroi.InvalidateOptions{Refetch: soroi.RefetchNone})
 	if err != nil {
 		return err
 	}
 	defer watchA.Close()
-	watchB, err := b.WatchShared(ctx, store, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	watchB, err := b.WatchShared(ctx, store, soroi.InvalidateOptions{Refetch: soroi.RefetchNone})
 	if err != nil {
 		return err
 	}
@@ -342,7 +342,7 @@ func run() error {
 		ctx,
 		store,
 		tags,
-		cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+		soroi.InvalidateOptions{Refetch: soroi.RefetchNone},
 	); err != nil {
 		return err
 	}
@@ -370,7 +370,7 @@ func run() error {
 }
 
 // waitStale waits for notification publication without sleeps, polling, or assumptions about delivery latency.
-func waitStale[V any](ctx context.Context, query *cacheq.QueryHandle[V]) error {
+func waitStale[V any](ctx context.Context, query *soroi.QueryHandle[V]) error {
 	for {
 		select {
 		case state := <-query.Updates():

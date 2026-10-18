@@ -1,6 +1,6 @@
 # Code and API Design Review Standard
 
-This standard applies to reviews of cacheq implementations, API designs, and refactors. Review code quality against `AGENTS.md` first, then assess API complexity, cognitive load, design correctness, and whether the implementation meets its functional goals.
+This standard applies to reviews of soroi implementations, API designs, and refactors. Review code quality against `AGENTS.md` first, then assess API complexity, cognitive load, design correctness, and whether the implementation meets its functional goals.
 
 Review the library's own implementation and design. Do not attribute caller-owned business policies, callback errors, or undeclared business guarantees to library defects. A behavior being documented does not, by itself, establish that the design is sound.
 

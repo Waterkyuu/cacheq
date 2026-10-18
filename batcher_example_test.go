@@ -1,4 +1,4 @@
-package cacheq_test
+package soroi_test
 
 import (
 	"context"
@@ -7,38 +7,38 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // ExampleBatcher_Fetcher groups different query keys and reuses their individually cached results.
 func ExampleBatcher_Fetcher() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 	var calls atomic.Int32
-	products, err := cacheq.NewBatcher(
+	products, err := soroi.NewBatcher(
 		context.Background(),
-		func(_ context.Context, ids []int) (map[int]cacheq.BatchResult[string], error) {
+		func(_ context.Context, ids []int) (map[int]soroi.BatchResult[string], error) {
 			calls.Add(1)
 			sort.Ints(ids)
 			fmt.Printf("bulk load: %v\n", ids)
-			results := make(map[int]cacheq.BatchResult[string], len(ids))
+			results := make(map[int]soroi.BatchResult[string], len(ids))
 			for _, id := range ids {
-				results[id] = cacheq.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
+				results[id] = soroi.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
 			}
 			return results, nil
 		},
-		cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
+		soroi.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
 	if err != nil {
 		panic(err)
 	}
 	defer products.Close()
 
-	first := cacheq.Query(client, "product:42", products.Fetcher(42))
+	first := soroi.Query(client, "product:42", products.Fetcher(42))
 	defer first.Close()
-	second := cacheq.Query(client, "product:43", products.Fetcher(43))
+	second := soroi.Query(client, "product:43", products.Fetcher(43))
 	defer second.Close()
-	for _, handle := range []*cacheq.QueryHandle[string]{first, second} {
+	for _, handle := range []*soroi.QueryHandle[string]{first, second} {
 		for state := range handle.Updates() {
 			if state.Err != nil {
 				panic(state.Err)
@@ -49,7 +49,7 @@ func ExampleBatcher_Fetcher() {
 			}
 		}
 	}
-	value, err := cacheq.Fetch(context.Background(), client, "product:42", products.Fetcher(42))
+	value, err := soroi.Fetch(context.Background(), client, "product:42", products.Fetcher(42))
 	if err != nil {
 		panic(err)
 	}

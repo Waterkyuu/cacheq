@@ -8,7 +8,7 @@
 
 以下示例只允许一个加载执行，不保留排队位置。商品 42 的加载占用名额期间，商品 43 的加载被拒绝；第一个加载完成后，名额被释放。
 
-将完整程序保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。示例通过 channel 控制第一个加载的完成时间，无需外部服务或依赖短暂的计时等待。
+将完整程序保存为已导入 soroi 的 Go 模块中的 `main.go`，运行 `go run .`。示例通过 channel 控制第一个加载的完成时间，无需外部服务或依赖短暂的计时等待。
 
 ```go
 package main
@@ -19,19 +19,19 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main rejects a second product load while the only execution slot is occupied.
 func main() {
-	budget, err := cacheq.NewExecutor(cacheq.ExecutionOptions{
+	budget, err := soroi.NewExecutor(soroi.ExecutionOptions{
 		MaxConcurrent: 1,
 		MaxQueued:     0,
 	})
 	if err != nil {
 		panic(err)
 	}
-	client := cacheq.NewClient(cacheq.Options{
+	client := soroi.NewClient(soroi.Options{
 		Executor:  budget,
 		StaleTime: time.Minute,
 	})
@@ -48,21 +48,21 @@ func main() {
 			return "", ctx.Err()
 		}
 	}
-	first := cacheq.Query(client, "product:42", loadFirst)
+	first := soroi.Query(client, "product:42", loadFirst)
 	defer first.Close()
 	<-started
 
-	_, err = cacheq.Fetch(
+	_, err = soroi.Fetch(
 		context.Background(),
 		client,
 		"product:43",
 		func(context.Context) (string, error) { return "product 43", nil },
 	)
-	fmt.Println("second rejected:", errors.Is(err, cacheq.ErrQueueFull))
+	fmt.Println("second rejected:", errors.Is(err, soroi.ErrQueueFull))
 	fmt.Println("active:", budget.Stats().Active)
 
 	close(release)
-	value, err := cacheq.Fetch(context.Background(), client, "product:42", loadFirst)
+	value, err := soroi.Fetch(context.Background(), client, "product:42", loadFirst)
 	if err != nil {
 		panic(err)
 	}
@@ -94,7 +94,7 @@ finished: active=0 queued=0 rejected=1
 允许少量请求等待时，设置正数 `MaxQueued`：
 
 ```go
-budget, err := cacheq.NewExecutor(cacheq.ExecutionOptions{
+budget, err := soroi.NewExecutor(soroi.ExecutionOptions{
 	MaxConcurrent: 4,
 	MaxQueued:     16,
 })
@@ -117,8 +117,8 @@ if err != nil {
 将同一个 `budget` 传入多个 Client：
 
 ```go
-first := cacheq.NewClient(cacheq.Options{Executor: budget})
-second := cacheq.NewClient(cacheq.Options{Executor: budget})
+first := soroi.NewClient(soroi.Options{Executor: budget})
+second := soroi.NewClient(soroi.Options{Executor: budget})
 defer first.Close()
 defer second.Close()
 ```
@@ -147,10 +147,10 @@ Mutation 在业务写入回调结束后释放名额，再执行本地缓存同�
 
 Client 通过 `Batcher.Fetcher` 加载时，应优先把预算配置在 `BatchOptions.Executor`，让不同键先收集成批次，再限制实际的后端调用。
 
-以下片段中的 `loadProducts` 由业务实现，签名为 `func(context.Context, []int) (map[int]cacheq.BatchResult[string], error)`。完整批量函数示例见[自动批量加载](batching.zh-CN.md)。
+以下片段中的 `loadProducts` 由业务实现，签名为 `func(context.Context, []int) (map[int]soroi.BatchResult[string], error)`。完整批量函数示例见[自动批量加载](batching.zh-CN.md)。
 
 ```go
-products, err := cacheq.NewBatcher(ctx, loadProducts, cacheq.BatchOptions{
+products, err := soroi.NewBatcher(ctx, loadProducts, soroi.BatchOptions{
 	Wait:         2 * time.Millisecond,
 	MaxBatchSize: 100,
 	Executor:     budget,
@@ -160,9 +160,9 @@ if err != nil {
 }
 defer products.Close()
 
-client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute, Executor: budget})
+client := soroi.NewClient(soroi.Options{StaleTime: time.Minute, Executor: budget})
 defer client.Close()
-value, err := cacheq.Fetch(ctx, client, "product:42", products.Fetcher(42), cacheq.QueryOptions{
+value, err := soroi.Fetch(ctx, client, "product:42", products.Fetcher(42), soroi.QueryOptions{
 	DisableExecutor: true,
 })
 if err != nil {
@@ -178,7 +178,7 @@ fmt.Println(value)
 通过查询对象订阅批量数据时，在对应对象上配置：
 
 ```go
-query := cacheq.Query(client, "product:43", products.Fetcher(43), cacheq.QueryOptions{
+query := soroi.Query(client, "product:43", products.Fetcher(43), soroi.QueryOptions{
 	DisableExecutor: true,
 })
 defer query.Close()
@@ -192,7 +192,7 @@ defer query.Close()
 
 ## 过载与重试
 
-通过 `errors.Is(err, cacheq.ErrQueueFull)` 判断预算已满。该错误意味着此层回调尚未执行，应用可以向调用者报告繁忙，或由上层安排稍后再次调用。
+通过 `errors.Is(err, soroi.ErrQueueFull)` 判断预算已满。该错误意味着此层回调尚未执行，应用可以向调用者报告繁忙，或由上层安排稍后再次调用。
 
 Client 不自动重试 `ErrQueueFull`，也不会为它调用 `RetryIf`，包括批量函数或业务加载函数返回的包装错误。
 

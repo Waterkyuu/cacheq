@@ -1,5 +1,5 @@
-// Package cacheq provides typed shared query state, caching, retries, and background refreshes.
-package cacheq
+// Package soroi provides typed shared query state, caching, retries, and background refreshes.
+package soroi
 
 import (
 	"container/list"

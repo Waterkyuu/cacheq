@@ -63,7 +63,7 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - run: go vet ./...
       - run: go test -race ./... -count=1
-      - run: go build -o "$RUNNER_TEMP/cacheq-bubbletea" .
+      - run: go build -o "$RUNNER_TEMP/soroi-bubbletea" .
 
   mcp:
     name: MCP example
@@ -84,14 +84,14 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - run: go vet ./...
       - run: go test -race ./... -count=1
-      - run: go build -o "$RUNNER_TEMP/cacheq-mcp" .
+      - run: go build -o "$RUNNER_TEMP/soroi-mcp" .
       - run: go run .
 
   redis:
     name: Redis shared store
     runs-on: ubuntu-latest
     env:
-      CACHEQ_REQUIRE_REDIS: '1'
+      SOROI_REQUIRE_REDIS: '1'
     defaults:
       run:
         working-directory: store/redis

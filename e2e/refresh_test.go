@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // heldHTTPResponse delays delivery after a handler has captured its response data.
@@ -118,7 +118,7 @@ func writeHTTPUser(ctx context.Context, api *userAPI, value user) (user, error) 
 // httpMutationResult preserves the committed outcome separately from business execution failure.
 type httpMutationResult struct {
 	// result contains server-confirmed data and any subsequent refresh failure.
-	result cacheq.MutationResult[user]
+	result soroi.MutationResult[user]
 	// err reports write execution failure rather than refresh failure.
 	err error
 }
@@ -141,19 +141,19 @@ func TestHTTPMutationRefreshFollowup(t *testing.T) {
 		t.Run(map[bool]string{false: "background", true: "wait"}[wait], func(t *testing.T) {
 			old, next := newHeldHTTPResponse(t), newHeldHTTPResponse(t)
 			api := newHeldListAPI(t, [2]*heldHTTPResponse{old, next})
-			client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+			client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 			t.Cleanup(client.Close)
-			detail := cacheq.Query(
+			detail := soroi.Query(
 				client,
 				"user:42",
 				readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
 			)
-			list := cacheq.Query(
+			list := soroi.Query(
 				client,
 				"users",
 				readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
 			)
-			config := cacheq.Query(
+			config := soroi.Query(
 				client,
 				"settings",
 				readJSON[settings](api.server.Client(), api.server.URL+"/settings"),
@@ -161,20 +161,20 @@ func TestHTTPMutationRefreshFollowup(t *testing.T) {
 			t.Cleanup(detail.Close)
 			t.Cleanup(list.Close)
 			t.Cleanup(config.Close)
-			await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
-			await(t, config, func(s cacheq.Snapshot[settings]) bool { return s.HasData && !s.Fetching })
+			await(t, detail, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+			await(t, config, func(s soroi.Snapshot[settings]) bool { return s.HasData && !s.Fetching })
 			old.awaitStarted(t)
-			events, err := client.SubscribeEvents(cacheq.EventOptions{Key: "users", Buffer: 32})
+			events, err := client.SubscribeEvents(soroi.EventOptions{Key: "users", Buffer: 32})
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(events.Close)
 			var writes atomic.Int32
-			mutation := cacheq.Mutation(client, func(ctx context.Context, value user) (user, error) {
+			mutation := soroi.Mutation(client, func(ctx context.Context, value user) (user, error) {
 				writes.Add(1)
 				return writeHTTPUser(ctx, api, value)
 			}, func(ctx context.Context, value user, _ user) error {
-				updateErr := cacheq.Set(client, "user:42", value)
+				updateErr := soroi.Set(client, "user:42", value)
 				var invalidateErr error
 				if wait {
 					_, invalidateErr = client.InvalidateAndWait(
@@ -184,7 +184,7 @@ func TestHTTPMutationRefreshFollowup(t *testing.T) {
 				} else {
 					invalidateErr = client.Invalidate(
 						[]any{"users", "users"},
-						cacheq.InvalidateOptions{RefetchAfterLoad: true},
+						soroi.InvalidateOptions{RefetchAfterLoad: true},
 					)
 				}
 				return errors.Join(updateErr, invalidateErr)
@@ -197,13 +197,13 @@ func TestHTTPMutationRefreshFollowup(t *testing.T) {
 				result, err := mutation.Mutate(ctx, user{Name: "Bob"})
 				done <- httpMutationResult{result: result, err: err}
 			}()
-			for nextDiagnosticEvent(t, events).Kind != cacheq.EventInvalidated {
+			for nextDiagnosticEvent(t, events).Kind != soroi.EventInvalidated {
 			}
 			// Read under the public Client lock after the invalidation event has been emitted.
 			_ = client.Get("users")
 			var outcome httpMutationResult
 			if wait {
-				if mutation.Snapshot().Status != cacheq.Pending {
+				if mutation.Snapshot().Status != soroi.Pending {
 					t.Fatal("mutation finished before the old HTTP response was delivered")
 				}
 			} else {
@@ -229,13 +229,13 @@ func TestHTTPMutationRefreshFollowup(t *testing.T) {
 					t.Fatalf("wait returned before cache synchronization: %+v", state)
 				}
 			}
-			await(t, list, func(s cacheq.Snapshot[[]user]) bool {
+			await(t, list, func(s soroi.Snapshot[[]user]) bool {
 				return s.HasData && s.Data[0].Name == "Bob" && !s.Fetching
 			})
 			if outcome.err != nil || outcome.result.SyncErr != nil || outcome.result.Data.Name != "Bob" {
 				t.Fatalf("HTTP mutation = %+v", outcome)
 			}
-			if detail.Snapshot().Data.Name != "Bob" || mutation.Snapshot().Status != cacheq.Success ||
+			if detail.Snapshot().Data.Name != "Bob" || mutation.Snapshot().Status != soroi.Success ||
 				writes.Load() != 1 {
 				t.Fatal("confirmed write or detail synchronization was lost")
 			}
@@ -251,19 +251,19 @@ func TestHTTPInvalidateAndWaitResults(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "partial failure"}[fail], func(t *testing.T) {
 			api := newUserAPI(t)
-			client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+			client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 			t.Cleanup(client.Close)
-			detail := cacheq.Query(
+			detail := soroi.Query(
 				client,
 				"user:42",
 				readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
 			)
-			list := cacheq.Query(
+			list := soroi.Query(
 				client,
 				"users",
 				readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
 			)
-			config := cacheq.Query(
+			config := soroi.Query(
 				client,
 				"settings",
 				readJSON[settings](api.server.Client(), api.server.URL+"/settings"),
@@ -271,10 +271,10 @@ func TestHTTPInvalidateAndWaitResults(t *testing.T) {
 			t.Cleanup(detail.Close)
 			t.Cleanup(list.Close)
 			t.Cleanup(config.Close)
-			await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
-			await(t, list, func(s cacheq.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
-			await(t, config, func(s cacheq.Snapshot[settings]) bool { return s.HasData && !s.Fetching })
-			cacheq.Set(client, "unobserved", true)
+			await(t, detail, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+			await(t, list, func(s soroi.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
+			await(t, config, func(s soroi.Snapshot[settings]) bool { return s.HasData && !s.Fetching })
+			soroi.Set(client, "unobserved", true)
 			api.update(t, user{Name: "Bob"})
 			if fail {
 				api.failNext(1)
@@ -330,10 +330,10 @@ func TestHTTPRefreshWaitCancellation(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
-	cacheq.Set(client, "user", user{Name: "Alice"})
-	query := cacheq.Query(client, "user", readJSON[user](server.Client(), server.URL))
+	soroi.Set(client, "user", user{Name: "Alice"})
+	query := soroi.Query(client, "user", readJSON[user](server.Client(), server.URL))
 	t.Cleanup(query.Close)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -359,7 +359,7 @@ func TestHTTPRefreshWaitCancellation(t *testing.T) {
 		t.Fatalf("wait cancellation altered shared HTTP work: %+v", state)
 	}
 	response.deliver()
-	state := await(t, query, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
+	state := await(t, query, func(s soroi.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
 	if state.Stale || state.Err != nil || calls.Load() != 1 {
 		t.Fatalf("Client-owned HTTP completion = %+v, calls=%d", state, calls.Load())
 	}
@@ -368,18 +368,18 @@ func TestHTTPRefreshWaitCancellation(t *testing.T) {
 // TestHTTPMutationRefreshFailure keeps a committed PUT successful when the associated GET fails.
 func TestHTTPMutationRefreshFailure(t *testing.T) {
 	api := newUserAPI(t)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
-	list := cacheq.Query(
+	list := soroi.Query(
 		client,
 		"users",
 		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
 	)
 	t.Cleanup(list.Close)
-	await(t, list, func(s cacheq.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
+	await(t, list, func(s soroi.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
 	api.failNext(1)
 	writes := 0
-	mutation := cacheq.Mutation(client, func(ctx context.Context, name string) (user, error) {
+	mutation := soroi.Mutation(client, func(ctx context.Context, name string) (user, error) {
 		writes++
 		return writeHTTPUser(ctx, api, user{Name: name})
 	}, func(ctx context.Context, committed user, input string) error {
@@ -397,7 +397,7 @@ func TestHTTPMutationRefreshFailure(t *testing.T) {
 	if !strings.Contains(result.SyncErr.Error(), "HTTP status 503") {
 		t.Fatalf("HTTP refresh cause was lost: %v", result.SyncErr)
 	}
-	if state := mutation.Snapshot(); state.Status != cacheq.Success || state.Err != nil || state.SyncErr == nil {
+	if state := mutation.Snapshot(); state.Status != soroi.Success || state.Err != nil || state.SyncErr == nil {
 		t.Fatalf("committed HTTP write state = %+v", state)
 	}
 	if state := list.Snapshot(); state.Data[0].Name != "Alice" || !state.Stale || state.Err == nil || state.Fetching {

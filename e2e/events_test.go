@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // nextDiagnosticEvent bounds public event consumption and rejects premature subscription closure.
-func nextDiagnosticEvent(t *testing.T, subscription *cacheq.EventSubscription) cacheq.Event {
+func nextDiagnosticEvent(t *testing.T, subscription *soroi.EventSubscription) soroi.Event {
 	t.Helper()
 	select {
 	case event, open := <-subscription.Events():
@@ -25,16 +25,16 @@ func nextDiagnosticEvent(t *testing.T, subscription *cacheq.EventSubscription) c
 		return event
 	case <-time.After(3 * time.Second):
 		t.Fatal("expected diagnostic event was not delivered")
-		return cacheq.Event{}
+		return soroi.Event{}
 	}
 }
 
 // expectDiagnosticEvent checks an operation's public classification without depending on duration or ID allocation.
 func expectDiagnosticEvent(
 	t *testing.T,
-	subscription *cacheq.EventSubscription,
-	expected cacheq.Event,
-) cacheq.Event {
+	subscription *soroi.EventSubscription,
+	expected soroi.Event,
+) soroi.Event {
 	t.Helper()
 	event := nextDiagnosticEvent(t, subscription)
 	sourceMatches := event.Kind == expected.Kind && event.Trigger == expected.Trigger
@@ -68,18 +68,18 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 	t.Cleanup(unblock)
 	var seconds atomic.Int64
 	clock := func() time.Time { return time.Unix(seconds.Load(), 0) }
-	client := cacheq.NewClient(cacheq.Options{
+	client := soroi.NewClient(soroi.Options{
 		StaleTime: time.Hour, Retry: 1, RetryDelay: func(int) time.Duration { return 0 }, Clock: clock,
 	})
 	t.Cleanup(client.Close)
-	events, err := client.SubscribeEvents(cacheq.EventOptions{Key: "user:42", Buffer: 32})
+	events, err := client.SubscribeEvents(soroi.EventOptions{Key: "user:42", Buffer: 32})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(events.Close)
 	var sequence uint64
-	read := func(kind cacheq.EventKind, trigger cacheq.EventTrigger, reason cacheq.EventReason) cacheq.Event {
-		event := expectDiagnosticEvent(t, events, cacheq.Event{
+	read := func(kind soroi.EventKind, trigger soroi.EventTrigger, reason soroi.EventReason) soroi.Event {
+		event := expectDiagnosticEvent(t, events, soroi.Event{
 			Key: "user:42", Kind: kind, Trigger: trigger, Reason: reason,
 		})
 		if event.Sequence <= sequence || !event.Time.Equal(clock()) {
@@ -89,20 +89,20 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 		return event
 	}
 	load := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
-	first := cacheq.Query(client, "user:42", load)
+	first := soroi.Query(client, "user:42", load)
 	t.Cleanup(first.Close)
-	start := read(cacheq.EventLoadStarted, cacheq.TriggerQuery, cacheq.ReasonMissing)
+	start := read(soroi.EventLoadStarted, soroi.TriggerQuery, soroi.ReasonMissing)
 	select {
 	case <-entered:
 	case <-time.After(3 * time.Second):
 		t.Fatal("initial diagnostic HTTP request did not start")
 	}
-	second := cacheq.Query(client, "user:42", load)
+	second := soroi.Query(client, "user:42", load)
 	t.Cleanup(second.Close)
-	join := read(cacheq.EventLoadJoined, cacheq.TriggerQuery, cacheq.ReasonMissing)
+	join := read(soroi.EventLoadJoined, soroi.TriggerQuery, soroi.ReasonMissing)
 	unblock()
-	retry := read(cacheq.EventRetryStarted, cacheq.TriggerQuery, cacheq.ReasonMissing)
-	end := read(cacheq.EventLoadFinished, cacheq.TriggerQuery, cacheq.ReasonMissing)
+	retry := read(soroi.EventRetryStarted, soroi.TriggerQuery, soroi.ReasonMissing)
+	end := read(soroi.EventLoadFinished, soroi.TriggerQuery, soroi.ReasonMissing)
 	idsMatch := start.LoadID != 0 && join.LoadID == start.LoadID && retry.LoadID == start.LoadID &&
 		end.LoadID == start.LoadID
 	if !idsMatch {
@@ -121,13 +121,13 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 	if !applied || api.count("/users/42") != 2 {
 		t.Fatalf("shared HTTP completion = %+v; requests = %d", end, api.count("/users/42"))
 	}
-	for _, handle := range []*cacheq.QueryHandle[user]{first, second} {
-		state := await(t, handle, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	for _, handle := range []*soroi.QueryHandle[user]{first, second} {
+		state := await(t, handle, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 		if state.Data.Name != "Alice" || state.Err != nil {
 			t.Fatalf("shared HTTP data = %+v", state)
 		}
 	}
-	if _, err := cacheq.Fetch(
+	if _, err := soroi.Fetch(
 		context.Background(),
 		client,
 		"user:42",
@@ -135,13 +135,13 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if hit := read(cacheq.EventCacheHit, cacheq.TriggerFetch, cacheq.ReasonFresh); hit.LoadID != 0 {
+	if hit := read(soroi.EventCacheHit, soroi.TriggerFetch, soroi.ReasonFresh); hit.LoadID != 0 {
 		t.Fatalf("cache hit load ID = %d", hit.LoadID)
 	}
 	if api.count("/users/42") != 2 {
 		t.Fatal("diagnostic cache hit performed HTTP work")
 	}
-	if err := cacheq.Prefetch(
+	if err := soroi.Prefetch(
 		context.Background(),
 		client,
 		"settings",
@@ -150,7 +150,7 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	first.Snapshot()
-	cacheq.Get[user](client, "user:42")
+	soroi.Get[user](client, "user:42")
 	select {
 	case event := <-events.Events():
 		t.Fatalf("key filtering or passive reads produced %+v", event)
@@ -161,17 +161,17 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 	if err := client.Invalidate("user:42"); err != nil {
 		t.Fatal(err)
 	}
-	read(cacheq.EventInvalidated, cacheq.TriggerInvalidate, cacheq.ReasonInvalidated)
-	refresh := read(cacheq.EventLoadStarted, cacheq.TriggerInvalidate, cacheq.ReasonInvalidated)
-	refreshed := read(cacheq.EventLoadFinished, cacheq.TriggerInvalidate, cacheq.ReasonInvalidated)
+	read(soroi.EventInvalidated, soroi.TriggerInvalidate, soroi.ReasonInvalidated)
+	refresh := read(soroi.EventLoadStarted, soroi.TriggerInvalidate, soroi.ReasonInvalidated)
+	refreshed := read(soroi.EventLoadFinished, soroi.TriggerInvalidate, soroi.ReasonInvalidated)
 	if refresh.LoadID == start.LoadID || refreshed.LoadID != refresh.LoadID {
 		t.Fatalf("invalidation HTTP IDs = %d, %d", refresh.LoadID, refreshed.LoadID)
 	}
-	for _, handle := range []*cacheq.QueryHandle[user]{first, second} {
-		await(t, handle, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
+	for _, handle := range []*soroi.QueryHandle[user]{first, second} {
+		await(t, handle, func(s soroi.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
 	}
 	seconds.Add(3600)
-	if _, err := cacheq.Fetch(
+	if _, err := soroi.Fetch(
 		context.Background(),
 		client,
 		"user:42",
@@ -179,8 +179,8 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	expired := read(cacheq.EventLoadStarted, cacheq.TriggerFetch, cacheq.ReasonExpired)
-	loaded := read(cacheq.EventLoadFinished, cacheq.TriggerFetch, cacheq.ReasonExpired)
+	expired := read(soroi.EventLoadStarted, soroi.TriggerFetch, soroi.ReasonExpired)
+	loaded := read(soroi.EventLoadFinished, soroi.TriggerFetch, soroi.ReasonExpired)
 	if expired.LoadID == refresh.LoadID || loaded.LoadID != expired.LoadID {
 		t.Fatal("expired reload reused an earlier diagnostic ID")
 	}
@@ -190,8 +190,8 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 	if err := client.Remove("user:42"); err != nil {
 		t.Fatal(err)
 	}
-	read(cacheq.EventCacheRemoved, cacheq.TriggerNone, cacheq.ReasonRemove)
-	if value, err := cacheq.Fetch(
+	read(soroi.EventCacheRemoved, soroi.TriggerNone, soroi.ReasonRemove)
+	if value, err := soroi.Fetch(
 		context.Background(),
 		client,
 		"user:42",
@@ -199,13 +199,13 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 	); err != nil || value.Name != "Bob" {
 		t.Fatalf("HTTP load after removal = %+v, %v", value, err)
 	}
-	read(cacheq.EventLoadStarted, cacheq.TriggerFetch, cacheq.ReasonMissing)
-	read(cacheq.EventLoadFinished, cacheq.TriggerFetch, cacheq.ReasonMissing)
+	read(soroi.EventLoadStarted, soroi.TriggerFetch, soroi.ReasonMissing)
+	read(soroi.EventLoadFinished, soroi.TriggerFetch, soroi.ReasonMissing)
 	if api.count("/users/42") != 5 || events.Dropped() != 0 {
 		t.Fatal("HTTP trace was incomplete or contained unexpected loads")
 	}
 	client.Close()
-	expectDiagnosticEvent(t, events, cacheq.Event{Kind: cacheq.EventClientClosed, Reason: cacheq.ReasonClientClosed})
+	expectDiagnosticEvent(t, events, soroi.Event{Kind: soroi.EventClientClosed, Reason: soroi.ReasonClientClosed})
 	if _, open := <-events.Events(); open {
 		t.Fatal("client closure did not close the filtered diagnostic stream")
 	}
@@ -224,35 +224,35 @@ func TestHTTPDiagnosticDiscard(t *testing.T) {
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
 	t.Cleanup(unblock)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
-	events, err := client.SubscribeEvents(cacheq.EventOptions{Key: "user", Buffer: 8})
+	events, err := client.SubscribeEvents(soroi.EventOptions{Key: "user", Buffer: 8})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(events.Close)
-	handle := cacheq.Query(client, "user", readJSON[user](server.Client(), server.URL))
+	handle := soroi.Query(client, "user", readJSON[user](server.Client(), server.URL))
 	t.Cleanup(handle.Close)
-	start := expectDiagnosticEvent(t, events, cacheq.Event{
-		Key: "user", Kind: cacheq.EventLoadStarted, Trigger: cacheq.TriggerQuery, Reason: cacheq.ReasonMissing,
+	start := expectDiagnosticEvent(t, events, soroi.Event{
+		Key: "user", Kind: soroi.EventLoadStarted, Trigger: soroi.TriggerQuery, Reason: soroi.ReasonMissing,
 	})
 	select {
 	case <-entered:
 	case <-time.After(3 * time.Second):
 		t.Fatal("replaced HTTP request did not start")
 	}
-	if err := cacheq.Set(client, "user", user{Name: "local"}); err != nil {
+	if err := soroi.Set(client, "user", user{Name: "local"}); err != nil {
 		t.Fatal(err)
 	}
-	expectDiagnosticEvent(t, events, cacheq.Event{
-		Key: "user", Kind: cacheq.EventLocalWrite, Reason: cacheq.ReasonSet,
+	expectDiagnosticEvent(t, events, soroi.Event{
+		Key: "user", Kind: soroi.EventLocalWrite, Reason: soroi.ReasonSet,
 	})
 	unblock()
-	end := expectDiagnosticEvent(t, events, cacheq.Event{
-		Key: "user", Kind: cacheq.EventLoadFinished, Trigger: cacheq.TriggerQuery, Reason: cacheq.ReasonMissing,
+	end := expectDiagnosticEvent(t, events, soroi.Event{
+		Key: "user", Kind: soroi.EventLoadFinished, Trigger: soroi.TriggerQuery, Reason: soroi.ReasonMissing,
 	})
-	discard := expectDiagnosticEvent(t, events, cacheq.Event{
-		Key: "user", Kind: cacheq.EventResultDiscarded, Trigger: cacheq.TriggerQuery, Reason: cacheq.ReasonSet,
+	discard := expectDiagnosticEvent(t, events, soroi.Event{
+		Key: "user", Kind: soroi.EventResultDiscarded, Trigger: soroi.TriggerQuery, Reason: soroi.ReasonSet,
 	})
 	idsMatch := end.LoadID == start.LoadID && discard.LoadID == start.LoadID
 	if !idsMatch || end.Applied {
@@ -269,9 +269,9 @@ func TestHTTPDiagnosticDiscard(t *testing.T) {
 // TestHTTPDiagnosticBackpressure lets HTTP loads finish with an unread bounded stream and accounts for terminal loss.
 func TestHTTPDiagnosticBackpressure(t *testing.T) {
 	api := newUserAPI(t)
-	client := cacheq.NewClient(cacheq.Options{})
+	client := soroi.NewClient(soroi.Options{})
 	t.Cleanup(client.Close)
-	events, err := client.SubscribeEvents(cacheq.EventOptions{Buffer: 1})
+	events, err := client.SubscribeEvents(soroi.EventOptions{Buffer: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestHTTPDiagnosticBackpressure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	for range 3 {
-		value, err := cacheq.Fetch(
+		value, err := soroi.Fetch(
 			ctx,
 			client,
 			"user",
@@ -296,8 +296,8 @@ func TestHTTPDiagnosticBackpressure(t *testing.T) {
 	if events.Dropped() != 6 {
 		t.Fatal("full buffer did not account for lost terminal event")
 	}
-	expectDiagnosticEvent(t, events, cacheq.Event{
-		Key: "user", Kind: cacheq.EventLoadStarted, Trigger: cacheq.TriggerFetch, Reason: cacheq.ReasonMissing,
+	expectDiagnosticEvent(t, events, soroi.Event{
+		Key: "user", Kind: soroi.EventLoadStarted, Trigger: soroi.TriggerFetch, Reason: soroi.ReasonMissing,
 	})
 	if _, open := <-events.Events(); open {
 		t.Fatal("full diagnostic stream did not close after draining its retained event")

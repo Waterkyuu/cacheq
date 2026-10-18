@@ -8,7 +8,7 @@
 
 ## 快速开始
 
-以下示例订阅 `product:42`，执行两次 `Fetch`，然后输出加载与缓存命中事件。将代码保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
+以下示例订阅 `product:42`，执行两次 `Fetch`，然后输出加载与缓存命中事件。将代码保存为已导入 soroi 的 Go 模块中的 `main.go`，运行 `go run .`。
 
 ```go
 package main
@@ -18,15 +18,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main records loading and cache reuse for a single query key.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 
-	events, err := client.SubscribeEvents(cacheq.EventOptions{
+	events, err := client.SubscribeEvents(soroi.EventOptions{
 		Key:    "product:42",
 		Buffer: 16,
 	})
@@ -37,7 +37,7 @@ func main() {
 
 	load := func(context.Context) (string, error) { return "product 42", nil }
 	for range 2 {
-		if _, err := cacheq.Fetch(context.Background(), client, "product:42", load); err != nil {
+		if _, err := soroi.Fetch(context.Background(), client, "product:42", load); err != nil {
 			panic(err)
 		}
 	}
@@ -69,7 +69,7 @@ dropped=0
 ## 订阅配置
 
 ```go
-subscription, err := client.SubscribeEvents(cacheq.EventOptions{
+subscription, err := client.SubscribeEvents(soroi.EventOptions{
 	Key:    "product:42",
 	Buffer: 256,
 })

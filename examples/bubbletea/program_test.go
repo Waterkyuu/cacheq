@@ -8,7 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // loadResult lets the test finish a real query operation without sleep-based timing.
@@ -37,7 +37,7 @@ func awaitViews(
 	t *testing.T,
 	ctx context.Context,
 	states <-chan snapshotMsg,
-	matches func(cacheq.Snapshot[[]task]) bool,
+	matches func(soroi.Snapshot[[]task]) bool,
 ) {
 	t.Helper()
 	var seen [3]bool
@@ -51,7 +51,7 @@ func awaitViews(
 func TestProgramRefreshLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
 	store := newTaskStore()
 	requests := make(chan chan loadResult, 1)
@@ -95,7 +95,7 @@ func TestProgramRefreshLifecycle(t *testing.T) {
 		)
 	}()
 	reply := receive(t, ctx, requests)
-	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool { return s.Fetching && !s.HasData })
+	awaitViews(t, ctx, states, func(s soroi.Snapshot[[]task]) bool { return s.Fetching && !s.HasData })
 	if stats := client.Stats(); stats.Loads != 1 || stats.MergedRequests != 2 {
 		t.Fatalf("three consumers did not share the initial load: %+v", stats)
 	}
@@ -104,12 +104,12 @@ func TestProgramRefreshLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	reply <- loadResult{value: data}
-	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool { return s.HasData && !s.Fetching })
+	awaitViews(t, ctx, states, func(s soroi.Snapshot[[]task]) bool { return s.HasData && !s.Fetching })
 	if _, err := io.WriteString(keys, " "); err != nil {
 		t.Fatal(err)
 	}
 	reply = receive(t, ctx, requests)
-	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool {
+	awaitViews(t, ctx, states, func(s soroi.Snapshot[[]task]) bool {
 		return s.Fetching && s.HasData && !s.Data[0].done
 	})
 	data, err = store.list()
@@ -117,20 +117,20 @@ func TestProgramRefreshLifecycle(t *testing.T) {
 		t.Fatalf("toggle did not change backend state: %v", err)
 	}
 	reply <- loadResult{value: data}
-	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool {
+	awaitViews(t, ctx, states, func(s soroi.Snapshot[[]task]) bool {
 		return s.HasData && !s.Fetching && s.Data[0].done
 	})
 	if _, err := io.WriteString(keys, "f"); err != nil {
 		t.Fatal(err)
 	}
 	reply = receive(t, ctx, requests)
-	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool { return s.Fetching && s.HasData })
+	awaitViews(t, ctx, states, func(s soroi.Snapshot[[]task]) bool { return s.Fetching && s.HasData })
 	_, failure := store.list()
 	if failure == nil {
 		t.Fatal("f did not inject a backend failure")
 	}
 	reply <- loadResult{err: failure}
-	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool {
+	awaitViews(t, ctx, states, func(s soroi.Snapshot[[]task]) bool {
 		retained := !s.Fetching && s.HasData && s.Data[0].done
 		return retained && errors.Is(s.Err, failure)
 	})
@@ -143,7 +143,7 @@ func TestProgramRefreshLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	reply <- loadResult{value: data}
-	awaitViews(t, ctx, states, func(s cacheq.Snapshot[[]task]) bool {
+	awaitViews(t, ctx, states, func(s soroi.Snapshot[[]task]) bool {
 		return !s.Fetching && s.HasData && s.Data[0].done && s.Err == nil
 	})
 	if _, err := io.WriteString(keys, "q"); err != nil {
@@ -157,7 +157,7 @@ func TestProgramRefreshLifecycle(t *testing.T) {
 	if !correctOutcomes {
 		t.Fatalf("terminal actions did not match shared query work: %+v", stats)
 	}
-	if err := cacheq.Get[[]task](client, "tasks").Err; !errors.Is(err, cacheq.ErrClosed) {
+	if err := soroi.Get[[]task](client, "tasks").Err; !errors.Is(err, soroi.ErrClosed) {
 		t.Fatalf("program did not release its client: %v", err)
 	}
 }
@@ -166,7 +166,7 @@ func TestProgramRefreshLifecycle(t *testing.T) {
 func TestProgramQuitDuringLoad(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
-	client := cacheq.NewClient(cacheq.Options{})
+	client := soroi.NewClient(soroi.Options{})
 	t.Cleanup(client.Close)
 	started, stopped := make(chan struct{}), make(chan struct{})
 	input, keys := io.Pipe()
@@ -203,7 +203,7 @@ func TestProgramQuitDuringLoad(t *testing.T) {
 func TestProgramStartupFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	client := cacheq.NewClient(cacheq.Options{})
+	client := soroi.NewClient(soroi.Options{})
 	err := run(
 		client,
 		newTaskStore(),
@@ -217,7 +217,7 @@ func TestProgramStartupFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("canceled startup succeeded")
 	}
-	if err := cacheq.Get[[]task](client, "tasks").Err; !errors.Is(err, cacheq.ErrClosed) {
+	if err := soroi.Get[[]task](client, "tasks").Err; !errors.Is(err, soroi.ErrClosed) {
 		t.Fatalf("startup failure did not release the client: %v", err)
 	}
 }

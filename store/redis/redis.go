@@ -1,4 +1,4 @@
-// Package redistore implements cacheq.SharedStore using atomic Redis scripts.
+// Package redistore implements soroi.SharedStore using atomic Redis scripts.
 // The application supplies and closes its go-redis client.
 package redistore
 
@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -55,7 +55,7 @@ type RedisClient interface {
 
 // Options isolates an application's shared records from other Redis keys.
 type Options struct {
-	// Prefix namespaces generated Redis keys; empty selects "cacheq" and braces are rejected for cluster safety.
+	// Prefix namespaces generated Redis keys; empty selects "soroi" and braces are rejected for cluster safety.
 	Prefix string
 	// EnableTags places this namespace in one cluster slot for atomic key and tag generation checks.
 	// Tagged namespaces use a separate physical key layout; false preserves the per-key P0 layout.
@@ -86,15 +86,15 @@ func New(client RedisClient, options Options) (*Store, error) {
 		return nil, ErrInvalidOptions
 	}
 	if options.Prefix == "" {
-		options.Prefix = "cacheq"
+		options.Prefix = "soroi"
 	}
 	if options.EnableNotifications {
 		// Ring shards are independent servers: subscribing on one shard cannot observe other shards' Lua publications.
 		if _, ring := client.(*redis.Ring); ring {
-			return nil, cacheq.ErrSharedCapability
+			return nil, soroi.ErrSharedCapability
 		}
 		if _, ok := client.(redisSubscriber); !ok {
-			return nil, cacheq.ErrSharedCapability
+			return nil, soroi.ErrSharedCapability
 		}
 	}
 	return &Store{
@@ -108,34 +108,34 @@ func New(client RedisClient, options Options) (*Store, error) {
 
 // Read obtains an atomic snapshot, initializing a random generation even on a cache miss.
 // Missing metadata receives a new token and discards orphaned data; old tokens cannot regain write permission.
-func (s *Store) Read(ctx context.Context, key string) (cacheq.SharedRecord, error) {
+func (s *Store) Read(ctx context.Context, key string) (soroi.SharedRecord, error) {
 	if s.enableTags {
 		return s.ReadTagged(ctx, key, []string{})
 	}
 	if err := ctx.Err(); err != nil {
-		return cacheq.SharedRecord{}, err
+		return soroi.SharedRecord{}, err
 	}
 	if key == "" {
-		return cacheq.SharedRecord{}, ErrInvalidOptions
+		return soroi.SharedRecord{}, ErrInvalidOptions
 	}
 	result, err := s.client.Eval(ctx, readScript, s.keys(key), rand.Text()).Slice()
 	if err != nil {
-		return cacheq.SharedRecord{}, fmt.Errorf("redis read: %w", err)
+		return soroi.SharedRecord{}, fmt.Errorf("redis read: %w", err)
 	}
 	if len(result) != 2 {
-		return cacheq.SharedRecord{}, errors.New("redis read returned an invalid snapshot")
+		return soroi.SharedRecord{}, errors.New("redis read returned an invalid snapshot")
 	}
 	version, versionOK := result[0].(string)
 	data, dataOK := result[1].(string)
 	if !versionOK || !dataOK || version == "" {
-		return cacheq.SharedRecord{}, errors.New("redis read returned invalid fields")
+		return soroi.SharedRecord{}, errors.New("redis read returned invalid fields")
 	}
-	return cacheq.SharedRecord{Version: version, Data: []byte(data)}, nil
+	return soroi.SharedRecord{Version: version, Data: []byte(data)}, nil
 }
 
 // Write atomically installs data only if its generation still matches the pre-load read.
 // Sub-millisecond TTLs round up to one millisecond; the record's absolute deadline remains authoritative.
-func (s *Store) Write(ctx context.Context, key string, write cacheq.SharedWrite) (bool, error) {
+func (s *Store) Write(ctx context.Context, key string, write soroi.SharedWrite) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -164,21 +164,21 @@ func (s *Store) Invalidate(ctx context.Context, key string) error {
 }
 
 // InvalidateKey replaces the generation and removes data, publishing its receipt atomically when notifications are enabled.
-func (s *Store) InvalidateKey(ctx context.Context, key string) (cacheq.SharedInvalidation, error) {
+func (s *Store) InvalidateKey(ctx context.Context, key string) (soroi.SharedInvalidation, error) {
 	if err := ctx.Err(); err != nil {
-		return cacheq.SharedInvalidation{}, err
+		return soroi.SharedInvalidation{}, err
 	}
 	if key == "" {
-		return cacheq.SharedInvalidation{}, ErrInvalidOptions
+		return soroi.SharedInvalidation{}, ErrInvalidOptions
 	}
-	event := cacheq.SharedInvalidation{ID: rand.Text(), Key: key}
+	event := soroi.SharedInvalidation{ID: rand.Text(), Key: key}
 	data, err := marshalInvalidation(event)
 	if err != nil {
-		return cacheq.SharedInvalidation{}, err
+		return soroi.SharedInvalidation{}, err
 	}
 	if err := s.client.Eval(ctx, invalidateScript, s.keys(key), event.ID, s.channel(), data, s.notificationFlag()).
 		Err(); err != nil {
-		return cacheq.SharedInvalidation{}, fmt.Errorf("redis invalidate: %w", err)
+		return soroi.SharedInvalidation{}, fmt.Errorf("redis invalidate: %w", err)
 	}
 	return event, nil
 }

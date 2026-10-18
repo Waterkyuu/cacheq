@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="./assets/cacheq.png" alt="cacheq" width="144" />
+  <img src="./assets/soroi.png" alt="soroi" width="144" />
 
-  <h1>cacheq</h1>
+  <h1>soroi</h1>
 
   <p><strong>English</strong> | <a href="./README.zh-CN.md">简体中文</a></p>
 
@@ -16,17 +16,17 @@
   <p><a href="#features">Features</a> · <a href="#install">Install</a></p>
 </div>
 
-## When to use cacheq
+## When to use soroi
 
-Use cacheq when your Go application needs to coordinate data loading and
+Use soroi when your Go application needs to coordinate data loading and
 synchronization: reuse cached results, share concurrent requests, batch reads,
 or refresh related queries after a write.
 
 It fits backend services, CLI/TUI applications, and background workers. You
-provide the HTTP requests, database operations, or other loaders; cacheq manages
+provide the HTTP requests, database operations, or other loaders; soroi manages
 how they execute and how consumers receive their results.
 
-| Application scenario | How cacheq helps |
+| Application scenario | How soroi helps |
 | --- | --- |
 | Several handlers or components read the same user, configuration, or resource | Reuse fresh cached data and share in-flight requests for the same key |
 | A list or aggregation needs many objects from a backend with a bulk API | Collect different-key loads into batches, or submit known keys with `LoadMany` |
@@ -35,7 +35,7 @@ how they execute and how consumers receive their results.
 | A view or long-running task needs to react to loading, results, errors, and refreshes | Subscribe to typed query updates; inspect diagnostic events to trace execution |
 | Reads and writes share a database or service with limited capacity | Bound active callbacks and queued work with a shared `Executor` |
 
-cacheq owns query state and local results within one process. Selected queries can
+soroi owns query state and local results within one process. Selected queries can
 reuse serialized results across processes through an optional
 [shared result cache](docs/shared-cache.en-US.md), including a separate Redis adapter.
 For simple local values that only need expiration, a TTL cache may be sufficient.
@@ -53,14 +53,16 @@ For simple local values that only need expiration, a TTL cache may be sufficient
 ## Install
 
 ```sh
-go get github.com/Waterkyuu/cacheq
+go get github.com/Waterkyuu/soroi
 ```
 
-Import `github.com/Waterkyuu/cacheq` as package `cacheq`. Requires Go 1.22 or later and has no external dependencies.
+Import `github.com/Waterkyuu/soroi` as package `soroi`. Requires Go 1.22 or later and has no external dependencies.
+
+Users of `cacheq` should read the [v0.3.1 migration instructions](docs/versioning.en-US.md#migrating-from-cacheq-to-soroi) before upgrading; module paths and the Redis default prefix change.
 
 ## Quick start
 
-Save this complete program as `main.go` in a Go module that imports cacheq, then run `go run .`. It needs no server or credentials.
+Save this complete program as `main.go` in a Go module that imports soroi, then run `go run .`. It needs no server or credentials.
 
 ```go
 package main
@@ -71,12 +73,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main gives two components the same query without loading the data twice.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 
 	var calls atomic.Int32
@@ -84,9 +86,9 @@ func main() {
 		calls.Add(1)
 		return "hello", nil
 	}
-	queries := []*cacheq.QueryHandle[string]{
-		cacheq.Query(client, "greeting", load),
-		cacheq.Query(client, "greeting", load),
+	queries := []*soroi.QueryHandle[string]{
+		soroi.Query(client, "greeting", load),
+		soroi.Query(client, "greeting", load),
 	}
 	for _, query := range queries {
 		defer query.Close()
@@ -165,7 +167,7 @@ The [concurrent request scenarios](benchmarks/benchmarks.en-US.md#concurrent-req
 
 ## Feature guides
 
-Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English or Chinese.
+Read the [documentation website](https://waterkyuu.github.io/soroi/) in English or Chinese.
 
 | Guide | Coverage |
 | --- | --- |
@@ -189,7 +191,7 @@ Complete integrations live in `examples`; the guides cover API details. Treat ca
 
 ## Versioning and upgrades
 
-cacheq follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). During `v0`, patch releases preserve compatibility; minor releases may introduce breaking changes with migration notes. From `v1`, breaking public API changes require a new major version. The core library currently supports Go 1.22 and later; example modules may require newer Go versions.
+soroi follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). During `v0`, patch releases preserve compatibility; minor releases may introduce breaking changes with migration notes. From `v1`, breaking public API changes require a new major version. The core library currently supports Go 1.22 and later; example modules may require newer Go versions.
 
 See the [version policy](docs/versioning.en-US.md) for the public API boundary, deprecation policy, Go support, and upgrade guidance. Published version tags are never moved or reused.
 
@@ -201,4 +203,4 @@ welcome through GitHub Issues.
 
 ## License
 
-cacheq is licensed under the [MIT License](LICENSE).
+soroi is licensed under the [MIT License](LICENSE).

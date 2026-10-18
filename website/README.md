@@ -11,7 +11,7 @@ pnpm --dir website install --frozen-lockfile
 pnpm --dir website start
 ```
 
-Astro serves the default English site. The same dev server serves Chinese at `/cacheq/zh-CN/`. The search index is produced by the production build; use the built preview to test search.
+Astro serves the default English site. The same dev server serves Chinese at `/soroi/zh-CN/`. The search index is produced by the production build; use the built preview to test search.
 
 ## Check and preview the published build
 
@@ -31,7 +31,7 @@ pnpm --dir website serve
 
 Edit the named English and Chinese feature guides in `docs`. `website/scripts/prepare-docs.mts` creates ignored Starlight inputs, preserving code blocks and adapting source links. The generated documents, Astro cache, installed dependencies, search JSON, and rendered HTML are not committed.
 
-The default locale is English, with the homepage at `/cacheq/` and guides under `/cacheq/docs/`. Chinese lives under `/cacheq/zh-CN/`, with guides under `/cacheq/zh-CN/docs/`. Go uses rendered page paths and heading IDs for documentation search, and indexes exported types, functions, methods, constants, and errors from the root Go package. API results open the exact source declaration.
+The default locale is English, with the homepage at `/soroi/` and guides under `/soroi/docs/`. Chinese lives under `/soroi/zh-CN/`, with guides under `/soroi/zh-CN/docs/`. Go uses rendered page paths and heading IDs for documentation search, and indexes exported types, functions, methods, constants, and errors from the root Go package. API results open the exact source declaration.
 
 ## GitHub Pages deployment
 
@@ -39,4 +39,4 @@ The `Documentation` workflow installs from the pnpm lockfile, runs lint, formatt
 
 Pushes to `main` and `waterkyuu/feat/docs-site` publish changes. Pull requests targeting `main` run build checks without publishing. GitHub Pages uses the Actions publishing source, and the `github-pages` environment allows the publishing branches.
 
-The public address is <https://waterkyuu.github.io/cacheq/>. `DOCS_REF` selects the branch for source links during CI builds.
+The public address is <https://waterkyuu.github.io/soroi/>. `DOCS_REF` selects the branch for source links during CI builds.

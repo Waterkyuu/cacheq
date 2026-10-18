@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // newBulkUserAPI adds a bulk read endpoint to the mutable HTTP fixture used by application tests.
@@ -48,8 +48,8 @@ func newBulkUserAPI(t *testing.T) *userAPI {
 }
 
 // bulkHTTPFetcher translates one real bulk HTTP response into results matched to batch keys.
-func bulkHTTPFetcher(server *httptest.Server) cacheq.BatchFunc[int, user] {
-	return func(ctx context.Context, ids []int) (map[int]cacheq.BatchResult[user], error) {
+func bulkHTTPFetcher(server *httptest.Server) soroi.BatchFunc[int, user] {
+	return func(ctx context.Context, ids []int) (map[int]soroi.BatchResult[user], error) {
 		parameters := make(url.Values)
 		for _, id := range ids {
 			parameters.Add("id", strconv.Itoa(id))
@@ -59,9 +59,9 @@ func bulkHTTPFetcher(server *httptest.Server) cacheq.BatchFunc[int, user] {
 		if err != nil {
 			return nil, err
 		}
-		results := make(map[int]cacheq.BatchResult[user], len(values))
+		results := make(map[int]soroi.BatchResult[user], len(values))
 		for id, value := range values {
-			results[id] = cacheq.BatchResult[user]{Data: value}
+			results[id] = soroi.BatchResult[user]{Data: value}
 		}
 		return results, nil
 	}
@@ -80,23 +80,23 @@ func awaitBatchSignal(t *testing.T, signal <-chan struct{}) {
 // TestHTTPBatchLifecycle combines distinct query keys into bulk reads and refreshes their separate caches after mutation.
 func TestHTTPBatchLifecycle(t *testing.T) {
 	api := newBulkUserAPI(t)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
-	batcher, err := cacheq.NewBatcher(
+	batcher, err := soroi.NewBatcher(
 		context.Background(),
 		bulkHTTPFetcher(api.server),
-		cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
+		soroi.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(batcher.Close)
-	first := cacheq.Query(client, "user:42", batcher.Fetcher(42))
-	second := cacheq.Query(client, "user:43", batcher.Fetcher(43))
+	first := soroi.Query(client, "user:42", batcher.Fetcher(42))
+	second := soroi.Query(client, "user:43", batcher.Fetcher(43))
 	t.Cleanup(first.Close)
 	t.Cleanup(second.Close)
-	for index, handle := range []*cacheq.QueryHandle[user]{first, second} {
-		state := await(t, handle, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	for index, handle := range []*soroi.QueryHandle[user]{first, second} {
+		state := await(t, handle, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 		if state.Err != nil || state.Data.Name != fmt.Sprintf("Alice:%d", 42+index) {
 			t.Fatalf("initial query %d = %+v", index, state)
 		}
@@ -104,9 +104,9 @@ func TestHTTPBatchLifecycle(t *testing.T) {
 	if calls := api.count("/bulk"); calls != 1 {
 		t.Fatalf("initial bulk HTTP calls = %d, want 1", calls)
 	}
-	duplicate := cacheq.Query(client, "user:42", batcher.Fetcher(42))
+	duplicate := soroi.Query(client, "user:42", batcher.Fetcher(42))
 	t.Cleanup(duplicate.Close)
-	value, err := cacheq.Fetch(
+	value, err := soroi.Fetch(
 		context.Background(),
 		client,
 		"user:43",
@@ -126,16 +126,16 @@ func TestHTTPBatchLifecycle(t *testing.T) {
 	if err := client.Invalidate([]any{"user:42", "user:43"}); err != nil {
 		t.Fatal(err)
 	}
-	for index, handle := range []*cacheq.QueryHandle[user]{first, second} {
+	for index, handle := range []*soroi.QueryHandle[user]{first, second} {
 		name := fmt.Sprintf("Bob:%d", 42+index)
-		state := await(t, handle, func(s cacheq.Snapshot[user]) bool {
+		state := await(t, handle, func(s soroi.Snapshot[user]) bool {
 			return s.Data.Name == name && !s.Fetching
 		})
 		if state.Err != nil || state.Stale {
 			t.Fatalf("refreshed query %d = %+v", index, state)
 		}
 	}
-	await(t, duplicate, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Bob:42" && !s.Fetching })
+	await(t, duplicate, func(s soroi.Snapshot[user]) bool { return s.Data.Name == "Bob:42" && !s.Fetching })
 	if api.count("/bulk") != 2 || client.Stats().Loads != 4 {
 		t.Fatalf("bulk HTTP calls = %d; per-key stats = %+v", api.count("/bulk"), client.Stats())
 	}
@@ -144,30 +144,30 @@ func TestHTTPBatchLifecycle(t *testing.T) {
 // TestHTTPBatchMissingResult isolates an incomplete response to its key while keeping successful HTTP data cached.
 func TestHTTPBatchMissingResult(t *testing.T) {
 	api := newBulkUserAPI(t)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
-	batcher, err := cacheq.NewBatcher(
+	batcher, err := soroi.NewBatcher(
 		context.Background(),
 		bulkHTTPFetcher(api.server),
-		cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
+		soroi.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(batcher.Close)
-	valid := cacheq.Query(client, "user:42", batcher.Fetcher(42))
-	missing := cacheq.Query(client, "user:44", batcher.Fetcher(44))
+	valid := soroi.Query(client, "user:42", batcher.Fetcher(42))
+	missing := soroi.Query(client, "user:44", batcher.Fetcher(44))
 	t.Cleanup(valid.Close)
 	t.Cleanup(missing.Close)
-	state := await(t, valid, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	state := await(t, valid, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 	if state.Err != nil || state.Data.Name != "Alice:42" {
 		t.Fatalf("successful key = %+v", state)
 	}
-	failure := await(t, missing, func(s cacheq.Snapshot[user]) bool { return s.Err != nil && !s.Fetching })
-	if failure.HasData || !errors.Is(failure.Err, cacheq.ErrBatchResultMissing) {
+	failure := await(t, missing, func(s soroi.Snapshot[user]) bool { return s.Err != nil && !s.Fetching })
+	if failure.HasData || !errors.Is(failure.Err, soroi.ErrBatchResultMissing) {
 		t.Fatalf("omitted HTTP key = %+v", failure)
 	}
-	value, err := cacheq.Fetch(
+	value, err := soroi.Fetch(
 		context.Background(),
 		client,
 		"user:42",
@@ -202,27 +202,27 @@ func TestHTTPBatchCancellation(t *testing.T) {
 			var once sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
 			t.Cleanup(unblock)
-			client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+			client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 			t.Cleanup(client.Close)
-			batcher, err := cacheq.NewBatcher(
+			batcher, err := soroi.NewBatcher(
 				context.Background(),
 				bulkHTTPFetcher(server),
-				cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
+				soroi.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 			)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(batcher.Close)
-			first := cacheq.Query(client, "user:42", batcher.Fetcher(42))
-			second := cacheq.Query(client, "user:43", batcher.Fetcher(43))
+			first := soroi.Query(client, "user:42", batcher.Fetcher(42))
+			second := soroi.Query(client, "user:43", batcher.Fetcher(43))
 			t.Cleanup(first.Close)
 			t.Cleanup(second.Close)
 			awaitBatchSignal(t, entered)
 			if action == "close batcher" {
 				batcher.Close()
-				for _, handle := range []*cacheq.QueryHandle[user]{first, second} {
-					state := await(t, handle, func(s cacheq.Snapshot[user]) bool { return s.Err != nil && !s.Fetching })
-					if !errors.Is(state.Err, cacheq.ErrBatcherClosed) || state.HasData {
+				for _, handle := range []*soroi.QueryHandle[user]{first, second} {
+					state := await(t, handle, func(s soroi.Snapshot[user]) bool { return s.Err != nil && !s.Fetching })
+					if !errors.Is(state.Err, soroi.ErrBatcherClosed) || state.HasData {
 						t.Fatalf("closed bulk query = %+v", state)
 					}
 				}
@@ -235,12 +235,12 @@ func TestHTTPBatchCancellation(t *testing.T) {
 			if err := client.Cancel("user:42"); err != nil {
 				t.Fatal(err)
 			}
-			await(t, first, func(s cacheq.Snapshot[user]) bool { return !s.Fetching })
-			if err := cacheq.Set(client, "user:42", user{Name: "local"}); err != nil {
+			await(t, first, func(s soroi.Snapshot[user]) bool { return !s.Fetching })
+			if err := soroi.Set(client, "user:42", user{Name: "local"}); err != nil {
 				t.Fatal(err)
 			}
 			unblock()
-			state := await(t, second, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+			state := await(t, second, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 			if state.Err != nil || state.Data.Name != "Alice:43" {
 				t.Fatalf("surviving bulk query = %+v", state)
 			}

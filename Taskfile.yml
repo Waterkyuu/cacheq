@@ -9,7 +9,7 @@ tasks:
     silent: true
     cmds:
       - |
-        echo "cacheq"
+        echo "soroi"
         echo ""
         echo "Usage:"
         echo "  task help              Show command usage"

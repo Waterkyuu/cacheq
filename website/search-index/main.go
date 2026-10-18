@@ -57,7 +57,7 @@ var hiddenPattern = regexp.MustCompile(
 // main fails the build when the website or source cannot produce a complete index.
 func main() {
 	build := flag.String("build", "build", "Static website output directory")
-	base := flag.String("base-path", "/cacheq", "Published repository URL prefix")
+	base := flag.String("base-path", "/soroi", "Published repository URL prefix")
 	source := flag.String("source", "..", "Go library source directory")
 	sourceRef := os.Getenv("DOCS_REF")
 	if sourceRef == "" {
@@ -124,7 +124,7 @@ func buildIndex(directory, base string) ([]entry, error) {
 		if relative != "." {
 			url += filepath.ToSlash(relative) + "/"
 		}
-		pageTitle := strings.TrimSuffix(plainText(title[1]), " | cacheq")
+		pageTitle := strings.TrimSuffix(plainText(title[1]), " | soroi")
 		records = append(
 			records,
 			entry{Title: pageTitle, URL: url, Language: language[1], Content: plainText(article[1])},
@@ -184,7 +184,7 @@ func apiEntries(directory, ref string) ([]entry, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no library source in %s", directory)
 	}
-	pkg, err := doc.NewFromFiles(fileSet, files, "github.com/Waterkyuu/cacheq", doc.PreserveAST)
+	pkg, err := doc.NewFromFiles(fileSet, files, "github.com/Waterkyuu/soroi", doc.PreserveAST)
 	if err != nil {
 		return nil, fmt.Errorf("read API: %w", err)
 	}
@@ -196,7 +196,7 @@ func apiEntries(directory, ref string) ([]entry, error) {
 		}
 		position := fileSet.Position(declaration.Pos())
 		url := fmt.Sprintf(
-			"https://github.com/Waterkyuu/cacheq/blob/%s/%s#L%d",
+			"https://github.com/Waterkyuu/soroi/blob/%s/%s#L%d",
 			ref,
 			filepath.Base(position.Filename),
 			position.Line,

@@ -1,4 +1,4 @@
-package cacheq
+package soroi
 
 // loadReason describes an already-stale decision without re-evaluating a consumer's clock or policy.
 func loadReason(cached entry) EventReason {

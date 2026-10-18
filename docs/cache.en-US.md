@@ -8,14 +8,14 @@ For optional cross-process result reuse, see [shared result caching](shared-cach
 
 ## API snippet prerequisites
 
-Unless labeled as a complete program, Go blocks are partial snippets inside business functions. Snippets containing `return err` require a function returning `error`. `ctx` is a non-nil caller context; `client` is created at the application boundary and injected; `users` is a query handle from the [query guide](queries.en-US.md). Import `cacheq "github.com/Waterkyuu/cacheq"` and the standard-library packages used by each snippet.
+Unless labeled as a complete program, Go blocks are partial snippets inside business functions. Snippets containing `return err` require a function returning `error`. `ctx` is a non-nil caller context; `client` is created at the application boundary and injected; `users` is a query handle from the [query guide](queries.en-US.md). Import `soroi "github.com/Waterkyuu/soroi"` and the standard-library packages used by each snippet.
 
 For cache hits, shared requests, and cleanup counts, see [observability](observability.en-US.md).
 
 ## `NewClient` and `Options`
 
 ```go
-client := cacheq.NewClient(cacheq.Options{
+client := soroi.NewClient(soroi.Options{
 	StaleTime:  time.Minute,
 	GCTime:     5 * time.Minute,
 	MaxEntries: 1000,
@@ -54,7 +54,7 @@ Configure [execution budgets](execution.en-US.md) to limit active loader attempt
 
 `client.Get(key)` returns `Snapshot[any]` containing the actual cached value and shared query state. No result type is required or checked. `Data` preserves its dynamic type; accessing concrete fields or methods requires a Go type assertion. Invalid keys return `ErrInvalidKey`, and closed clients return `ErrClosed` through `Snapshot.Err`.
 
-The following complete program reads the same cache through both APIs. Save it as `main.go` in a Go module that imports cacheq and run `go run .`.
+The following complete program reads the same cache through both APIs. Save it as `main.go` in a Go module that imports soroi and run `go run .`.
 
 ```go
 package main
@@ -63,21 +63,21 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main reads cached state with and without specifying a result type.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
-	if err := cacheq.Set(client, "greeting", "hello"); err != nil {
+	if err := soroi.Set(client, "greeting", "hello"); err != nil {
 		panic(err)
 	}
 	state := client.Get("greeting")
 	if state.HasData {
 		fmt.Println("cached:", state.Data)
 	}
-	typed := cacheq.Get[string](client, "greeting")
+	typed := soroi.Get[string](client, "greeting")
 	if typed.HasData {
 		fmt.Println("typed:", typed.Data)
 	}
@@ -98,21 +98,21 @@ Cached data remains shared and read-only. Untyped reads do not change the key's 
 ## `Get[V]`: inspect without requesting
 
 ```go
-state := cacheq.Get[string](client, "greeting")
+state := soroi.Get[string](client, "greeting")
 if state.HasData {
 	fmt.Println(state.Data)
 }
 ```
 
-Use `cacheq.Get[V]` when the result type is known and a typed `Snapshot[V]` is needed. The explicit type is necessary because there is no fetcher to infer it from. Incompatible static result types return `ErrTypeMismatch`; untyped `Client.Get` does not perform this check. Unlike an untyped read, a typed read of missing data returns the zero value of `V`. Both APIs otherwise have the same cache inspection and lifecycle behavior.
+Use `soroi.Get[V]` when the result type is known and a typed `Snapshot[V]` is needed. The explicit type is necessary because there is no fetcher to infer it from. Incompatible static result types return `ErrTypeMismatch`; untyped `Client.Get` does not perform this check. Unlike an untyped read, a typed read of missing data returns the zero value of `V`. Both APIs otherwise have the same cache inspection and lifecycle behavior.
 
 ## `Set`: install local data
 
 ```go
-if err := cacheq.Set(client, "greeting", "hello"); err != nil {
+if err := soroi.Set(client, "greeting", "hello"); err != nil {
 	return err
 }
-if err := cacheq.Set(client, "feature-flags", map[string]bool{"search": true}); err != nil {
+if err := soroi.Set(client, "feature-flags", map[string]bool{"search": true}); err != nil {
 	return err
 }
 ```
@@ -127,7 +127,7 @@ Cached values are shared and immutable to readers. Copy slices, maps, and pointe
 getGreeting := func(context.Context) (string, error) {
 	return "hello", nil
 }
-if err := cacheq.Prefetch(
+if err := soroi.Prefetch(
 	ctx,
 	client,
 	"greeting",
@@ -149,7 +149,7 @@ savedExpiresAt := time.Now().Add(time.Minute)
 load := func(context.Context) (string, time.Time, error) {
 	return savedValue, savedExpiresAt, nil
 }
-value, err := cacheq.FetchWithExpiry(
+value, err := soroi.FetchWithExpiry(
 	ctx,
 	client,
 	"restored-value",
@@ -168,7 +168,7 @@ Ordinary failures do not install new data. Returning both an error and a future 
 ## `GCTime`: remove inactive data automatically
 
 ```go
-client := cacheq.NewClient(cacheq.Options{
+client := soroi.NewClient(soroi.Options{
 	StaleTime: time.Minute,
 	GCTime:    5 * time.Minute,
 })
@@ -184,7 +184,7 @@ Reads and writes restart retention. Any handle, including a disabled handle, sus
 ## `MaxEntries`: limit retained results with LRU eviction
 
 ```go
-client := cacheq.NewClient(cacheq.Options{
+client := soroi.NewClient(soroi.Options{
 	StaleTime:  time.Minute,
 	MaxEntries: 1000,
 })
@@ -200,7 +200,7 @@ The limit counts retained results, not bytes, subscriptions, active requests, or
 ## `MaxAge`: stop serving over-age data
 
 ```go
-client := cacheq.NewClient(cacheq.Options{
+client := soroi.NewClient(soroi.Options{
 	StaleTime: time.Minute,
 	GCTime:    5 * time.Minute,
 	MaxAge:    10 * time.Minute,
@@ -216,7 +216,7 @@ Age is checked on cache operations and state publication. Merely passing time do
 
 ## Complete example: capacity and maximum age
 
-Copy this program into an application importing cacheq. The injected clock demonstrates the deadline without sleeping or starting requests.
+Copy this program into an application importing soroi. The injected clock demonstrates the deadline without sleeping or starting requests.
 
 ```go
 package main
@@ -225,38 +225,38 @@ import (
 	"fmt"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // main demonstrates LRU eviction and maximum data age with a deterministic clock.
 func main() {
 	now := time.Unix(0, 0)
-	client := cacheq.NewClient(cacheq.Options{
+	client := soroi.NewClient(soroi.Options{
 		StaleTime:  time.Minute,
 		MaxEntries: 2,
 		MaxAge:     10 * time.Minute,
 		Clock:      func() time.Time { return now },
 	})
 	defer client.Close()
-	if err := cacheq.Set(client, "a", "first"); err != nil {
+	if err := soroi.Set(client, "a", "first"); err != nil {
 		panic(err)
 	}
-	if err := cacheq.Set(client, "b", "second"); err != nil {
+	if err := soroi.Set(client, "b", "second"); err != nil {
 		panic(err)
 	}
-	_ = cacheq.Get[string](client, "a")
-	if err := cacheq.Set(client, "c", "third"); err != nil {
+	_ = soroi.Get[string](client, "a")
+	if err := soroi.Set(client, "c", "third"); err != nil {
 		panic(err)
 	}
 	fmt.Println(
 		"retained:",
-		cacheq.Get[string](client, "a").HasData,
-		cacheq.Get[string](client, "b").HasData,
-		cacheq.Get[string](client, "c").HasData,
+		soroi.Get[string](client, "a").HasData,
+		soroi.Get[string](client, "b").HasData,
+		soroi.Get[string](client, "c").HasData,
 	)
 	now = now.Add(10 * time.Minute)
-	fmt.Println("over age:", cacheq.Get[string](client, "a").HasData,
-		cacheq.Get[string](client, "c").HasData)
+	fmt.Println("over age:", soroi.Get[string](client, "a").HasData,
+		soroi.Get[string](client, "c").HasData)
 }
 ```
 
@@ -313,8 +313,8 @@ Released handle `Snapshot()` can still inspect a compatible shared cache; `SetEn
 ## Error handling
 
 ```go
-state := cacheq.Get[int](client, "greeting")
-if errors.Is(state.Err, cacheq.ErrTypeMismatch) {
+state := soroi.Get[int](client, "greeting")
+if errors.Is(state.Err, soroi.ErrTypeMismatch) {
 	// Use this key's declared result type or select a different key.
 }
 ```

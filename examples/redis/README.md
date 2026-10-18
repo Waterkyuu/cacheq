@@ -1,7 +1,7 @@
 # Redis shared cache examples
 
 Requires Go 1.26+ and a local `redis-server` executable. This independent module
-uses local `replace` directives for the repository's cacheq core and Redis
+uses local `replace` directives for the repository's soroi core and Redis
 adapter, keeping example dependencies separate from the library modules.
 
 Start a disposable Redis server in one terminal:

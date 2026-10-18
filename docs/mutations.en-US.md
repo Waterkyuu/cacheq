@@ -4,11 +4,11 @@
 
 `Mutation` executes a business write, exposes its state, and synchronizes related cache entries after success. For example, changing a user's name can update the detail cache directly and reload the user list.
 
-The application implements HTTP requests or database writes; cacheq coordinates cache synchronization afterward. Creating a Mutation starts no request. Calling `Mutate` begins execution.
+The application implements HTTP requests or database writes; soroi coordinates cache synchronization afterward. Creating a Mutation starts no request. Calling `Mutate` begins execution.
 
 ## Quick start
 
-This example changes a user's name, stores the returned user in the detail cache, and refreshes an observed user list. Save the complete program as `main.go` in a module importing cacheq, then run `go run .`.
+This example changes a user's name, stores the returned user in the detail cache, and refreshes an observed user list. Save the complete program as `main.go` in a module importing soroi, then run `go run .`.
 
 An `atomic.Value` stores local backend data, so no external service is needed. Reads and writes can run concurrently with the list's background refresh.
 
@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // User contains the profile returned by the backend.
@@ -33,7 +33,7 @@ type User struct {
 
 // main synchronizes a detail cache and an observed list after changing a user.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 	ctx := context.Background()
 
@@ -42,15 +42,15 @@ func main() {
 	getUsers := func(context.Context) ([]User, error) {
 		return []User{backend.Load().(User)}, nil
 	}
-	users := cacheq.Query(client, "users", getUsers)
+	users := soroi.Query(client, "users", getUsers)
 	defer users.Close()
-	before, err := cacheq.Fetch(ctx, client, "users", getUsers)
+	before, err := soroi.Fetch(ctx, client, "users", getUsers)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("before:", before[0].Name)
 
-	rename := cacheq.Mutation(client, func(ctx context.Context, name string) (User, error) {
+	rename := soroi.Mutation(client, func(ctx context.Context, name string) (User, error) {
 		if err := ctx.Err(); err != nil {
 			return User{}, err
 		}
@@ -58,7 +58,7 @@ func main() {
 		backend.Store(user)
 		return user, nil
 	}, func(ctx context.Context, user User, _ string) error {
-		updateErr := cacheq.Set(client, "user:42", user)
+		updateErr := soroi.Set(client, "user:42", user)
 		_, refreshErr := client.InvalidateAndWait(ctx, "users")
 		return errors.Join(updateErr, refreshErr)
 	})
@@ -72,7 +72,7 @@ func main() {
 	}
 
 	after := users.Snapshot().Data
-	fmt.Println("detail:", cacheq.Get[User](client, "user:42").Data.Name)
+	fmt.Println("detail:", soroi.Get[User](client, "user:42").Data.Name)
 	fmt.Println("list:", after[0].Name)
 }
 ```
@@ -97,7 +97,7 @@ The following partial snippets use `client`, `rename`, `User`, and a non-nil `ct
 
 `Mutation(client, write, onSuccess, options...)` returns `MutationHandle[I, V]`, inferring input and result types from the supplied functions. Pass nil as the third argument when no synchronization is needed. Zero or one non-generic `MutationOptions` value configures execution only; omitted or empty options inherit the Client budget. `I` is the input type and `V` the write result type; the example uses `string` and `User`. The business callback, `Mutator[I, V]`, has the signature `func(context.Context, I) (V, error)`.
 
-`Mutate(ctx, input)` executes the business callback once, waits for cache synchronization after success, and returns `MutationResult[V]` and an error. Database operations must return success only after the transaction commits. cacheq does not retry or deduplicate writes. Repeating the same input after completion executes another write.
+`Mutate(ctx, input)` executes the business callback once, waits for cache synchronization after success, and returns `MutationResult[V]` and an error. Database operations must return success only after the transaction commits. soroi does not retry or deduplicate writes. Repeating the same input after completion executes another write.
 
 One handle accepts only one execution at a time, including cache synchronization. Overlapping calls return `ErrMutationBusy` without queuing or changing the active state. Different handles can execute concurrently; they do not automatically serialize by user ID or another business key.
 
@@ -109,7 +109,7 @@ The callback has the signature `func(ctx context.Context, result V, input I) err
 
 The callback runs once after a successful business write and never after a failed write. It runs outside the Client lock and may call cache APIs. The handle stays `Pending` until the callback returns. Returning an error reports a synchronization failure without undoing the committed business write.
 
-This follows [TanStack Query's mutation invalidation model](https://tanstack.com/query/latest/docs/framework/react/guides/invalidations-from-mutations): call the query client's cache APIs inside the success callback and wait for the synchronization work there. In Go, the callback calls a blocking method and returns an error instead of returning a JavaScript Promise. cacheq retains its separate `SyncErr` contract for failures after a committed write.
+This follows [TanStack Query's mutation invalidation model](https://tanstack.com/query/latest/docs/framework/react/guides/invalidations-from-mutations): call the query client's cache APIs inside the success callback and wait for the synchronization work there. In Go, the callback calls a blocking method and returns an error instead of returning a JavaScript Promise. soroi retains its separate `SyncErr` contract for failures after a committed write.
 
 ## Refreshing related queries from `onSuccess`
 
@@ -117,7 +117,7 @@ Call `Client.Invalidate` directly with a query key, `[]any`, or a predicate. The
 
 ```go
 onSuccess := func(context.Context, User, string) error {
-	return client.Invalidate("users", cacheq.InvalidateOptions{RefetchAfterLoad: true})
+	return client.Invalidate("users", soroi.InvalidateOptions{RefetchAfterLoad: true})
 }
 ```
 
@@ -129,7 +129,7 @@ To defer loading, pass `RefetchNone` at the Client call:
 onSuccess := func(context.Context, User, string) error {
 	return client.Invalidate(
 		[]any{"user:42", "users"},
-		cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+		soroi.InvalidateOptions{Refetch: soroi.RefetchNone},
 	)
 }
 ```
@@ -209,7 +209,7 @@ Caller cancellation, `rename.Close()`, or Client closure cancels the write conte
 
 Explicit handle closure immediately closes `Updates()` and is idempotent. Client closure also closes its Mutation update channels asynchronously. `Mutate` may continue waiting until the business callback finishes.
 
-Cancellation does not prove a remote write was rolled back. If the callback returns success after cancellation, cacheq still synchronizes the cache and retains the successful result. Closed handles send no further notifications, but `Snapshot()` records the eventual result. A closed Client can cause a separate `SyncErr` during synchronization.
+Cancellation does not prove a remote write was rolled back. If the callback returns success after cancellation, soroi still synchronizes the cache and retains the successful result. Closed handles send no further notifications, but `Snapshot()` records the eventual result. A closed Client can cause a separate `SyncErr` during synchronization.
 
 ## Errors
 

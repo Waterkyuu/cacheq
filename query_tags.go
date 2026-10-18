@@ -1,4 +1,4 @@
-package cacheq
+package soroi
 
 import "slices"
 

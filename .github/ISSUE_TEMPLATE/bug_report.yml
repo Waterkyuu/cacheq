@@ -1,5 +1,5 @@
 name: Bug report
-description: Report incorrect behavior or a regression in cacheq.
+description: Report incorrect behavior or a regression in soroi.
 body:
   - type: markdown
     attributes:
@@ -8,7 +8,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: cacheq version
+      label: soroi version
       description: Provide the version tag or commit SHA used by the affected application.
     validations:
       required: true

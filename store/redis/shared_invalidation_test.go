@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -53,7 +53,7 @@ func TestRedisTagGenerations(t *testing.T) {
 	if ok, err := store.Write(
 		ctx,
 		"detail",
-		cacheq.SharedWrite{Version: first.Version, Data: []byte("old"), TTL: time.Minute},
+		soroi.SharedWrite{Version: first.Version, Data: []byte("old"), TTL: time.Minute},
 	); err != nil ||
 		!ok {
 		t.Fatalf("tagged write = %v, %v", ok, err)
@@ -66,7 +66,7 @@ func TestRedisTagGenerations(t *testing.T) {
 	if ok, err := store.Write(
 		ctx,
 		"detail",
-		cacheq.SharedWrite{Version: first.Version, Data: []byte("late"), TTL: time.Minute},
+		soroi.SharedWrite{Version: first.Version, Data: []byte("late"), TTL: time.Minute},
 	); err != nil ||
 		ok {
 		t.Fatalf("membership fence = %v, %v", ok, err)
@@ -78,7 +78,7 @@ func TestRedisTagGenerations(t *testing.T) {
 	if _, err := store.Write(
 		ctx,
 		"other-tenant",
-		cacheq.SharedWrite{Version: other.Version, Data: []byte("untouched"), TTL: time.Minute},
+		soroi.SharedWrite{Version: other.Version, Data: []byte("untouched"), TTL: time.Minute},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestRedisTagGenerations(t *testing.T) {
 	if ok, err := store.Write(
 		ctx,
 		"detail",
-		cacheq.SharedWrite{Version: added.Version, Data: []byte("resurrected"), TTL: time.Minute},
+		soroi.SharedWrite{Version: added.Version, Data: []byte("resurrected"), TTL: time.Minute},
 	); err != nil ||
 		ok {
 		t.Fatalf("tag fence = %v, %v", ok, err)
@@ -117,48 +117,48 @@ func TestRedisTaggedQueryPropagation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	intShared, err := cacheq.NewSharedCache[int](
+	intShared, err := soroi.NewSharedCache[int](
 		store,
-		cacheq.SharedCacheOptions[int]{Key: "detail", Format: "int.v1", TTL: time.Hour, ShareTags: true},
+		soroi.SharedCacheOptions[int]{Key: "detail", Format: "int.v1", TTL: time.Hour, ShareTags: true},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	listShared, err := cacheq.NewSharedCache[[]int](
+	listShared, err := soroi.NewSharedCache[[]int](
 		store,
-		cacheq.SharedCacheOptions[[]int]{Key: "list", Format: "list.v1", TTL: time.Hour, ShareTags: true},
+		soroi.SharedCacheOptions[[]int]{Key: "list", Format: "list.v1", TTL: time.Hour, ShareTags: true},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, b := cacheq.NewClient(
-		cacheq.Options{StaleTime: time.Hour},
-	), cacheq.NewClient(
-		cacheq.Options{StaleTime: time.Hour},
+	a, b := soroi.NewClient(
+		soroi.Options{StaleTime: time.Hour},
+	), soroi.NewClient(
+		soroi.Options{StaleTime: time.Hour},
 	)
 	t.Cleanup(a.Close)
 	t.Cleanup(b.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	watch, err := b.WatchShared(ctx, store, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	watch, err := b.WatchShared(ctx, store, soroi.InvalidateOptions{Refetch: soroi.RefetchNone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(watch.Close)
-	detail, err := cacheq.QueryDefinition(
+	detail, err := soroi.QueryDefinition(
 		"detail",
 		func(context.Context) (int, error) { return 7, nil },
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	detail.Shared = intShared
 	detail.Tags = []string{"tenant:42:users"}
-	list, err := cacheq.QueryDefinition(
+	list, err := soroi.QueryDefinition(
 		"list",
 		func(context.Context) ([]int, error) { return []int{7}, nil },
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +193,7 @@ func TestRedisTaggedQueryPropagation(t *testing.T) {
 }
 
 // staleSignal adapts differently typed subscription streams without polling query state.
-func staleSignal[V any](ctx context.Context, updates <-chan cacheq.Snapshot[V]) <-chan bool {
+func staleSignal[V any](ctx context.Context, updates <-chan soroi.Snapshot[V]) <-chan bool {
 	result := make(chan bool, 1)
 	go func() {
 		for {
@@ -229,16 +229,16 @@ func TestRedisTagCapabilityAndClusterSlot(t *testing.T) {
 		[]string{"tag"},
 	); !errors.Is(
 		err,
-		cacheq.ErrSharedCapability,
+		soroi.ErrSharedCapability,
 	) {
 		t.Fatal(err)
 	}
-	if _, err := cacheq.NewSharedCache[int](
+	if _, err := soroi.NewSharedCache[int](
 		plain,
-		cacheq.SharedCacheOptions[int]{Key: "key", Format: "int.v1", TTL: time.Minute, ShareTags: true},
+		soroi.SharedCacheOptions[int]{Key: "key", Format: "int.v1", TTL: time.Minute, ShareTags: true},
 	); !errors.Is(
 		err,
-		cacheq.ErrSharedCapability,
+		soroi.ErrSharedCapability,
 	) {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestRedisTagMetadataLoss(t *testing.T) {
 	if _, err := store.Write(
 		ctx,
 		"key",
-		cacheq.SharedWrite{Version: old.Version, Data: []byte("old"), TTL: time.Hour},
+		soroi.SharedWrite{Version: old.Version, Data: []byte("old"), TTL: time.Hour},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestRedisTagMetadataLoss(t *testing.T) {
 	if ok, err := store.Write(
 		ctx,
 		"key",
-		cacheq.SharedWrite{Version: old.Version, Data: []byte("late"), TTL: time.Hour},
+		soroi.SharedWrite{Version: old.Version, Data: []byte("late"), TTL: time.Hour},
 	); err != nil ||
 		ok {
 		t.Fatalf("missing membership = %v, %v", ok, err)
@@ -357,7 +357,7 @@ func TestRedisTagMetadataLoss(t *testing.T) {
 	if ok, err := store.Write(
 		ctx,
 		"key",
-		cacheq.SharedWrite{Version: fresh.Version, Data: []byte("lost-tag-version"), TTL: time.Hour},
+		soroi.SharedWrite{Version: fresh.Version, Data: []byte("lost-tag-version"), TTL: time.Hour},
 	); err != nil ||
 		ok {
 		t.Fatalf("missing tag generations = %v, %v", ok, err)
@@ -437,26 +437,26 @@ func TestRedisRemoteMembershipPropagation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	shared, err := cacheq.NewSharedCache[int](
+	shared, err := soroi.NewSharedCache[int](
 		owner,
-		cacheq.SharedCacheOptions[int]{Key: "shared-key", Format: "int.v1", TTL: time.Hour, ShareTags: true},
+		soroi.SharedCacheOptions[int]{Key: "shared-key", Format: "int.v1", TTL: time.Hour, ShareTags: true},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	watch, err := client.WatchShared(ctx, owner, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	watch, err := client.WatchShared(ctx, owner, soroi.InvalidateOptions{Refetch: soroi.RefetchNone})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(watch.Close)
-	d, err := cacheq.QueryDefinition(
+	d, err := soroi.QueryDefinition(
 		"local",
 		func(context.Context) (int, error) { return 7, nil },
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -466,7 +466,7 @@ func TestRedisRemoteMembershipPropagation(t *testing.T) {
 	if _, err := d.Fetch(ctx, client); err != nil {
 		t.Fatal(err)
 	}
-	if cacheq.Get[int](client, d.Key).Stale {
+	if soroi.Get[int](client, d.Key).Stale {
 		t.Fatal("membership registration invalidated its own fresh load")
 	}
 	h := d.Query(client)
@@ -491,7 +491,7 @@ func TestRedisRemoteMembershipPropagation(t *testing.T) {
 func TestRedisDefaultInvalidationNeedsNoPubSubPermissions(t *testing.T) {
 	admin := newTestRedis(t)
 	ctx := context.Background()
-	if err := admin.Do(ctx, "ACL", "SETUSER", "cacheq-p0", "on", ">test-only", "~*", "+@read", "+@write", "+eval", "+hello", "+auth", "-publish", "-subscribe").
+	if err := admin.Do(ctx, "ACL", "SETUSER", "soroi-p0", "on", ">test-only", "~*", "+@read", "+@write", "+eval", "+hello", "+auth", "-publish", "-subscribe").
 		Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -499,7 +499,7 @@ func TestRedisDefaultInvalidationNeedsNoPubSubPermissions(t *testing.T) {
 		&redis.Options{
 			Network:               "unix",
 			Addr:                  admin.Options().Addr,
-			Username:              "cacheq-p0",
+			Username:              "soroi-p0",
 			Password:              "test-only",
 			Protocol:              2,
 			DisableIdentity:       true,
@@ -517,7 +517,7 @@ func TestRedisDefaultInvalidationNeedsNoPubSubPermissions(t *testing.T) {
 	if err := store.Invalidate(ctx, "key"); err != nil {
 		t.Fatalf("default invalidation requires Pub/Sub permissions: %v", err)
 	}
-	if _, err := store.SubscribeInvalidations(ctx); !errors.Is(err, cacheq.ErrSharedCapability) {
+	if _, err := store.SubscribeInvalidations(ctx); !errors.Is(err, soroi.ErrSharedCapability) {
 		t.Fatalf("notifications were not opt-in: %v", err)
 	}
 }
@@ -534,7 +534,7 @@ func TestRedisRingNotificationsRejected(t *testing.T) {
 	if _, err := New(ring, Options{}); err != nil {
 		t.Fatalf("P0 ring storage changed: %v", err)
 	}
-	if _, err := New(ring, Options{EnableNotifications: true}); !errors.Is(err, cacheq.ErrSharedCapability) {
+	if _, err := New(ring, Options{EnableNotifications: true}); !errors.Is(err, soroi.ErrSharedCapability) {
 		t.Fatalf("independent Redis shards accepted namespace-wide Pub/Sub: %v", err)
 	}
 }

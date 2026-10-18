@@ -4,7 +4,7 @@
 
 The [task board example](../examples/bubbletea/) gives a list, selected detail,
 and completion summary their own subscriptions to one task query. It demonstrates
-the code that a UI can delegate to cacheq: shared loads, query activity, retained
+the code that a UI can delegate to soroi: shared loads, query activity, retained
 data after failure, and refresh notifications.
 
 ## Running the example
@@ -12,8 +12,8 @@ data after failure, and refresh notifications.
 The independent example module uses Bubble Tea v2 and requires Go 1.26 or later. The core library supports Go 1.22. The example uses an in-memory backend and needs no external service or credentials.
 
 ```sh
-git clone https://github.com/Waterkyuu/cacheq.git
-cd cacheq/examples/bubbletea
+git clone https://github.com/Waterkyuu/soroi.git
+cd soroi/examples/bubbletea
 go run .
 ```
 
@@ -75,7 +75,7 @@ until the refreshed copy arrives.
 The example uses a short synchronous local mutation. A real HTTP or database
 mutation belongs in a `tea.Cmd`; send its completion back to `Update` and
 invalidate only after success. Separate query keys need explicit invalidation
-of all affected keys; cacheq does not infer relationships between datasets.
+of all affected keys; soroi does not infer relationships between datasets.
 
 The `f` key injects a single backend read failure and starts a refresh. All views
 show their previous tasks alongside the failure. The next `r` refresh succeeds.
@@ -92,7 +92,7 @@ From `examples/bubbletea`:
 ```sh
 go vet ./...
 go test -race ./... -count=1
-go build -o /tmp/cacheq-bubbletea .
+go build -o /tmp/soroi-bubbletea .
 ```
 
 The event-loop tests coordinate loads with channels and check notifications for

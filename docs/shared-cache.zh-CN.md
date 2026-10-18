@@ -6,18 +6,18 @@
 
 ## 安装
 
-需要 Go 1.26+、当前 cacheq 仓库和已安装的 `redis-server`。核心库只要求 Go 1.22+；`store/redis` 是独立模块，其 go-redis 依赖要求 Go 1.26+。
+需要 Go 1.26+、当前 soroi 仓库和已安装的 `redis-server`。核心库只要求 Go 1.22+；`store/redis` 是独立模块，其 go-redis 依赖要求 Go 1.26+。
 
-以下使用本地源码接入，不假定 Redis 适配器已有可安装的发布版本。在 **cacheq 仓库根目录**执行，创建独立的临时示例模块：
+以下使用本地源码接入，不假定 Redis 适配器已有可安装的发布版本。在 **soroi 仓库根目录**执行，创建独立的临时示例模块：
 
 ```sh
-CACHEQ_SOURCE_DIR="$(pwd)"
-CACHEQ_DEMO_DIR="$(mktemp -d)"
-cd "$CACHEQ_DEMO_DIR"
-go mod init example.com/cacheq-redis-demo
-go mod edit -replace="github.com/Waterkyuu/cacheq=$CACHEQ_SOURCE_DIR"
-go mod edit -replace="github.com/Waterkyuu/cacheq/store/redis=$CACHEQ_SOURCE_DIR/store/redis"
-go get github.com/Waterkyuu/cacheq/store/redis@v0.0.0
+SOROI_SOURCE_DIR="$(pwd)"
+SOROI_DEMO_DIR="$(mktemp -d)"
+cd "$SOROI_DEMO_DIR"
+go mod init example.com/soroi-redis-demo
+go mod edit -replace="github.com/Waterkyuu/soroi=$SOROI_SOURCE_DIR"
+go mod edit -replace="github.com/Waterkyuu/soroi/store/redis=$SOROI_SOURCE_DIR/store/redis"
+go get github.com/Waterkyuu/soroi/store/redis@v0.0.0
 ```
 
 两个 `replace` 分别指向核心库和 Redis 适配器的本地源码。接入已有项目时，在项目的 `go.mod` 中配置这两个路径并添加依赖，无需重新执行 `go mod init`。
@@ -49,13 +49,13 @@ B first: Alice, shared hits: 1
 A again: Alice, shared hits: 1
 ```
 
-1. A 第一次调用 `definition.Fetch(ctx, a)`，本地缓存和共享存储都没有新鲜结果。cacheq 执行数据源回调，将 Alice 编码为 JSON 写入 Redis，并在 A 的本地缓存中保留 Alice。
+1. A 第一次调用 `definition.Fetch(ctx, a)`，本地缓存和共享存储都没有新鲜结果。soroi 执行数据源回调，将 Alice 编码为 JSON 写入 Redis，并在 A 的本地缓存中保留 Alice。
 2. B 第一次调用 `definition.Fetch(ctx, b)`，本地没有结果，便从 Redis 读取并解码为一个新的 `User`，再保存在 B 的本地缓存中。数据源回调不会执行。
 3. A 再次调用 `definition.Fetch(ctx, a)`，直接返回本地的新鲜结果。共享命中次数仍为一，因为本次没有访问 Redis。
 
 `Definition.Key` 标识各个 Client 内的缓存项；`SharedCacheOptions.Key` 与适配器的 Prefix 一起标识 Redis 中的记录，本例的两个 key 都使用 `user:7`。A、B 放在同一个进程中是为了展示执行顺序。实际的不同服务进程只需配置相同的 Redis 命名空间、共享 key、兼容的 Format 和结果类型，就能复用记录，无需共享 Go 对象。
 
-示例在读取前只清理专用 `cacheq-minimal-demo` 共享 key，因此重复运行会得到相同输出。`StaleTime` 决定 Client 何时把结果视为新鲜，shared 的 `TTL` 限制共享结果的新鲜度和保留时间；这里都设为一分钟。Redis 适配器的失效元数据可以比结果数据保留更久。
+示例在读取前只清理专用 `soroi-minimal-demo` 共享 key，因此重复运行会得到相同输出。`StaleTime` 决定 Client 何时把结果视为新鲜，shared 的 `TTL` 限制共享结果的新鲜度和保留时间；这里都设为一分钟。Redis 适配器的失效元数据可以比结果数据保留更久。
 
 ## 使用方式
 
@@ -73,7 +73,7 @@ type User struct {
 
 ### 创建 Redis 存储
 
-使用 `redistore.New(remote, options)` 创建 Redis 存储适配器。`remote` 是应用创建的 go-redis 客户端；返回的 `store` 实现 `SharedStore`，供后续共享缓存执行 Redis 读写。`Prefix` 为记录增加应用命名空间，本例使用 `cacheq-quickstart`。
+使用 `redistore.New(remote, options)` 创建 Redis 存储适配器。`remote` 是应用创建的 go-redis 客户端；返回的 `store` 实现 `SharedStore`，供后续共享缓存执行 Redis 读写。`Prefix` 为记录增加应用命名空间，本例使用 `soroi-quickstart`。
 
 下面先创建最长运行 10 秒的示例 context 和 Redis 连接，再创建适配器。`Ping` 用于验证示例环境可连接；`redistore.New` 本身只校验配置，不访问服务器。
 
@@ -91,8 +91,8 @@ defer func() { _ = remote.Close() }()
 if err := remote.Ping(ctx).Err(); err != nil {
 	panic(err)
 }
-// Store adapts the borrowed connection to cacheq operations in this namespace.
-store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
+// Store adapts the borrowed connection to soroi operations in this namespace.
+store, err := redistore.New(remote, redistore.Options{Prefix: "soroi-quickstart"})
 if err != nil {
 	panic(err)
 }
@@ -102,14 +102,14 @@ if err != nil {
 
 ### 创建共享缓存
 
-使用 `cacheq.NewSharedCache(store, options)` 为一份查询结果创建共享缓存配置。函数从 `SharedCacheOptions[V]` 推断保存和读取的结果类型；本例使用 `SharedCacheOptions[User]`，其中 `User` 是上面定义的类型。`store` 使用前一步创建的 Redis 存储。
+使用 `soroi.NewSharedCache(store, options)` 为一份查询结果创建共享缓存配置。函数从 `SharedCacheOptions[V]` 推断保存和读取的结果类型；本例使用 `SharedCacheOptions[User]`，其中 `User` 是上面定义的类型。`store` 使用前一步创建的 Redis 存储。
 
 本例要共享“租户 42 的用户 7 的资料”：共享 key 为 `tenant:42:user:7:v1`，按默认 JSON 编码，格式标识为 `user.json.v1`，从数据源加载完成起最多保留 5 分钟，每次共享存储操作最多等待 200 毫秒。
 
 ```go
 // Bind one User record's identity and caching rules to the Redis adapter.
 // Construction validates configuration without reading or writing Redis.
-shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+shared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 	// Key identifies this tenant's user profile across service instances.
 	Key: "tenant:42:user:7:v1",
 	// Format must match the schema and encoding expected by every reader.
@@ -124,13 +124,13 @@ if err != nil {
 }
 ```
 
-返回的 `shared` 类型为 `*cacheq.SharedCache[User]`，保存这份数据的存储和复用规则。创建时只校验并保存配置，不会加载用户资料；下一节通过 `Definition.Shared` 将它连接到查询。
+返回的 `shared` 类型为 `*soroi.SharedCache[User]`，保存这份数据的存储和复用规则。创建时只校验并保存配置，不会加载用户资料；下一节通过 `Definition.Shared` 将它连接到查询。
 
 查询用户 8 时，应创建使用 `tenant:42:user:8:v1` 等不同 key 的配置，可以继续复用同一个 `store`。key 中的冒号和各段文字只是应用的命名约定。`Format` 是读取方匹配的数据结构与编码版本标识，不选择编码器；本例未设置 `Codec`，所以使用默认 JSON。无效的 key、Format、TTL 或 Timeout 等配置会返回错误，具体约束见“配置说明”。
 
 ### 定义使用共享缓存的查询
 
-调用 `cacheq.QueryDefinition(key, fetcher)` 定义本地查询身份和数据源读取函数。加载函数返回 `User`，因此函数推断结果类型为 `User`，返回 `(cacheq.Definition[User], error)`。先处理构造错误，再将前一步返回的 `shared` 赋给定义的 `Shared` 字段，其类型必须为 `*cacheq.SharedCache[User]`。
+调用 `soroi.QueryDefinition(key, fetcher)` 定义本地查询身份和数据源读取函数。加载函数返回 `User`，因此函数推断结果类型为 `User`，返回 `(soroi.Definition[User], error)`。先处理构造错误，再将前一步返回的 `shared` 赋给定义的 `Shared` 字段，其类型必须为 `*soroi.SharedCache[User]`。
 
 下面的 `source` 是模拟数据库的并发安全变量，`calls` 统计真实回源次数。此处只定义 Fetcher 回调；创建查询定义时不会执行它。业务接入时将回调替换为数据库或 API 读取，并使用传入的 context。
 
@@ -140,7 +140,7 @@ var source atomic.Value
 source.Store(User{Name: "Alice"})
 var calls atomic.Int64
 // Definition connects the shared rules to a local query identity and source.
-definition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+definition, err := soroi.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 	calls.Add(1)
 	return source.Load().(User), nil
 })
@@ -161,8 +161,8 @@ definition.Shared = shared
 
 ```go
 // Both Clients use the same shared configuration and keep separate local results.
-a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+a := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+b := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 defer a.Close()
 defer b.Close()
 
@@ -193,8 +193,8 @@ fmt.Printf("shared hits: %d\n", shared.Stats().Hits)
 ```go
 // Simulate a successful database or API write before invalidating the cache.
 source.Store(User{Name: "Bob"})
-if err := definition.InvalidateShared(ctx, a, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+if err := definition.InvalidateShared(ctx, a, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 }); err != nil {
 	panic(err)
 }
@@ -220,8 +220,8 @@ A refreshed: Bob, source calls: 2
 如果只需要让 B 重新读取数据，在上一个片段之后插入以下代码。它复用已有的 `b` 和查询定义：
 
 ```go
-if err := b.Invalidate(definition.Key, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+if err := b.Invalidate(definition.Key, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 }); err != nil {
 	panic(err)
 }
@@ -282,7 +282,7 @@ B refreshed: Bob, source calls: 3
 
 | 字段 | 用途 | 必填或默认值 | 使用约束 |
 | --- | --- | --- | --- |
-| `redistore.Options.Prefix` | 隔离应用或环境的 Redis 命名空间 | 空值使用 `cacheq` | 不允许 `{` 或 `}`；生产项目使用自己的命名空间 |
+| `redistore.Options.Prefix` | 隔离应用或环境的 Redis 命名空间 | 空值使用 `soroi` | 不允许 `{` 或 `}`；生产项目使用自己的命名空间 |
 | `redistore.Options.EnableNotifications` | 发布失效事件并允许 watcher 订阅 | 默认 `false` | 需要额外的 Pub/Sub 权限；所有发布方都应启用 |
 | `redistore.Options.EnableTags` | 启用跨 key 的远端标签失效 | 默认 `false` | 使用独立的数据布局；一个命名空间集中在一个 Cluster slot |
 | `SharedCacheOptions.ShareTags` | 将 `Definition.Tags` 登记到远端 | 默认 `false` | 要求存储启用标签能力；仍会遵守同一共享记录上已登记的标签 |
@@ -298,7 +298,7 @@ B refreshed: Bob, source calls: 3
 | 现象 | 检查原因 | 处理方式 |
 | --- | --- | --- |
 | `go run` 报找不到适配器或要求更新 Go | 本地替换路径错误，或 Go 版本不足 | 检查两个 `replace` 是否指向当前源码，使用 Go 1.26+ |
-| 示例的 `Ping` 报错 | Redis 未启动、地址或权限错误 | 确认服务监听 `127.0.0.1:16379`；该检查是演示的启动检查，不是 cacheq 强制要求 |
+| 示例的 `Ping` 报错 | Redis 未启动、地址或权限错误 | 确认服务监听 `127.0.0.1:16379`；该检查是演示的启动检查，不是 soroi 强制要求 |
 | B 再次回源，`ReadErrors` 增加 | Redis 连接、ACL 或操作超时 | 查看 `shared.Stats().LastError`，再检查连接选项、可写主节点和脚本权限 |
 | `Hits` 为 0，但没有读错误 | `StaleTime` 为 0、记录已过期，或始终命中本地缓存 | 配置正新鲜期，用新的 Client 验证共享命中；本地命中不会增加共享 Hits |
 | `DecodeErrors` 增加并回源 | Format 不匹配、记录损坏或 Codec 解码失败 | 从 LastError 查看失败阶段或记录的实际格式；对齐类型、Format 和 Codec，不兼容结果改用新 key |
@@ -324,7 +324,7 @@ last_error=<nil>
 
 `shared.Stats()` 只累计这个 `SharedCache` 对象参与的操作，不是 Redis 服务端或所有进程的全局指标。`Bypasses` 表示强制刷新或失效后绕过共享数据的尝试；`WriteConflicts` 表示加载期间发生失效、共享写入被拒绝。Client 自身的统计继续描述本地缓存和加载。
 
-`SharedStats.LastError` 保留最近一次被计数的共享缓存失败。错误信息包含操作（`read`、`decode`、`encode`、`write` 或 `invalidate`）、逻辑共享 Key 和预期 Format。Codec 与封套处理失败还包含具体阶段；格式不匹配会报告实际存储格式，封套时间戳非法或存储返回空版本也有明确原因。cacheq 不主动附加缓存载荷；底层错误仍保留自身的诊断详情。错误文本用于诊断，不是稳定的解析接口。
+`SharedStats.LastError` 保留最近一次被计数的共享缓存失败。错误信息包含操作（`read`、`decode`、`encode`、`write` 或 `invalidate`）、逻辑共享 Key 和预期 Format。Codec 与封套处理失败还包含具体阶段；格式不匹配会报告实际存储格式，封套时间戳非法或存储返回空版本也有明确原因。soroi 不主动附加缓存载荷；底层错误仍保留自身的诊断详情。错误文本用于诊断，不是稳定的解析接口。
 
 底层存储、Codec 和 JSON 错误保留在包装链中。使用 `errors.Is(stats.LastError, context.DeadlineExceeded)` 判断存储操作超时，或通过 `errors.As` 检查驱动、Codec 的具体错误类型；使用这些函数时需导入标准库 `errors` 包。调用 LastError.Error 前应检查是否为 nil。自定义错误在被保留期间必须保持不可变。
 
@@ -347,7 +347,7 @@ last_error=<nil>
 
 ### 运行完整示例
 
-在安装步骤创建的临时模块目录（`$CACHEQ_DEMO_DIR`）中，将以下完整程序保存为 `main.go`。它组合了前面的创建和读取操作，并只重置示例记录，以保证重复运行时输出一致。
+在安装步骤创建的临时模块目录（`$SOROI_DEMO_DIR`）中，将以下完整程序保存为 `main.go`。它组合了前面的创建和读取操作，并只重置示例记录，以保证重复运行时输出一致。
 
 ```go
 package main
@@ -358,8 +358,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
-	redistore "github.com/Waterkyuu/cacheq/store/redis"
+	"github.com/Waterkyuu/soroi"
+	redistore "github.com/Waterkyuu/soroi/store/redis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -384,15 +384,15 @@ func main() {
 	if err := remote.Ping(ctx).Err(); err != nil {
 		panic(err)
 	}
-	// Store adapts the borrowed connection to cacheq operations in this namespace.
-	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
+	// Store adapts the borrowed connection to soroi operations in this namespace.
+	store, err := redistore.New(remote, redistore.Options{Prefix: "soroi-quickstart"})
 	if err != nil {
 		panic(err)
 	}
 
 	// Bind one User record's identity and caching rules to the Redis adapter.
 	// Construction validates configuration without reading or writing Redis.
-	shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+	shared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 		// Key identifies this tenant's user profile across service instances.
 		Key: "tenant:42:user:7:v1",
 		// Format must match the schema and encoding expected by every reader.
@@ -415,7 +415,7 @@ func main() {
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
 	// Definition connects the shared rules to a local query identity and source.
-	definition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+	definition, err := soroi.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 		calls.Add(1)
 		return source.Load().(User), nil
 	})
@@ -425,8 +425,8 @@ func main() {
 	definition.Shared = shared
 
 	// Both Clients use the same shared configuration and keep separate local results.
-	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	a := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+	b := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer a.Close()
 	defer b.Close()
 
@@ -459,7 +459,7 @@ B: Alice, source calls: 1
 shared hits: 1
 ```
 
-A 回源后，B 复用了 Redis 结果，所以数据源调用次数仍为 1。程序只重置 `cacheq-quickstart` 命名空间中的示例记录；业务启动时不应执行这项重置，也不要用该命名空间保存生产数据。示例结束后，在 Redis 终端按 Ctrl+C 停止临时服务。
+A 回源后，B 复用了 Redis 结果，所以数据源调用次数仍为 1。程序只重置 `soroi-quickstart` 命名空间中的示例记录；业务启动时不应执行这项重置，也不要用该命名空间保存生产数据。示例结束后，在 Redis 终端按 Ctrl+C 停止临时服务。
 
 ### 相关文档
 

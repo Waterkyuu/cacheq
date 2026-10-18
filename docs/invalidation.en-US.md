@@ -8,7 +8,7 @@ Invalidation retains data but marks it stale. After updating a user, detail and 
 
 ## Quick start
 
-Save this complete program as `main.go` in a module importing cacheq and run
+Save this complete program as `main.go` in a module importing soroi and run
 `go run .`. It changes a local backend value, invalidates the observed key,
 and waits for fresh data.
 
@@ -21,22 +21,22 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main refreshes an observed value after a successful backend mutation.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	defer client.Close()
 	var backend atomic.Value
 	backend.Store("initial")
 	load := func(context.Context) (string, error) {
 		return backend.Load().(string), nil
 	}
-	query := cacheq.Query(client, "message", load)
+	query := soroi.Query(client, "message", load)
 	defer query.Close()
 	ctx := context.Background()
-	before, err := cacheq.Fetch(
+	before, err := soroi.Fetch(
 		ctx,
 		client,
 		"message",
@@ -93,8 +93,8 @@ Invalidation does not wait for refresh completion. Observe results through `Upda
 Create queries with different result types:
 
 ```go
-detail := cacheq.Query(client, "user:42", getUser) // QueryHandle[User]
-users := cacheq.Query(client, "users", getUsers)   // QueryHandle[[]User]
+detail := soroi.Query(client, "user:42", getUser) // QueryHandle[User]
+users := soroi.Query(client, "users", getUsers)   // QueryHandle[[]User]
 defer detail.Close()
 defer users.Close()
 
@@ -126,8 +126,8 @@ All keys are validated before mutation. A non-comparable key returns `ErrInvalid
 Single-key invalidation accepts an optional configuration:
 
 ```go
-if err := client.Invalidate("user:42", cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+if err := client.Invalidate("user:42", soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 }); err != nil {
 	return err
 }
@@ -138,7 +138,7 @@ Defer a group of related queries:
 ```go
 if err := client.Invalidate(
 	[]any{"user:42", "users"},
-	cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+	soroi.InvalidateOptions{Refetch: soroi.RefetchNone},
 ); err != nil {
 	return err
 }
@@ -154,8 +154,8 @@ Import `strings` to select all user details and the list:
 if err := client.Invalidate(func(key any) bool {
 	name, ok := key.(string)
 	return ok && (name == "users" || strings.HasPrefix(name, "user:"))
-}, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+}, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 }); err != nil {
 	return err
 }
@@ -200,7 +200,7 @@ By default, an active same-key request is neither canceled nor duplicated. Its r
 Opt in without waiting:
 
 ```go
-if err := client.Invalidate("users", cacheq.InvalidateOptions{
+if err := client.Invalidate("users", soroi.InvalidateOptions{
 	RefetchAfterLoad: true,
 }); err != nil {
 	return err

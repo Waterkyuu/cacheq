@@ -4,11 +4,11 @@
 
 `Batcher[K, V]` 将不同 key 的并发加载请求收集为一批，并调用业务提供的 `BatchFunc`。该功能适用于支持批量查询的数据源，例如 SQL `WHERE id IN (...)` 或批量 HTTP 接口。
 
-业务负责实现批量查询；cacheq 不探测后端能力，也不生成 SQL。批量函数内部逐个调用单对象接口时，后端调用次数不会减少。
+业务负责实现批量查询；soroi 不探测后端能力，也不生成 SQL。批量函数内部逐个调用单对象接口时，后端调用次数不会减少。
 
 ## 快速开始
 
-以下示例通过两个 `Query` 加载不同商品，并共享一次批量回调。将代码保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
+以下示例通过两个 `Query` 加载不同商品，并共享一次批量回调。将代码保存为已导入 soroi 的 Go 模块中的 `main.go`，运行 `go run .`。
 
 示例使用 `Wait: time.Hour` 和 `MaxBatchSize: 2`，由达到数量上限触发执行，使输出不依赖短暂的计时窗口。实际配置应使用符合加载延迟要求的收集时间。
 
@@ -22,38 +22,38 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main groups different query keys and reuses their individually cached results.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 	var calls atomic.Int32
-	products, err := cacheq.NewBatcher(
+	products, err := soroi.NewBatcher(
 		context.Background(),
-		func(_ context.Context, ids []int) (map[int]cacheq.BatchResult[string], error) {
+		func(_ context.Context, ids []int) (map[int]soroi.BatchResult[string], error) {
 			calls.Add(1)
 			sort.Ints(ids)
 			fmt.Printf("bulk load: %v\n", ids)
-			results := make(map[int]cacheq.BatchResult[string], len(ids))
+			results := make(map[int]soroi.BatchResult[string], len(ids))
 			for _, id := range ids {
-				results[id] = cacheq.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
+				results[id] = soroi.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
 			}
 			return results, nil
 		},
-		cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
+		soroi.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
 	if err != nil {
 		panic(err)
 	}
 	defer products.Close()
 
-	first := cacheq.Query(client, "product:42", products.Fetcher(42))
+	first := soroi.Query(client, "product:42", products.Fetcher(42))
 	defer first.Close()
-	second := cacheq.Query(client, "product:43", products.Fetcher(43))
+	second := soroi.Query(client, "product:43", products.Fetcher(43))
 	defer second.Close()
-	for _, handle := range []*cacheq.QueryHandle[string]{first, second} {
+	for _, handle := range []*soroi.QueryHandle[string]{first, second} {
 		for state := range handle.Updates() {
 			if state.Err != nil {
 				panic(state.Err)
@@ -64,7 +64,7 @@ func main() {
 			}
 		}
 	}
-	value, err := cacheq.Fetch(context.Background(), client, "product:42", products.Fetcher(42))
+	value, err := soroi.Fetch(context.Background(), client, "product:42", products.Fetcher(42))
 	if err != nil {
 		panic(err)
 	}
@@ -87,7 +87,7 @@ cached: product 42; bulk calls: 1
 
 已获得完整 key 列表时，使用 `LoadMany(ctx, keys)`。返回的 `[]BatchResult[V]` 与输入等长、顺序一致，每个位置分别携带数据或错误，无需为每个 key 编排 goroutine，也无需处理额外的整体错误返回值。
 
-将以下示例保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`：
+将以下示例保存为已导入 soroi 的 Go 模块中的 `main.go`，运行 `go run .`：
 
 ```go
 package main
@@ -99,27 +99,27 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main loads known product IDs and prints outcomes in input order.
 func main() {
 	var calls atomic.Int32
-	products, err := cacheq.NewBatcher(
+	products, err := soroi.NewBatcher(
 		context.Background(),
-		func(_ context.Context, ids []int) (map[int]cacheq.BatchResult[string], error) {
+		func(_ context.Context, ids []int) (map[int]soroi.BatchResult[string], error) {
 			calls.Add(1)
-			results := make(map[int]cacheq.BatchResult[string], len(ids))
+			results := make(map[int]soroi.BatchResult[string], len(ids))
 			for _, id := range ids {
 				if id == 99 {
-					results[id] = cacheq.BatchResult[string]{Err: errors.New("product not found")}
+					results[id] = soroi.BatchResult[string]{Err: errors.New("product not found")}
 					continue
 				}
-				results[id] = cacheq.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
+				results[id] = soroi.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
 			}
 			return results, nil
 		},
-		cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
+		soroi.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
 	if err != nil {
 		panic(err)

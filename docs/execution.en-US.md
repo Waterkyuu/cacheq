@@ -8,7 +8,7 @@
 
 This example permits one running load and no queued work. While product 42's load holds the slot, product 43's load is rejected. Completing the first load releases the slot.
 
-Save the complete program as `main.go` in a module importing cacheq, then run `go run .`. Channels control when the first load completes, requiring no external service or short timing-dependent waits.
+Save the complete program as `main.go` in a module importing soroi, then run `go run .`. Channels control when the first load completes, requiring no external service or short timing-dependent waits.
 
 ```go
 package main
@@ -19,19 +19,19 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main rejects a second product load while the only execution slot is occupied.
 func main() {
-	budget, err := cacheq.NewExecutor(cacheq.ExecutionOptions{
+	budget, err := soroi.NewExecutor(soroi.ExecutionOptions{
 		MaxConcurrent: 1,
 		MaxQueued:     0,
 	})
 	if err != nil {
 		panic(err)
 	}
-	client := cacheq.NewClient(cacheq.Options{
+	client := soroi.NewClient(soroi.Options{
 		Executor:  budget,
 		StaleTime: time.Minute,
 	})
@@ -48,21 +48,21 @@ func main() {
 			return "", ctx.Err()
 		}
 	}
-	first := cacheq.Query(client, "product:42", loadFirst)
+	first := soroi.Query(client, "product:42", loadFirst)
 	defer first.Close()
 	<-started
 
-	_, err = cacheq.Fetch(
+	_, err = soroi.Fetch(
 		context.Background(),
 		client,
 		"product:43",
 		func(context.Context) (string, error) { return "product 43", nil },
 	)
-	fmt.Println("second rejected:", errors.Is(err, cacheq.ErrQueueFull))
+	fmt.Println("second rejected:", errors.Is(err, soroi.ErrQueueFull))
 	fmt.Println("active:", budget.Stats().Active)
 
 	close(release)
-	value, err := cacheq.Fetch(context.Background(), client, "product:42", loadFirst)
+	value, err := soroi.Fetch(context.Background(), client, "product:42", loadFirst)
 	if err != nil {
 		panic(err)
 	}
@@ -94,7 +94,7 @@ Place these snippets inside a business function returning `error`, importing the
 Set a positive `MaxQueued` to allow some requests to wait:
 
 ```go
-budget, err := cacheq.NewExecutor(cacheq.ExecutionOptions{
+budget, err := soroi.NewExecutor(soroi.ExecutionOptions{
 	MaxConcurrent: 4,
 	MaxQueued:     16,
 })
@@ -117,8 +117,8 @@ Construct budgets with `NewExecutor`; do not use an unconfigured zero value. Cap
 Pass the same `budget` to multiple Clients:
 
 ```go
-first := cacheq.NewClient(cacheq.Options{Executor: budget})
-second := cacheq.NewClient(cacheq.Options{Executor: budget})
+first := soroi.NewClient(soroi.Options{Executor: budget})
+second := soroi.NewClient(soroi.Options{Executor: budget})
 defer first.Close()
 defer second.Close()
 ```
@@ -147,10 +147,10 @@ Mutation releases capacity when its business callback returns, before local cach
 
 When a Client loads through `Batcher.Fetcher`, prefer configuring `BatchOptions.Executor`. Different keys can then collect into batches before actual backend calls acquire capacity.
 
-The snippet's application-supplied `loadProducts` has the signature `func(context.Context, []int) (map[int]cacheq.BatchResult[string], error)`. See [automatic batch loading](batching.en-US.md) for a complete bulk callback example.
+The snippet's application-supplied `loadProducts` has the signature `func(context.Context, []int) (map[int]soroi.BatchResult[string], error)`. See [automatic batch loading](batching.en-US.md) for a complete bulk callback example.
 
 ```go
-products, err := cacheq.NewBatcher(ctx, loadProducts, cacheq.BatchOptions{
+products, err := soroi.NewBatcher(ctx, loadProducts, soroi.BatchOptions{
 	Wait:         2 * time.Millisecond,
 	MaxBatchSize: 100,
 	Executor:     budget,
@@ -160,9 +160,9 @@ if err != nil {
 }
 defer products.Close()
 
-client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute, Executor: budget})
+client := soroi.NewClient(soroi.Options{StaleTime: time.Minute, Executor: budget})
 defer client.Close()
-value, err := cacheq.Fetch(ctx, client, "product:42", products.Fetcher(42), cacheq.QueryOptions{
+value, err := soroi.Fetch(ctx, client, "product:42", products.Fetcher(42), soroi.QueryOptions{
 	DisableExecutor: true,
 })
 if err != nil {
@@ -178,7 +178,7 @@ This Client can use the same budget for ordinary queries and actual bulk callbac
 For subscribed batched queries, configure the corresponding handle:
 
 ```go
-query := cacheq.Query(client, "product:43", products.Fetcher(43), cacheq.QueryOptions{
+query := soroi.Query(client, "product:43", products.Fetcher(43), soroi.QueryOptions{
 	DisableExecutor: true,
 })
 defer query.Close()
@@ -192,7 +192,7 @@ Detection depends on propagating the supplied callback context. Replacing it wit
 
 ## Overload and retries
 
-Use `errors.Is(err, cacheq.ErrQueueFull)` to detect a full budget. The callback at this boundary has not executed. The application can report that it is busy or arrange a later call at a higher layer.
+Use `errors.Is(err, soroi.ErrQueueFull)` to detect a full budget. The callback at this boundary has not executed. The application can report that it is busy or arrange a later call at a higher layer.
 
 The Client does not retry `ErrQueueFull` or call `RetryIf` for it, including wrapped errors returned by batch or application loaders.
 

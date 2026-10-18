@@ -8,14 +8,14 @@
 
 ## API 片段前提
 
-除标为完整程序的示例外，Go 代码块均为业务函数中的局部片段。包含 `return err` 的片段需要放在返回 `error` 的函数中。`ctx` 是非 nil 的调用者 context；`client` 由应用入口创建并注入；`users` 是[查询文档](queries.zh-CN.md)中的查询对象。需导入 `cacheq "github.com/Waterkyuu/cacheq"` 及各片段使用的标准库包。
+除标为完整程序的示例外，Go 代码块均为业务函数中的局部片段。包含 `return err` 的片段需要放在返回 `error` 的函数中。`ctx` 是非 nil 的调用者 context；`client` 由应用入口创建并注入；`users` 是[查询文档](queries.zh-CN.md)中的查询对象。需导入 `soroi "github.com/Waterkyuu/soroi"` 及各片段使用的标准库包。
 
 缓存命中、请求合并和清理次数见[可观测性文档](observability.zh-CN.md)。
 
 ## `NewClient` 与 `Options`：配置共享缓存
 
 ```go
-client := cacheq.NewClient(cacheq.Options{
+client := soroi.NewClient(soroi.Options{
 	StaleTime:  time.Minute,
 	GCTime:     5 * time.Minute,
 	MaxEntries: 1000,
@@ -54,7 +54,7 @@ defer client.Close()
 
 `client.Get(key)` 返回 `Snapshot[any]`，包含实际缓存值和共享查询状态，无需指定或检查结果类型。`Data` 保留动态类型；访问具体类型的字段或方法时，需要使用 Go 类型断言。非法键通过 `Snapshot.Err` 返回 `ErrInvalidKey`，已关闭客户端返回 `ErrClosed`。
 
-以下完整程序通过两种 API 读取同一份缓存。将代码保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
+以下完整程序通过两种 API 读取同一份缓存。将代码保存为已导入 soroi 的 Go 模块中的 `main.go`，运行 `go run .`。
 
 ```go
 package main
@@ -63,21 +63,21 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main reads cached state with and without specifying a result type.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
-	if err := cacheq.Set(client, "greeting", "hello"); err != nil {
+	if err := soroi.Set(client, "greeting", "hello"); err != nil {
 		panic(err)
 	}
 	state := client.Get("greeting")
 	if state.HasData {
 		fmt.Println("cached:", state.Data)
 	}
-	typed := cacheq.Get[string](client, "greeting")
+	typed := soroi.Get[string](client, "greeting")
 	if typed.HasData {
 		fmt.Println("typed:", typed.Data)
 	}
@@ -98,21 +98,21 @@ typed: hello
 ## `Get[V]`：读取缓存状态
 
 ```go
-state := cacheq.Get[string](client, "greeting")
+state := soroi.Get[string](client, "greeting")
 if state.HasData {
 	fmt.Println(state.Data)
 }
 ```
 
-已知结果类型且需要类型化的 `Snapshot[V]` 时，使用 `cacheq.Get[V]`。显式写 `[string]` 是因为没有加载函数可供推断结果类型。静态结果类型不兼容时返回 `ErrTypeMismatch`；无类型读取 `Client.Get` 不执行此检查。与无类型读取不同，类型化读取在数据缺失时返回 `V` 的零值。两种 API 的其他缓存读取和生命周期行为一致。
+已知结果类型且需要类型化的 `Snapshot[V]` 时，使用 `soroi.Get[V]`。显式写 `[string]` 是因为没有加载函数可供推断结果类型。静态结果类型不兼容时返回 `ErrTypeMismatch`；无类型读取 `Client.Get` 不执行此检查。与无类型读取不同，类型化读取在数据缺失时返回 `V` 的零值。两种 API 的其他缓存读取和生命周期行为一致。
 
 ## `Set`：直接安装本地数据
 
 ```go
-if err := cacheq.Set(client, "greeting", "hello"); err != nil {
+if err := soroi.Set(client, "greeting", "hello"); err != nil {
 	return err
 }
-if err := cacheq.Set(client, "feature-flags", map[string]bool{"search": true}); err != nil {
+if err := soroi.Set(client, "feature-flags", map[string]bool{"search": true}); err != nil {
 	return err
 }
 ```
@@ -127,7 +127,7 @@ if err := cacheq.Set(client, "feature-flags", map[string]bool{"search": true}); 
 getGreeting := func(context.Context) (string, error) {
 	return "hello", nil
 }
-if err := cacheq.Prefetch(
+if err := soroi.Prefetch(
 	ctx,
 	client,
 	"greeting",
@@ -151,7 +151,7 @@ savedExpiresAt := time.Now().Add(time.Minute)
 load := func(context.Context) (string, time.Time, error) {
 	return savedValue, savedExpiresAt, nil
 }
-value, err := cacheq.FetchWithExpiry(
+value, err := soroi.FetchWithExpiry(
 	ctx,
 	client,
 	"restored-value",
@@ -170,7 +170,7 @@ _ = value
 ## `GCTime`：自动删除闲置缓存
 
 ```go
-client := cacheq.NewClient(cacheq.Options{
+client := soroi.NewClient(soroi.Options{
 	StaleTime: time.Minute,
 	GCTime:    5 * time.Minute,
 })
@@ -186,7 +186,7 @@ defer client.Close()
 ## `MaxEntries`：按 LRU 限制缓存条目数
 
 ```go
-client := cacheq.NewClient(cacheq.Options{
+client := soroi.NewClient(soroi.Options{
 	StaleTime:  time.Minute,
 	MaxEntries: 1000,
 })
@@ -202,7 +202,7 @@ defer client.Close()
 ## `MaxAge`：限制数据最长可用时间
 
 ```go
-client := cacheq.NewClient(cacheq.Options{
+client := soroi.NewClient(soroi.Options{
 	StaleTime: time.Minute,
 	GCTime:    5 * time.Minute,
 	MaxAge:    10 * time.Minute,
@@ -218,7 +218,7 @@ defer client.Close()
 
 ## 完整示例：容量与最长可用时间
 
-把程序复制到已引入 cacheq 的应用中。示例注入时钟，不需要等待或发起请求就能验证年龄边界。
+把程序复制到已引入 soroi 的应用中。示例注入时钟，不需要等待或发起请求就能验证年龄边界。
 
 ```go
 package main
@@ -227,38 +227,38 @@ import (
 	"fmt"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // main demonstrates LRU eviction and maximum data age with a deterministic clock.
 func main() {
 	now := time.Unix(0, 0)
-	client := cacheq.NewClient(cacheq.Options{
+	client := soroi.NewClient(soroi.Options{
 		StaleTime:  time.Minute,
 		MaxEntries: 2,
 		MaxAge:     10 * time.Minute,
 		Clock:      func() time.Time { return now },
 	})
 	defer client.Close()
-	if err := cacheq.Set(client, "a", "first"); err != nil {
+	if err := soroi.Set(client, "a", "first"); err != nil {
 		panic(err)
 	}
-	if err := cacheq.Set(client, "b", "second"); err != nil {
+	if err := soroi.Set(client, "b", "second"); err != nil {
 		panic(err)
 	}
-	_ = cacheq.Get[string](client, "a")
-	if err := cacheq.Set(client, "c", "third"); err != nil {
+	_ = soroi.Get[string](client, "a")
+	if err := soroi.Set(client, "c", "third"); err != nil {
 		panic(err)
 	}
 	fmt.Println(
 		"retained:",
-		cacheq.Get[string](client, "a").HasData,
-		cacheq.Get[string](client, "b").HasData,
-		cacheq.Get[string](client, "c").HasData,
+		soroi.Get[string](client, "a").HasData,
+		soroi.Get[string](client, "b").HasData,
+		soroi.Get[string](client, "c").HasData,
 	)
 	now = now.Add(10 * time.Minute)
-	fmt.Println("over age:", cacheq.Get[string](client, "a").HasData,
-		cacheq.Get[string](client, "c").HasData)
+	fmt.Println("over age:", soroi.Get[string](client, "a").HasData,
+		soroi.Get[string](client, "c").HasData)
 }
 ```
 
@@ -315,8 +315,8 @@ client.Close() // Cancel all work and close all query channels permanently.
 ## 错误处理
 
 ```go
-state := cacheq.Get[int](client, "greeting")
-if errors.Is(state.Err, cacheq.ErrTypeMismatch) {
+state := soroi.Get[int](client, "greeting")
+if errors.Is(state.Err, soroi.ErrTypeMismatch) {
 	// Use this key's declared result type or select a different key.
 }
 ```

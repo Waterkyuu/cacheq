@@ -1,9 +1,9 @@
-module github.com/Waterkyuu/cacheq/examples/mcp
+module github.com/Waterkyuu/soroi/examples/mcp
 
 go 1.25.0
 
 require (
-	github.com/Waterkyuu/cacheq v0.0.0
+	github.com/Waterkyuu/soroi v0.0.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 )
 
@@ -18,4 +18,4 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 )
 
-replace github.com/Waterkyuu/cacheq => ../..
+replace github.com/Waterkyuu/soroi => ../..

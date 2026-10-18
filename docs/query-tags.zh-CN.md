@@ -12,7 +12,7 @@
 
 以下完整程序为租户 42 的用户详情和列表声明同一个标签。预加载后创建已启用的订阅，修改模拟后端数据，再按标签等待两项查询刷新。租户 99 的数据不受影响。
 
-在已添加 cacheq 依赖的 Go 模块中，将程序保存为 `main.go`，运行 `go run .`。示例通过 `atomic.Value` 同步后台加载读取的数据，无需外部服务。
+在已添加 soroi 依赖的 Go 模块中，将程序保存为 `main.go`，运行 `go run .`。示例通过 `atomic.Value` 同步后台加载读取的数据，无需外部服务。
 
 ```go
 package main
@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // User is the user data returned by detail and list queries.
@@ -34,28 +34,28 @@ type User struct {
 
 // main refreshes tagged detail and list queries without touching another tenant's data.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	defer client.Close()
 	ctx := context.Background()
 	var backend atomic.Value
 	backend.Store(User{Name: "Alice"})
 	tags := []string{"tenant:42:users"}
 
-	detailDefinition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+	detailDefinition, err := soroi.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 		return backend.Load().(User), nil
 	})
 	if err != nil {
 		panic(err)
 	}
 	detailDefinition.Tags = tags
-	listDefinition, err := cacheq.QueryDefinition("tenant:42:users", func(context.Context) ([]User, error) {
+	listDefinition, err := soroi.QueryDefinition("tenant:42:users", func(context.Context) ([]User, error) {
 		return []User{backend.Load().(User)}, nil
 	})
 	if err != nil {
 		panic(err)
 	}
 	listDefinition.Tags = tags
-	otherDefinition, err := cacheq.QueryDefinition("tenant:99:user:7", func(context.Context) (User, error) {
+	otherDefinition, err := soroi.QueryDefinition("tenant:99:user:7", func(context.Context) (User, error) {
 		return User{Name: "Carol"}, nil
 	})
 	if err != nil {
@@ -77,7 +77,7 @@ func main() {
 	defer list.Close()
 
 	backend.Store(User{Name: "Bob"})
-	filter := cacheq.QueryFilter{Tags: []string{"tenant:42:users"}}
+	filter := soroi.QueryFilter{Tags: []string{"tenant:42:users"}}
 	results, err := client.InvalidateAndWait(ctx, filter)
 	if err != nil {
 		panic(err)
@@ -85,7 +85,7 @@ func main() {
 	fmt.Println("refreshed:", len(results))
 	fmt.Println("detail:", detail.Snapshot().Data.Name)
 	fmt.Println("list:", list.Snapshot().Data[0].Name)
-	fmt.Println("other tenant:", cacheq.Get[User](client, otherDefinition.Key).Data.Name)
+	fmt.Println("other tenant:", soroi.Get[User](client, otherDefinition.Key).Data.Name)
 
 	if err := client.Remove(filter); err != nil {
 		panic(err)
@@ -130,7 +130,7 @@ selected removed: true
 以下局部片段可放在业务函数内，选择两个指定键中带有任一指定标签的查询，再排除详情键：
 
 ```go
-filter := cacheq.QueryFilter{
+filter := soroi.QueryFilter{
     Keys: []any{"tenant:42:user:7", "tenant:42:users"},
     Tags: []string{"tenant:42:users", "tenant:42:orders"},
     Predicate: func(key any) bool {

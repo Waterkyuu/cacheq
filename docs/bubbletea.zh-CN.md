@@ -2,15 +2,15 @@
 
 [English](bubbletea.en-US.md)
 
-[任务看板示例](../examples/bubbletea/)让列表、选中任务的详情和完成统计各自订阅同一个任务查询。它展示 UI 可以交给 cacheq 管理的逻辑：共享加载、请求状态、失败后保留旧数据和刷新通知。
+[任务看板示例](../examples/bubbletea/)让列表、选中任务的详情和完成统计各自订阅同一个任务查询。它展示 UI 可以交给 soroi 管理的逻辑：共享加载、请求状态、失败后保留旧数据和刷新通知。
 
 ## 运行示例
 
 独立示例模块使用 Bubble Tea v2，需要 Go 1.26 及以上版本；核心库仍支持 Go 1.22。示例使用内存后端，无需外部服务或凭证。
 
 ```sh
-git clone https://github.com/Waterkyuu/cacheq.git
-cd cacheq/examples/bubbletea
+git clone https://github.com/Waterkyuu/soroi.git
+cd soroi/examples/bubbletea
 go run .
 ```
 
@@ -52,7 +52,7 @@ go run .
 
 空格或回车先修改本地后端的选中记录，再调用 `client.Invalidate("tasks")`。失效操作将共享数据标记为过期，并启动一次有订阅者的刷新。列表、详情和统计在刷新副本到达前保留原有数据。
 
-示例的本地修改很短，采用同步调用。真实的 HTTP 或数据库修改应放进 `tea.Cmd`，完成后向 `Update` 发送消息，只有修改成功才使缓存失效。如果相关数据使用不同键，必须显式使所有受影响的键失效；cacheq 不会推断数据集之间的关系。
+示例的本地修改很短，采用同步调用。真实的 HTTP 或数据库修改应放进 `tea.Cmd`，完成后向 `Update` 发送消息，只有修改成功才使缓存失效。如果相关数据使用不同键，必须显式使所有受影响的键失效；soroi 不会推断数据集之间的关系。
 
 `f` 注入一次后端读取失败并刷新。三个视图都在失败时保留原有任务，下一次按 `r` 即可恢复。演示不自动重试这次失败，让错误状态持续可见。
 
@@ -65,7 +65,7 @@ go run .
 ```sh
 go vet ./...
 go test -race ./... -count=1
-go build -o /tmp/cacheq-bubbletea .
+go build -o /tmp/soroi-bubbletea .
 ```
 
 消息循环测试通过 channel 控制加载，并检查三个视图收到的通知。覆盖请求共享、修改、失败保留数据、恢复和取消，不依赖演示中的真实时间延迟。

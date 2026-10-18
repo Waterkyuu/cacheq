@@ -6,7 +6,7 @@ One `Client` manages different result types. `Query` subscribes to cached state 
 
 ## Quick start: multiple result types
 
-Save this complete program as `main.go` in a module importing cacheq, then run `go run .`. The fixed loaders demonstrate typing; an actual HTTP loader appears below.
+Save this complete program as `main.go` in a module importing soroi, then run `go run .`. The fixed loaders demonstrate typing; an actual HTTP loader appears below.
 
 ```go
 package main
@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // User is a detail result and an element of a list result.
@@ -33,7 +33,7 @@ type Settings struct {
 
 // main shares one application-owned client across differently typed queries.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{
+	client := soroi.NewClient(soroi.Options{
 		StaleTime: time.Minute,
 		GCTime:    5 * time.Minute,
 	})
@@ -48,15 +48,15 @@ func main() {
 	getSettings := func(context.Context) (Settings, error) {
 		return Settings{Theme: "dark"}, nil
 	}
-	detail := cacheq.Query(client, "user:42", getUser)
-	users := cacheq.Query(client, "users", getUsers)
-	settings := cacheq.Query(client, "settings", getSettings)
+	detail := soroi.Query(client, "user:42", getUser)
+	users := soroi.Query(client, "users", getUsers)
+	settings := soroi.Query(client, "settings", getSettings)
 	defer detail.Close()
 	defer users.Close()
 	defer settings.Close()
 
 	// Fetch reuses fresh data or joins the active load started by Query.
-	user, err := cacheq.Fetch(
+	user, err := soroi.Fetch(
 		context.Background(),
 		client,
 		"user:42",
@@ -88,7 +88,7 @@ The following partial snippets use `client`, `getUser`, and `getUsers` from the 
 ## `Query`: current data and background loading
 
 ```go
-users := cacheq.Query(client, "users", getUsers)
+users := soroi.Query(client, "users", getUsers)
 defer users.Close()
 state := users.Snapshot()
 
@@ -96,7 +96,7 @@ state := users.Snapshot()
 
 Missing data starts an initial request. Fresh data is reused. Stale data remains available while a background request runs. Neither `Query` nor `Snapshot()` waits for HTTP completion. A snapshot is a value; a previously returned variable does not update itself.
 
-Omitting options, supplying `cacheq.QueryOptions{}`, or leaving `Disable` false enables loading. Set `Disable: true` to disable automatic loading. Configuration is optional and limited to one value; extras produce `ErrTooManyOptions` on the failed handle. Construction failures appear in `Snapshot().Err` and the initial `Updates()` value; the failed handle's channel then closes.
+Omitting options, supplying `soroi.QueryOptions{}`, or leaving `Disable` false enables loading. Set `Disable: true` to disable automatic loading. Configuration is optional and limited to one value; extras produce `ErrTooManyOptions` on the failed handle. Construction failures appear in `Snapshot().Err` and the initial `Updates()` value; the failed handle's channel then closes.
 
 ## `Updates`: receive the latest state
 
@@ -116,11 +116,11 @@ The channel provides initial and subsequent latest states. Request transitions, 
 ## `SetEnabled`: load only when a condition permits
 
 ```go
-users := cacheq.Query(
+users := soroi.Query(
 	client,
 	"users",
 	getUsers,
-	cacheq.QueryOptions{
+	soroi.QueryOptions{
 		Disable: true,
 	},
 )
@@ -149,7 +149,7 @@ This waits for a result regardless of freshness or enablement, sharing an existi
 ## `Fetch`: wait for fresh data without a subscription
 
 ```go
-users, err := cacheq.Fetch(
+users, err := soroi.Fetch(
 	ctx,
 	client,
 	"users",

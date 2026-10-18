@@ -8,7 +8,7 @@
 
 ## Quick start
 
-This example subscribes to `product:42`, performs two `Fetch` calls, and prints load and cache-hit events. Save it as `main.go` in a module importing cacheq, then run `go run .`.
+This example subscribes to `product:42`, performs two `Fetch` calls, and prints load and cache-hit events. Save it as `main.go` in a module importing soroi, then run `go run .`.
 
 ```go
 package main
@@ -18,15 +18,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main records loading and cache reuse for a single query key.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 
-	events, err := client.SubscribeEvents(cacheq.EventOptions{
+	events, err := client.SubscribeEvents(soroi.EventOptions{
 		Key:    "product:42",
 		Buffer: 16,
 	})
@@ -37,7 +37,7 @@ func main() {
 
 	load := func(context.Context) (string, error) { return "product 42", nil }
 	for range 2 {
-		if _, err := cacheq.Fetch(context.Background(), client, "product:42", load); err != nil {
+		if _, err := soroi.Fetch(context.Background(), client, "product:42", load); err != nil {
 			panic(err)
 		}
 	}
@@ -69,7 +69,7 @@ The example reads buffered records after closing the Client. Long-running applic
 ## Subscription options
 
 ```go
-subscription, err := client.SubscribeEvents(cacheq.EventOptions{
+subscription, err := client.SubscribeEvents(soroi.EventOptions{
 	Key:    "product:42",
 	Buffer: 256,
 })

@@ -1,22 +1,22 @@
-# 开始使用 cacheq
+# 开始使用 soroi
 
 [English](getting-started.en-US.md)
 
-cacheq 是 Go 的类型安全查询客户端，提供进程内缓存、同键请求共享和查询状态订阅，适用于服务端处理器、后台任务和交互式应用。
+soroi 是 Go 的类型安全查询客户端，提供进程内缓存、同键请求共享和查询状态订阅，适用于服务端处理器、后台任务和交互式应用。
 
 ## 安装
 
-需要 Go 1.22 或更新版本。cacheq 核心库没有外部依赖。
+需要 Go 1.22 或更新版本。soroi 核心库没有外部依赖。
 
 ```sh
-go get github.com/Waterkyuu/cacheq
+go get github.com/Waterkyuu/soroi
 ```
 
 在应用入口创建客户端，将它传给需要数据的业务模块，并在应用退出时关闭。缓存保存在本进程内存中，不会自动跨服务同步。
 
 ## 快速开始
 
-在导入 cacheq 的 Go 模块中，将下面的完整程序保存为 `main.go`，运行 `go run .`。示例使用本地加载函数，无需网络服务。
+在导入 soroi 的 Go 模块中，将下面的完整程序保存为 `main.go`，运行 `go run .`。示例使用本地加载函数，无需网络服务。
 
 ```go
 package main
@@ -27,7 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // User contains the profile fields required by this application.
@@ -38,7 +38,7 @@ type User struct {
 
 // main shares one cached result between a subscription and an imperative read.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 
 	var calls atomic.Int32
@@ -46,10 +46,10 @@ func main() {
 		calls.Add(1)
 		return User{Name: "Alice"}, nil
 	}
-	profile := cacheq.Query(client, "user:42", loadUser)
+	profile := soroi.Query(client, "user:42", loadUser)
 	defer profile.Close()
 
-	user, err := cacheq.Fetch(
+	user, err := soroi.Fetch(
 		context.Background(),
 		client,
 		"user:42",

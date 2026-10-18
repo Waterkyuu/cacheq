@@ -1,7 +1,7 @@
 # Bubble Tea task board
 
-A local task board built with cacheq and Bubble Tea v2. Requires Go 1.26 or later.
-The example has its own module; `replace` uses the repository's cacheq
+A local task board built with soroi and Bubble Tea v2. Requires Go 1.26 or later.
+The example has its own module; `replace` uses the repository's soroi
 implementation without adding TUI dependencies to the core library.
 
 From the repository root:
@@ -57,7 +57,7 @@ The [English walkthrough](../../docs/bubbletea.en-US.md) and
 ```sh
 go vet ./...
 go test -race ./... -count=1
-go build -o /tmp/cacheq-bubbletea .
+go build -o /tmp/soroi-bubbletea .
 ```
 
 Tests run the actual Bubble Tea event loop with pipe input and no renderer.

@@ -10,24 +10,24 @@ import (
 	"testing"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // TestHTTPLoadMany loads known IDs immediately in bounded batches and retains per-position HTTP outcomes.
 func TestHTTPLoadMany(t *testing.T) {
 	api := newBulkUserAPI(t)
-	batcher, err := cacheq.NewBatcher(
+	batcher, err := soroi.NewBatcher(
 		context.Background(),
 		bulkHTTPFetcher(api.server),
-		cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
+		soroi.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(batcher.Close)
-	out := make(chan []cacheq.BatchResult[user], 1)
+	out := make(chan []soroi.BatchResult[user], 1)
 	go func() { out <- batcher.LoadMany(context.Background(), []int{43, 42, 43, 99}) }()
-	var results []cacheq.BatchResult[user]
+	var results []soroi.BatchResult[user]
 	select {
 	case results = <-out:
 	case <-time.After(3 * time.Second):
@@ -38,7 +38,7 @@ func TestHTTPLoadMany(t *testing.T) {
 			t.Fatalf("HTTP result[%d] = %+v", index, results[index])
 		}
 	}
-	if !errors.Is(results[3].Err, cacheq.ErrBatchResultMissing) || api.count("/bulk") != 2 {
+	if !errors.Is(results[3].Err, soroi.ErrBatchResultMissing) || api.count("/bulk") != 2 {
 		t.Fatalf("missing result = %+v; bulk calls = %d", results[3], api.count("/bulk"))
 	}
 	api.update(t, user{Name: "Bob"})
@@ -65,10 +65,10 @@ func TestHTTPLoadManyTermination(t *testing.T) {
 				close(stopped)
 			}))
 			t.Cleanup(server.Close)
-			batcher, err := cacheq.NewBatcher(
+			batcher, err := soroi.NewBatcher(
 				context.Background(),
 				bulkHTTPFetcher(server),
-				cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 10},
+				soroi.BatchOptions{Wait: time.Hour, MaxBatchSize: 10},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -76,7 +76,7 @@ func TestHTTPLoadManyTermination(t *testing.T) {
 			t.Cleanup(batcher.Close)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			out := make(chan []cacheq.BatchResult[user], 1)
+			out := make(chan []soroi.BatchResult[user], 1)
 			go func() { out <- batcher.LoadMany(ctx, []int{42, 43, 42}) }()
 			awaitBatchSignal(t, entered)
 			switch action {
@@ -85,7 +85,7 @@ func TestHTTPLoadManyTermination(t *testing.T) {
 			case "close":
 				batcher.Close()
 			}
-			var results []cacheq.BatchResult[user]
+			var results []soroi.BatchResult[user]
 			select {
 			case results = <-out:
 			case <-time.After(3 * time.Second):
@@ -99,7 +99,7 @@ func TestHTTPLoadManyTermination(t *testing.T) {
 					t.Fatalf("HTTP failure result = %+v", result)
 				}
 				if action == "cancel" && !errors.Is(result.Err, context.Canceled) ||
-					action == "close" && !errors.Is(result.Err, cacheq.ErrBatcherClosed) {
+					action == "close" && !errors.Is(result.Err, soroi.ErrBatcherClosed) {
 					t.Fatalf("%s result = %+v", action, result)
 				}
 			}

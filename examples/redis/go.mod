@@ -1,10 +1,10 @@
-module github.com/Waterkyuu/cacheq/examples/redis
+module github.com/Waterkyuu/soroi/examples/redis
 
 go 1.26.0
 
 require (
-	github.com/Waterkyuu/cacheq v0.3.0
-	github.com/Waterkyuu/cacheq/store/redis v0.3.0
+	github.com/Waterkyuu/soroi v0.3.1
+	github.com/Waterkyuu/soroi/store/redis v0.3.1
 	github.com/redis/go-redis/v9 v9.23.0
 )
 
@@ -14,6 +14,6 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 )
 
-replace github.com/Waterkyuu/cacheq => ../..
+replace github.com/Waterkyuu/soroi => ../..
 
-replace github.com/Waterkyuu/cacheq/store/redis => ../../store/redis
+replace github.com/Waterkyuu/soroi/store/redis => ../../store/redis

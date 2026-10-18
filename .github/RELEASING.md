@@ -1,4 +1,4 @@
-# Releasing cacheq
+# Releasing soroi
 
 Open **Actions → Release → Run workflow**, select `main`, and enter a stable
 version such as `v0.1.1`. Leave **dry_run** unchecked to publish.
@@ -51,3 +51,14 @@ An existing tag for another commit is rejected. If publication stops after
 pushing the tag, rerun the workflow at the same commit and version. It reuses
 that tag; an existing Release and its notes are preserved. Never move, delete,
 or reuse a published Go module tag; publish corrections under a new version.
+
+## soroi rename release
+
+Version `v0.3.1` is an explicit exception to patch compatibility: it changes the
+module path, package name, and default Redis prefix. Include the bilingual
+[cacheq migration instructions](../docs/versioning.en-US.md#migrating-from-cacheq-to-soroi)
+in the release notes. Preserve all historical releases and tags.
+
+Publish both `v0.3.1` and `store/redis/v0.3.1` at the same checked commit. The
+release workflow publishes the root tag only; publish the adapter tag separately
+so `github.com/Waterkyuu/soroi/store/redis@v0.3.1` can resolve.

@@ -6,18 +6,18 @@ Use `store/redis` to share query results between service instances reading the s
 
 ## Installation
 
-You need Go 1.26+, this cacheq checkout, and an installed `redis-server`. The core library requires only Go 1.22+; `store/redis` is a separate module whose go-redis dependency requires Go 1.26+.
+You need Go 1.26+, this soroi checkout, and an installed `redis-server`. The core library requires only Go 1.22+; `store/redis` is a separate module whose go-redis dependency requires Go 1.26+.
 
-The following setup uses local source without assuming an installable adapter release. Run from the **cacheq repository root** to create an independent temporary example module:
+The following setup uses local source without assuming an installable adapter release. Run from the **soroi repository root** to create an independent temporary example module:
 
 ```sh
-CACHEQ_SOURCE_DIR="$(pwd)"
-CACHEQ_DEMO_DIR="$(mktemp -d)"
-cd "$CACHEQ_DEMO_DIR"
-go mod init example.com/cacheq-redis-demo
-go mod edit -replace="github.com/Waterkyuu/cacheq=$CACHEQ_SOURCE_DIR"
-go mod edit -replace="github.com/Waterkyuu/cacheq/store/redis=$CACHEQ_SOURCE_DIR/store/redis"
-go get github.com/Waterkyuu/cacheq/store/redis@v0.0.0
+SOROI_SOURCE_DIR="$(pwd)"
+SOROI_DEMO_DIR="$(mktemp -d)"
+cd "$SOROI_DEMO_DIR"
+go mod init example.com/soroi-redis-demo
+go mod edit -replace="github.com/Waterkyuu/soroi=$SOROI_SOURCE_DIR"
+go mod edit -replace="github.com/Waterkyuu/soroi/store/redis=$SOROI_SOURCE_DIR/store/redis"
+go get github.com/Waterkyuu/soroi/store/redis@v0.0.0
 ```
 
 The two replacements point to the core and Redis adapter source. For an existing project, configure these paths in its `go.mod` and add the dependency without running `go mod init` again.
@@ -49,13 +49,13 @@ B first: Alice, shared hits: 1
 A again: Alice, shared hits: 1
 ```
 
-1. A's first `definition.Fetch(ctx, a)` finds no fresh local or shared value. cacheq calls the source callback, encodes Alice as JSON in Redis, and retains Alice in A's local cache.
+1. A's first `definition.Fetch(ctx, a)` finds no fresh local or shared value. soroi calls the source callback, encodes Alice as JSON in Redis, and retains Alice in A's local cache.
 2. B's first `definition.Fetch(ctx, b)` finds no local value, decodes the Redis record into a new `User`, and retains it in B's local cache. The source callback does not run.
 3. A's next `definition.Fetch(ctx, a)` returns its fresh local value. The shared-hit counter stays at one because Redis is not accessed.
 
 `Definition.Key` identifies an entry within each Client. `SharedCacheOptions.Key`, together with the adapter's Prefix, identifies the Redis record; this example uses `user:7` for both keys. A and B run in one process to make the sequence visible. Separate service processes can reuse the same record by configuring the same Redis namespace, shared key, compatible Format, and result type. They do not need to share a Go object.
 
-The example clears only its reserved `cacheq-minimal-demo` shared key before reading, so repeated runs produce the same output. `StaleTime` controls when Clients consider data fresh, while the shared `TTL` caps the shared result's freshness and retention. Both are one minute here; the Redis adapter's invalidation metadata can outlive the result payload.
+The example clears only its reserved `soroi-minimal-demo` shared key before reading, so repeated runs produce the same output. `StaleTime` controls when Clients consider data fresh, while the shared `TTL` caps the shared result's freshness and retention. Both are one minute here; the Redis adapter's invalidation metadata can outlive the result payload.
 
 ## Usage
 
@@ -73,7 +73,7 @@ Declare User at package level. Place the initialization and operation snippets b
 
 ### Create a Redis store
 
-Use `redistore.New(remote, options)` to create a Redis storage adapter. The application creates remote as a go-redis client; the returned store implements SharedStore for subsequent shared cache operations. Prefix gives records an application namespace, `cacheq-quickstart` here.
+Use `redistore.New(remote, options)` to create a Redis storage adapter. The application creates remote as a go-redis client; the returned store implements SharedStore for subsequent shared cache operations. Prefix gives records an application namespace, `soroi-quickstart` here.
 
 This code creates an example context with a ten-second lifetime and a Redis connection, then creates the adapter. Ping verifies connectivity for the example; redistore.New itself validates configuration without server I/O.
 
@@ -91,8 +91,8 @@ defer func() { _ = remote.Close() }()
 if err := remote.Ping(ctx).Err(); err != nil {
 	panic(err)
 }
-// Store adapts the borrowed connection to cacheq operations in this namespace.
-store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
+// Store adapts the borrowed connection to soroi operations in this namespace.
+store, err := redistore.New(remote, redistore.Options{Prefix: "soroi-quickstart"})
 if err != nil {
 	panic(err)
 }
@@ -102,14 +102,14 @@ In an application, create the Redis connection and store at startup and reuse th
 
 ### Create a shared cache
 
-Use `cacheq.NewSharedCache(store, options)` to configure shared caching for one query result. The function infers the saved and restored result type from `SharedCacheOptions[V]`; this example uses `SharedCacheOptions[User]` with the User defined above. The store argument is the Redis adapter created in the previous step.
+Use `soroi.NewSharedCache(store, options)` to configure shared caching for one query result. The function infers the saved and restored result type from `SharedCacheOptions[V]`; this example uses `SharedCacheOptions[User]` with the User defined above. The store argument is the Redis adapter created in the previous step.
 
 This example shares the profile of user 7 in tenant 42 under `tenant:42:user:7:v1`, using default JSON encoding and the format label `user.json.v1`. It retains the result for at most five minutes from source completion and waits at most 200 milliseconds for each shared store operation.
 
 ```go
 // Bind one User record's identity and caching rules to the Redis adapter.
 // Construction validates configuration without reading or writing Redis.
-shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+shared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 	// Key identifies this tenant's user profile across service instances.
 	Key: "tenant:42:user:7:v1",
 	// Format must match the schema and encoding expected by every reader.
@@ -124,13 +124,13 @@ if err != nil {
 }
 ```
 
-The returned shared has type `*cacheq.SharedCache[User]` and holds storage and reuse rules for this data. Construction only validates and saves configuration; it does not load a profile. The next section attaches it to a query through Definition.Shared.
+The returned shared has type `*soroi.SharedCache[User]` and holds storage and reuse rules for this data. Construction only validates and saves configuration; it does not load a profile. The next section attaches it to a query through Definition.Shared.
 
 For user 8, create a configuration with a different key such as `tenant:42:user:8:v1`, reusing the same store. Colons and key segments are application naming conventions. Format labels the schema and encoding version readers must match; it does not choose a codec. JSON is used here because Codec is unset. Invalid key, Format, TTL, Timeout, or other options return errors; see "Configuration" for constraints.
 
 ### Define a query using the shared cache
 
-Call `cacheq.QueryDefinition(key, fetcher)` to define the local query identity and source read. The loader returns `User`, so the function infers `User` and returns `(cacheq.Definition[User], error)`. Handle the construction error, then assign the shared object from the previous step to the returned definition's `Shared` field; it must have type `*cacheq.SharedCache[User]`.
+Call `soroi.QueryDefinition(key, fetcher)` to define the local query identity and source read. The loader returns `User`, so the function infers `User` and returns `(soroi.Definition[User], error)`. Handle the construction error, then assign the shared object from the previous step to the returned definition's `Shared` field; it must have type `*soroi.SharedCache[User]`.
 
 Here source is a concurrency-safe database substitute and calls counts source reads. This code only defines the Fetcher callback; constructing a query definition does not execute it. In application code, replace it with a database or API read that uses its supplied context.
 
@@ -140,7 +140,7 @@ var source atomic.Value
 source.Store(User{Name: "Alice"})
 var calls atomic.Int64
 // Definition connects the shared rules to a local query identity and source.
-definition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+definition, err := soroi.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 	calls.Add(1)
 	return source.Load().(User), nil
 })
@@ -161,8 +161,8 @@ StaleTime of one minute permits reusing a source result as fresh within that int
 
 ```go
 // Both Clients use the same shared configuration and keep separate local results.
-a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+a := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+b := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 defer a.Close()
 defer b.Close()
 
@@ -193,8 +193,8 @@ Insert this snippet at the end of the complete example's main function at the en
 ```go
 // Simulate a successful database or API write before invalidating the cache.
 source.Store(User{Name: "Bob"})
-if err := definition.InvalidateShared(ctx, a, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+if err := definition.InvalidateShared(ctx, a, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 }); err != nil {
 	panic(err)
 }
@@ -220,8 +220,8 @@ B can still return its local Alice until its freshness deadline or local invalid
 To have only B reload its data, insert this code after the previous snippet. It reuses `b` and the existing query definition:
 
 ```go
-if err := b.Invalidate(definition.Key, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+if err := b.Invalidate(definition.Key, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 }); err != nil {
 	panic(err)
 }
@@ -282,7 +282,7 @@ Timeout bounds each store call separately, not the whole query. Request contexts
 
 | Field | Purpose | Required or default | Constraints |
 | --- | --- | --- | --- |
-| `redistore.Options.Prefix` | Isolate Redis namespaces by application or environment | Empty selects `cacheq` | Braces are rejected; use your own production namespace |
+| `redistore.Options.Prefix` | Isolate Redis namespaces by application or environment | Empty selects `soroi` | Braces are rejected; use your own production namespace |
 | `redistore.Options.EnableNotifications` | Publish invalidations and allow watcher subscriptions | Default false | Requires additional Pub/Sub permissions; enable on every publisher |
 | `redistore.Options.EnableTags` | Enable remote tag invalidation across keys | Default false | Uses a separate data layout; one namespace occupies one Cluster slot |
 | `SharedCacheOptions.ShareTags` | Register Definition.Tags remotely | Default false | Requires enabled store tag support; existing tags on the same shared record are still honored |
@@ -298,7 +298,7 @@ Explicit invalidation does not silently degrade: if the remote InvalidateShared 
 | Symptom | Cause to check | Action |
 | --- | --- | --- |
 | `go run` cannot find the adapter or requires a newer Go version | Incorrect local replacement paths or an older toolchain | Check both source replacements and use Go 1.26+ |
-| The example's Ping fails | Redis is stopped, or its address or permissions are wrong | Check the server at `127.0.0.1:16379`; this is a demonstration startup check, not a cacheq requirement |
+| The example's Ping fails | Redis is stopped, or its address or permissions are wrong | Check the server at `127.0.0.1:16379`; this is a demonstration startup check, not a soroi requirement |
 | B loads the source again and ReadErrors increases | Redis connection, ACL, or operation timeout | Inspect `shared.Stats().LastError`, then check connection settings, writable-primary access, and script permissions |
 | Hits stays at 0 without read errors | StaleTime is 0, the record expired, or reads always hit local data | Set positive freshness and use a new Client to verify shared hits; local hits do not increment shared Hits |
 | DecodeErrors increases and the source runs | Format mismatch, damaged record, or codec decoding failure | Inspect LastError for the failing stage or actual record format; align types, Format, and Codec, using a new key for incompatible results |
@@ -324,7 +324,7 @@ last_error=<nil>
 
 `shared.Stats()` counts only operations using this SharedCache object, not Redis-wide or cross-process activity. Bypasses counts attempts that skip shared data after forced refresh or invalidation. WriteConflicts counts shared writes rejected after invalidation during a load. Client statistics continue to describe local caching and loading.
 
-`SharedStats.LastError` retains the latest counted shared-cache failure. Its error message identifies the operation (`read`, `decode`, `encode`, `write`, or `invalidate`), logical shared Key, and expected Format. Codec and envelope failures also identify the failed stage. A format mismatch reports the actual stored format; invalid envelope timestamps and empty store versions receive explanatory errors. cacheq does not append the cached payload; underlying errors retain their own diagnostic details. Error message text is diagnostic output, not a stable parsing API.
+`SharedStats.LastError` retains the latest counted shared-cache failure. Its error message identifies the operation (`read`, `decode`, `encode`, `write`, or `invalidate`), logical shared Key, and expected Format. Codec and envelope failures also identify the failed stage. A format mismatch reports the actual stored format; invalid envelope timestamps and empty store versions receive explanatory errors. soroi does not append the cached payload; underlying errors retain their own diagnostic details. Error message text is diagnostic output, not a stable parsing API.
 
 Underlying store, codec, and JSON errors remain in the wrapping chain. Use `errors.Is(stats.LastError, context.DeadlineExceeded)` to identify a store deadline, or `errors.As` to inspect a driver or codec error type; import the standard `errors` package when using these functions. Applications must check for nil before calling LastError.Error. Custom errors must remain immutable while retained.
 
@@ -347,7 +347,7 @@ Missing or expired records, zero freshness, and conditional-write conflicts do n
 
 ### Run the complete example
 
-Save the following complete program as main.go in the temporary module created during installation (`$CACHEQ_DEMO_DIR`). It combines the creation and fetching operations above, resetting only its demonstration record for repeatable output.
+Save the following complete program as main.go in the temporary module created during installation (`$SOROI_DEMO_DIR`). It combines the creation and fetching operations above, resetting only its demonstration record for repeatable output.
 
 ```go
 package main
@@ -358,8 +358,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
-	redistore "github.com/Waterkyuu/cacheq/store/redis"
+	"github.com/Waterkyuu/soroi"
+	redistore "github.com/Waterkyuu/soroi/store/redis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -384,15 +384,15 @@ func main() {
 	if err := remote.Ping(ctx).Err(); err != nil {
 		panic(err)
 	}
-	// Store adapts the borrowed connection to cacheq operations in this namespace.
-	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
+	// Store adapts the borrowed connection to soroi operations in this namespace.
+	store, err := redistore.New(remote, redistore.Options{Prefix: "soroi-quickstart"})
 	if err != nil {
 		panic(err)
 	}
 
 	// Bind one User record's identity and caching rules to the Redis adapter.
 	// Construction validates configuration without reading or writing Redis.
-	shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+	shared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 		// Key identifies this tenant's user profile across service instances.
 		Key: "tenant:42:user:7:v1",
 		// Format must match the schema and encoding expected by every reader.
@@ -415,7 +415,7 @@ func main() {
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
 	// Definition connects the shared rules to a local query identity and source.
-	definition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+	definition, err := soroi.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 		calls.Add(1)
 		return source.Load().(User), nil
 	})
@@ -425,8 +425,8 @@ func main() {
 	definition.Shared = shared
 
 	// Both Clients use the same shared configuration and keep separate local results.
-	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	a := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+	b := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer a.Close()
 	defer b.Close()
 
@@ -459,7 +459,7 @@ B: Alice, source calls: 1
 shared hits: 1
 ```
 
-After A loads the source, B reuses the Redis result, so the source call count stays at 1. The program resets only the demonstration record in the cacheq-quickstart namespace. Do not perform this reset at application startup or keep production data in this namespace. Stop the disposable server with Ctrl+C in its terminal when finished.
+After A loads the source, B reuses the Redis result, so the source call count stays at 1. The program resets only the demonstration record in the soroi-quickstart namespace. Do not perform this reset at application startup or keep production data in this namespace. Stop the disposable server with Ctrl+C in its terminal when finished.
 
 ### Related guides
 
