@@ -31,7 +31,7 @@ func TestQueryTagsSelection(t *testing.T) {
 		"a": {"users", "tenant:42"}, "b": {"users", "tenant:99"},
 		"c": {"settings", "tenant:42"}, "empty": {""},
 	} {
-		definition := QueryDefinition(key, func(context.Context) (int, error) { return 1, nil })
+		definition := QueryDefinition(key, func(context.Context) (int, error) { return 1, nil }, QueryOptions{})
 		definition.Tags = tags
 		if _, err := definition.Fetch(context.Background(), c); err != nil {
 			t.Fatal(err)
@@ -173,7 +173,7 @@ func TestQueryTagsValidation(t *testing.T) {
 	if err := Set(c, "typed", 1); err != nil {
 		t.Fatal(err)
 	}
-	bad := QueryDefinition("typed", func(context.Context) (string, error) { return "", nil })
+	bad := QueryDefinition("typed", func(context.Context) (string, error) { return "", nil }, QueryOptions{})
 	bad.Tags = []string{"rejected"}
 	if _, err := bad.Fetch(context.Background(), c); !errors.Is(err, ErrTypeMismatch) {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestQueryTagsValidation(t *testing.T) {
 		t.Fatal("rejected operation registered tags")
 	}
 	failure := errors.New("offline")
-	failed := QueryDefinition("failed", func(context.Context) (int, error) { return 0, failure })
+	failed := QueryDefinition("failed", func(context.Context) (int, error) { return 0, failure }, QueryOptions{})
 	failed.Tags = []string{"failed"}
 	if _, err := failed.Fetch(context.Background(), c); !errors.Is(err, failure) {
 		t.Fatal(err)
@@ -213,7 +213,7 @@ func TestQueryTagsValidation(t *testing.T) {
 // TestQueryTagsCapacity removes tags with an evicted key and does not transfer them to a replacement.
 func TestQueryTagsCapacity(t *testing.T) {
 	c, _ := newAgeClient(t, Options{StaleTime: time.Hour, MaxEntries: 1})
-	definition := QueryDefinition("key", func(context.Context) (int, error) { return 1, nil })
+	definition := QueryDefinition("key", func(context.Context) (int, error) { return 1, nil }, QueryOptions{})
 	definition.Tags = []string{"users"}
 	if _, err := definition.Fetch(context.Background(), c); err != nil {
 		t.Fatal(err)
@@ -232,7 +232,7 @@ func TestQueryTagsCapacity(t *testing.T) {
 // TestQueryTagsGC releases labels with inactive cached state using a controlled cleanup callback.
 func TestQueryTagsGC(t *testing.T) {
 	c, scheduler := newGCClient(t, time.Minute)
-	definition := QueryDefinition("key", func(context.Context) (int, error) { return 1, nil })
+	definition := QueryDefinition("key", func(context.Context) (int, error) { return 1, nil }, QueryOptions{})
 	definition.Tags = []string{"users"}
 	if _, err := definition.Fetch(context.Background(), c); err != nil {
 		t.Fatal(err)
@@ -251,7 +251,7 @@ func TestQueryTagsGC(t *testing.T) {
 // TestQueryTagsSnapshot excludes labels registered after the operation has captured its candidates.
 func TestQueryTagsSnapshot(t *testing.T) {
 	c, _ := newAgeClient(t, Options{StaleTime: time.Hour})
-	definition := QueryDefinition("a", func(context.Context) (int, error) { return 1, nil })
+	definition := QueryDefinition("a", func(context.Context) (int, error) { return 1, nil }, QueryOptions{})
 	definition.Tags = []string{"users"}
 	if _, err := definition.Fetch(context.Background(), c); err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestQueryTagsSnapshot(t *testing.T) {
 // TestQueryTagsMaxAge preserves query labels when data availability expires but query state remains.
 func TestQueryTagsMaxAge(t *testing.T) {
 	c, now := newAgeClient(t, Options{StaleTime: time.Hour, MaxAge: time.Minute})
-	definition := QueryDefinition("key", func(context.Context) (int, error) { return 1, nil })
+	definition := QueryDefinition("key", func(context.Context) (int, error) { return 1, nil }, QueryOptions{})
 	definition.Tags = []string{"users"}
 	if _, err := definition.Fetch(context.Background(), c); err != nil {
 		t.Fatal(err)

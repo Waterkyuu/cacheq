@@ -132,9 +132,11 @@ if err := cacheq.Prefetch(
 	client,
 	"greeting",
 	getGreeting,
+	cacheq.QueryOptions{},
 ); err != nil {
 	return err
 }
+
 ```
 
 This waits for preparation and returns only an error. Subsequent `Fetch` or `Query` uses the same cache. Fresh data avoids a load; active same-key requests are shared. Replace the fixed fetcher with an HTTP loader in production.

@@ -85,8 +85,8 @@ func main() {
 		return "hello", nil
 	}
 	queries := []*cacheq.QueryHandle[string]{
-		cacheq.Query(client, "greeting", load),
-		cacheq.Query(client, "greeting", load),
+		cacheq.Query(client, "greeting", load, cacheq.QueryOptions{}),
+		cacheq.Query(client, "greeting", load, cacheq.QueryOptions{}),
 	}
 	for _, query := range queries {
 		defer query.Close()

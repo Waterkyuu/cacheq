@@ -37,7 +37,7 @@ func TestSharedQueryOptions(t *testing.T) {
 			}
 			h := Query(c, "user", load, options)
 			t.Cleanup(h.Close)
-			if err := c.Invalidate("user"); err != nil {
+			if err := c.Invalidate("user", InvalidateOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			if calls != 0 || h.Snapshot().Fetching {
@@ -69,21 +69,21 @@ func TestSharedQueryOptions(t *testing.T) {
 	}
 }
 
-// TestPrefetchOptionsSelection preserves last-value precedence and explicit retry disabling.
+// TestPrefetchOptionsSelection verifies defaults and freshness with individual overrides.
 func TestPrefetchOptionsSelection(t *testing.T) {
 	hour, zero, retries := time.Hour, time.Duration(0), 0
 	for _, tc := range []struct {
-		// name describes which final option controls the cache decision.
+		// name identifies the loading configuration being checked.
 		name string
-		// options supplies complete values rather than field-wise merges.
-		options []QueryOptions
-		// cached indicates whether the final policy accepts the stored result.
+		// options supplies one loading policy for this operation.
+		options QueryOptions
+		// cached indicates whether the configuration accepts the stored result.
 		cached bool
 	}{
-		{name: "omitted"},
-		{name: "fresh disabled", options: []QueryOptions{{Disable: true, StaleTime: &hour}}, cached: true},
-		{name: "last fresh", options: []QueryOptions{{StaleTime: &zero}, {StaleTime: &hour}}, cached: true},
-		{name: "last inherits", options: []QueryOptions{{StaleTime: &hour}, {Retry: &retries}}},
+		{name: "defaults"},
+		{name: "fresh disabled", options: QueryOptions{Disable: true, StaleTime: &hour}, cached: true},
+		{name: "zero freshness", options: QueryOptions{StaleTime: &zero}},
+		{name: "retry only", options: QueryOptions{Retry: &retries}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, now := newAgeClient(t, Options{StaleTime: time.Minute})
@@ -93,7 +93,7 @@ func TestPrefetchOptionsSelection(t *testing.T) {
 			err := Prefetch(context.Background(), c, "user", func(context.Context) (int, error) {
 				calls++
 				return 2, nil
-			}, tc.options...)
+			}, tc.options)
 			want, wantCalls := 2, 1
 			if tc.cached {
 				want, wantCalls = 1, 0
@@ -105,43 +105,40 @@ func TestPrefetchOptionsSelection(t *testing.T) {
 	}
 }
 
-// TestQueryOptionsDefaultEnabled keeps automatic loading on unless the final options explicitly disable it.
+// TestQueryOptionsDefaultEnabled keeps automatic loading on unless the configuration disables it.
 func TestQueryOptionsDefaultEnabled(t *testing.T) {
 	freshness, timeout, retries := time.Minute, time.Hour, 1
 	for _, tc := range []struct {
-		// name identifies the omitted or explicit enablement setting.
+		// name identifies the zero-value or explicit enablement setting.
 		name string
 		// options contains the complete option values supplied to Query.
-		options []QueryOptions
+		options QueryOptions
 		// automatic indicates whether construction and invalidation should load data.
 		automatic bool
 	}{
-		{name: "omitted", automatic: true},
-		{name: "empty", options: []QueryOptions{{}}, automatic: true},
-		{name: "freshness only", options: []QueryOptions{{StaleTime: &freshness}}, automatic: true},
-		{name: "retry only", options: []QueryOptions{{Retry: &retries}}, automatic: true},
-		{name: "timeout only", options: []QueryOptions{{Timeout: &timeout}}, automatic: true},
-		{name: "retry predicate only", options: []QueryOptions{{RetryIf: func(error) bool { return false }}}, automatic: true},
-		{name: "retry delay only", options: []QueryOptions{{RetryDelay: func(int) time.Duration { return 0 }}}, automatic: true},
-		{name: "enabled", options: []QueryOptions{{Disable: false}}, automatic: true},
-		{name: "disabled", options: []QueryOptions{{Disable: true}}},
-		{name: "disabled with freshness", options: []QueryOptions{{Disable: true, StaleTime: &freshness}}},
-		{name: "last omitted flag", options: []QueryOptions{{Disable: true}, {StaleTime: &freshness}}, automatic: true},
-		{name: "last disabled flag", options: []QueryOptions{{StaleTime: &freshness}, {Disable: true}}},
+		{name: "defaults", automatic: true},
+		{name: "freshness only", options: QueryOptions{StaleTime: &freshness}, automatic: true},
+		{name: "retry only", options: QueryOptions{Retry: &retries}, automatic: true},
+		{name: "timeout only", options: QueryOptions{Timeout: &timeout}, automatic: true},
+		{name: "retry predicate only", options: QueryOptions{RetryIf: func(error) bool { return false }}, automatic: true},
+		{name: "retry delay only", options: QueryOptions{RetryDelay: func(int) time.Duration { return 0 }}, automatic: true},
+		{name: "enabled", options: QueryOptions{Disable: false}, automatic: true},
+		{name: "disabled", options: QueryOptions{Disable: true}},
+		{name: "disabled with freshness", options: QueryOptions{Disable: true, StaleTime: &freshness}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newInvalidationClient(t)
 			var calls atomic.Int32
 			handle := Query(c, "users", func(context.Context) (int, error) {
 				return int(calls.Add(1)), nil
-			}, tc.options...)
+			}, tc.options)
 			t.Cleanup(handle.Close)
 			if tc.automatic {
 				awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
 			} else if state := handle.Snapshot(); state.Fetching || state.HasData || calls.Load() != 0 {
 				t.Fatalf("disabled initial state = %+v; calls=%d", state, calls.Load())
 			}
-			if err := c.Invalidate("users"); err != nil {
+			if err := c.Invalidate("users", InvalidateOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			if tc.automatic {
@@ -163,7 +160,7 @@ func TestQueryOptionsDisableCopied(t *testing.T) {
 	}, options)
 	t.Cleanup(handle.Close)
 	options.Disable = false
-	if err := c.Invalidate("users"); err != nil {
+	if err := c.Invalidate("users", InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if handle.Snapshot().Fetching || calls.Load() != 0 {
@@ -174,7 +171,7 @@ func TestQueryOptionsDisableCopied(t *testing.T) {
 	}
 	awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
 	options.Disable = true
-	if err := c.Invalidate("users"); err != nil {
+	if err := c.Invalidate("users", InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching })
@@ -246,25 +243,22 @@ func TestQueryOptionsFreshness(t *testing.T) {
 	}
 }
 
-// TestQueryOptionsSelection keeps omitted defaults and lets only the last options value affect a call.
+// TestQueryOptionsSelection verifies empty defaults and explicit per-call overrides.
 func TestQueryOptionsSelection(t *testing.T) {
 	hour, zero := time.Hour, time.Duration(0)
 	retries := 0
 	for _, tc := range []struct {
-		// name identifies the omitted, single, or repeated configuration.
+		// name identifies the loading configuration.
 		name string
 		// options contains the complete overrides passed to Fetch.
-		options []QueryOptions
-		// cached indicates whether the final freshness policy reuses the stored value.
+		options QueryOptions
+		// cached indicates whether the configured freshness reuses the stored value.
 		cached bool
 	}{
-		{name: "omitted"},
-		{name: "empty", options: []QueryOptions{{}}},
-		{name: "single", options: []QueryOptions{{StaleTime: &hour}}, cached: true},
-		{name: "last fresh", options: []QueryOptions{{StaleTime: &zero}, {StaleTime: &hour}}, cached: true},
-		{name: "last stale", options: []QueryOptions{{StaleTime: &hour}, {StaleTime: &zero}}},
-		{name: "last empty", options: []QueryOptions{{StaleTime: &hour}, {}}},
-		{name: "last inherits freshness", options: []QueryOptions{{StaleTime: &hour}, {Retry: &retries}}},
+		{name: "defaults"},
+		{name: "single", options: QueryOptions{StaleTime: &hour}, cached: true},
+		{name: "zero freshness", options: QueryOptions{StaleTime: &zero}},
+		{name: "retry only", options: QueryOptions{Retry: &retries}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, now := newAgeClient(t, Options{StaleTime: time.Minute})
@@ -281,7 +275,7 @@ func TestQueryOptionsSelection(t *testing.T) {
 					calls++
 					return 8, nil
 				},
-				tc.options...,
+				tc.options,
 			)
 			want, wantCalls := 8, 1
 			if tc.cached {
@@ -294,30 +288,6 @@ func TestQueryOptionsSelection(t *testing.T) {
 	}
 }
 
-// TestFetchWithOptionsCompatibility preserves the published signature and per-call freshness override.
-func TestFetchWithOptionsCompatibility(t *testing.T) {
-	c, now := newAgeClient(t, Options{StaleTime: time.Minute})
-	if err := Set(c, "users", 7); err != nil {
-		t.Fatal(err)
-	}
-	now.Store(int64(time.Minute))
-	hour := time.Hour
-	legacy := FetchWithOptions[int]
-	value, err := legacy(
-		context.Background(),
-		c,
-		"users",
-		nil,
-		QueryOptions{StaleTime: &hour},
-	)
-	if err != nil || value != 7 {
-		t.Fatalf("legacy cache lookup = %d, %v", value, err)
-	}
-	if !Get[int](c, "users").Stale {
-		t.Fatal("legacy override changed Client defaults")
-	}
-}
-
 // TestImperativeOptionsFreshness applies per-call cache decisions without registering policies on the key.
 func TestImperativeOptionsFreshness(t *testing.T) {
 	c, now := newAgeClient(t, Options{StaleTime: time.Minute})
@@ -327,7 +297,7 @@ func TestImperativeOptionsFreshness(t *testing.T) {
 		return calls, nil
 	}
 	hour, zero := time.Hour, time.Duration(0)
-	if err := Prefetch(context.Background(), c, "users", fetch); err != nil {
+	if err := Prefetch(context.Background(), c, "users", fetch, QueryOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	now.Store(int64(time.Minute))
@@ -335,7 +305,7 @@ func TestImperativeOptionsFreshness(t *testing.T) {
 	if err != nil || value != 1 || calls != 1 {
 		t.Fatalf("longer policy = %d, %v; calls=%d", value, err, calls)
 	}
-	value, err = Fetch(context.Background(), c, "users", fetch)
+	value, err = Fetch(context.Background(), c, "users", fetch, QueryOptions{})
 	if err != nil || value != 2 || calls != 2 {
 		t.Fatalf("default policy = %d, %v; calls=%d", value, err, calls)
 	}
@@ -680,9 +650,9 @@ func TestQueryOptionsAutomaticRefresh(t *testing.T) {
 	}, QueryOptions{Retry: &retries, RetryDelay: func(int) time.Duration { return 0 }})
 	t.Cleanup(first.Close)
 	awaitState(t, first.Updates(), func(s Snapshot[int]) bool { return s.HasData && !s.Fetching })
-	second := Query(c, "users", func(context.Context) (int, error) { return 99, nil })
+	second := Query(c, "users", func(context.Context) (int, error) { return 99, nil }, QueryOptions{})
 	t.Cleanup(second.Close)
-	if err := c.Invalidate("users"); err != nil {
+	if err := c.Invalidate("users", InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	awaitStats(t, c, func(s Stats) bool { return s.LoadSuccesses == 2 })
@@ -692,7 +662,7 @@ func TestQueryOptionsAutomaticRefresh(t *testing.T) {
 	if err := first.SetEnabled(false); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Invalidate("users"); err != nil {
+	if err := c.Invalidate("users", InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	awaitState(t, second.Updates(), func(s Snapshot[int]) bool { return s.Data == 99 && !s.Fetching })

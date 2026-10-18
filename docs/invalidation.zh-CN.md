@@ -4,7 +4,7 @@
 
 缓存失效保留已有数据，并将其标记为过期。修改用户资料后，可以同时使详情和列表失效，即使它们分别返回 `User` 和 `[]User`。
 
-`Invalidate` 接受精确单键、`[]any` 列表、`func(any) bool` 条件函数或可复用的 `QueryFilter`。[统一查询筛选](query-filters.zh-CN.md)可以组合精确键和条件函数，并复用于等待刷新、取消和删除。配置可省略；传多个配置时最后一个生效。只有 `[]any` 被识别为批量列表，其他切片类型需要显式转换。nil 参数和非法键返回 `ErrInvalidKey`；空列表或 nil `[]any` 列表不做任何操作。
+`Invalidate` 接受精确单键、`[]any` 列表、`func(any) bool` 条件函数或可复用的 `QueryFilter`。[统一查询筛选](query-filters.zh-CN.md)可以组合精确键和条件函数，并复用于等待刷新、取消和删除。必须传入一份 `InvalidateOptions`；使用 `InvalidateOptions{}` 采用默认刷新策略。只有 `[]any` 被识别为批量列表，其他切片类型需要显式转换。nil 参数和非法键返回 `ErrInvalidKey`；空列表或 nil `[]any` 列表不做任何操作。
 
 ## 快速开始
 
@@ -31,7 +31,7 @@ func main() {
 	load := func(context.Context) (string, error) {
 		return backend.Load().(string), nil
 	}
-	query := cacheq.Query(client, "message", load)
+	query := cacheq.Query(client, "message", load, cacheq.QueryOptions{})
 	defer query.Close()
 	ctx := context.Background()
 	before, err := cacheq.Fetch(
@@ -39,6 +39,7 @@ func main() {
 		client,
 		"message",
 		load,
+		cacheq.QueryOptions{},
 	)
 	if err != nil {
 		panic(err)
@@ -46,7 +47,7 @@ func main() {
 	fmt.Println("before:", before)
 
 	backend.Store("updated")
-	if _, err := client.InvalidateAndWait(ctx, "message"); err != nil {
+	if _, err := client.InvalidateAndWait(ctx, "message", cacheq.InvalidateOptions{}); err != nil {
 		panic(err)
 	}
 	after := query.Snapshot().Data
@@ -74,9 +75,10 @@ after: updated
 ## 单键失效
 
 ```go
-if err := client.Invalidate("user:42"); err != nil {
+if err := client.Invalidate("user:42", InvalidateOptions{}); err != nil {
 	return err
 }
+
 ```
 
 数据保留、`Stale` 变成 true，并通知查询对象。有启用的查询对象时，用其加载函数启动后台刷新；没有启用的对象时只标记过期。
@@ -88,19 +90,21 @@ if err := client.Invalidate("user:42"); err != nil {
 先建立返回不同类型的查询：
 
 ```go
-detail := cacheq.Query(client, "user:42", getUser) // QueryHandle[User]
-users := cacheq.Query(client, "users", getUsers)   // QueryHandle[[]User]
+detail := cacheq.Query(client, "user:42", getUser, cacheq.QueryOptions{}) // QueryHandle[User]
+users := cacheq.Query(client, "users", getUsers, cacheq.QueryOptions{})   // QueryHandle[[]User]
 defer detail.Close()
 defer users.Close()
+
 ```
 
 业务先成功提交用户修改，再让相关缓存失效：
 
 ```go
 // Call the application's user-update API successfully before invalidating.
-if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
+if err := client.Invalidate([]any{"user:42", "users"}, InvalidateOptions{}); err != nil {
 	return err
 }
+
 ```
 
 一次调用覆盖同一客户端中的不同结果类型。默认刷新有启用查询对象的键，其余键只变旧。重复键只处理一次，避免重复启动请求，或再次标记刚启动的刷新为过期。
@@ -174,9 +178,10 @@ type ResourceKey struct {
 if err := client.Invalidate(func(key any) bool {
 	resource, ok := key.(ResourceKey)
 	return ok && resource.Resource == "users" && resource.Tenant == 42
-}); err != nil {
+}, InvalidateOptions{}); err != nil {
 	return err
 }
+
 ```
 
 字符串前缀没有内置的特殊含义。使用字符串时自己匹配前缀；使用结构体时匹配字段。键仍然必须可比较，包含切片或映射的结构体不能使用。
@@ -208,16 +213,17 @@ if err := client.Invalidate("users", cacheq.InvalidateOptions{
 ## `InvalidateAndWait`：等待关联刷新
 
 ```go
-results, err := client.InvalidateAndWait(ctx, []any{"user:42", "users"})
+results, err := client.InvalidateAndWait(ctx, []any{"user:42", "users"}, InvalidateOptions{})
 for _, result := range results {
 	fmt.Printf("key=%v refreshed=%t err=%v\n", result.Key, result.Refreshed, result.Err)
 }
 if err != nil {
 	return err
 }
+
 ```
 
-该片段需要导入 `fmt`。此入口自动启用 `RefetchAfterLoad`，接受与 `Invalidate` 相同的单键、`[]any`、条件函数和可选配置。只有存在启用查询对象及加载函数的键才刷新。没有订阅、仅有禁用对象或使用 `RefetchNone` 的键只标记过期，结果显示跳过；不会为仅使用 Fetch 的键保存加载函数。
+该片段需要导入 `fmt`。此入口自动启用 `RefetchAfterLoad`，接受与 `Invalidate` 相同的单键、`[]any`、条件函数和单份配置。只有存在启用查询对象及加载函数的键才刷新。没有订阅、仅有禁用对象或使用 `RefetchNone` 的键只标记过期，结果显示跳过；不会为仅使用 Fetch 的键保存加载函数。
 
 先安排所有目标的刷新，再等待结果；单个键失败不会阻止其他键。显式批次按首次出现的顺序返回，重复键合并。条件筛选顺序没有保证，匹配期间删除的键不返回结果。非法目标不会产生任何修改，也不返回结果；空目标返回空结果切片。
 

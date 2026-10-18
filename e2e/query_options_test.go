@@ -29,7 +29,7 @@ func TestHTTPSharedQueryOptions(t *testing.T) {
 				load := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
 				query := cacheq.Query(client, "user", load, options)
 				t.Cleanup(query.Close)
-				if err := client.Invalidate("user"); err != nil {
+				if err := client.Invalidate("user", cacheq.InvalidateOptions{}); err != nil {
 					t.Fatal(err)
 				}
 				if api.count("/users/42") != 0 || query.Snapshot().Fetching {
@@ -100,7 +100,7 @@ func TestHTTPQueryDefinition(t *testing.T) {
 		t.Fatalf("definition HTTP cache = %+v, %v, state=%+v", value, err, query.Snapshot())
 	}
 	api.update(t, user{Name: "Bob"})
-	if err := client.Invalidate(definition.Key); err != nil {
+	if err := client.Invalidate(definition.Key, cacheq.InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if query.Snapshot().Fetching || api.count("/users/42") != 2 {
@@ -114,7 +114,7 @@ func TestHTTPQueryDefinition(t *testing.T) {
 	active := definition.Query(client)
 	t.Cleanup(active.Close)
 	api.update(t, user{Name: "Carol"})
-	if err := client.Invalidate(definition.Key); err != nil {
+	if err := client.Invalidate(definition.Key, cacheq.InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	await(t, active, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Carol" && !s.Fetching })

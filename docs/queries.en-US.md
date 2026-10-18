@@ -48,9 +48,9 @@ func main() {
 	getSettings := func(context.Context) (Settings, error) {
 		return Settings{Theme: "dark"}, nil
 	}
-	detail := cacheq.Query(client, "user:42", getUser)
-	users := cacheq.Query(client, "users", getUsers)
-	settings := cacheq.Query(client, "settings", getSettings)
+	detail := cacheq.Query(client, "user:42", getUser, cacheq.QueryOptions{})
+	users := cacheq.Query(client, "users", getUsers, cacheq.QueryOptions{})
+	settings := cacheq.Query(client, "settings", getSettings, cacheq.QueryOptions{})
 	defer detail.Close()
 	defer users.Close()
 	defer settings.Close()
@@ -61,6 +61,7 @@ func main() {
 		client,
 		"user:42",
 		getUser,
+		cacheq.QueryOptions{},
 	)
 	if err != nil {
 		panic(err)
@@ -88,14 +89,15 @@ The following partial snippets use `client`, `getUser`, and `getUsers` from the 
 ## `Query`: current data and background loading
 
 ```go
-users := cacheq.Query(client, "users", getUsers)
+users := cacheq.Query(client, "users", getUsers, cacheq.QueryOptions{})
 defer users.Close()
 state := users.Snapshot()
+
 ```
 
 Missing data starts an initial request. Fresh data is reused. Stale data remains available while a background request runs. Neither `Query` nor `Snapshot()` waits for HTTP completion. A snapshot is a value; a previously returned variable does not update itself.
 
-Omitting options, supplying an empty `cacheq.QueryOptions{}`, or leaving `Disable` false enables loading. Set `Disable: true` to disable automatic loading. If multiple options are supplied, the last wins. Construction failures appear in `Snapshot().Err` and the initial `Updates()` value; the failed handle's channel then closes.
+Supplying `cacheq.QueryOptions{}` or leaving `Disable` false enables loading. Set `Disable: true` to disable automatic loading. Each call requires exactly one configuration. Construction failures appear in `Snapshot().Err` and the initial `Updates()` value; the failed handle's channel then closes.
 
 ## `Updates`: receive the latest state
 
@@ -153,11 +155,13 @@ users, err := cacheq.Fetch(
 	client,
 	"users",
 	getUsers,
+	cacheq.QueryOptions{},
 )
 if err != nil {
 	return err
 }
 _ = users // []User
+
 ```
 
 Fresh cached results return immediately; stale or missing results wait for a load. Use this in HTTP handlers, jobs, or business steps requiring the result. It shares data and in-flight work with `Query`. `Fetcher[V]` is a `func(context.Context) (V, error)` business loader. Create the client once at the application boundary and inject it into request handlers.

@@ -47,7 +47,7 @@ func BenchmarkCacheBenefit(b *testing.B) {
 			read := load
 			if mode != "NoCache" {
 				read = func(ctx context.Context) ([sha256.Size]byte, error) {
-					return cacheq.Fetch(ctx, client, "benefit", load)
+					return cacheq.Fetch(ctx, client, "benefit", load, cacheq.QueryOptions{})
 				}
 			}
 			if mode == "CacheHit" {
@@ -140,7 +140,7 @@ func benchmarkConcurrentFetch(b *testing.B, sameKey bool, mode string) {
 	ctx := context.Background()
 	if mode == "CacheHit" {
 		for keyIndex, key := range keys {
-			value, err := cacheq.Fetch(ctx, client, key, loaders[keyIndex])
+			value, err := cacheq.Fetch(ctx, client, key, loaders[keyIndex], cacheq.QueryOptions{})
 			if err != nil || value != want[keyIndex] {
 				b.Fatalf("warm-up for %v failed: %v", key, err)
 			}
@@ -182,6 +182,7 @@ func benchmarkConcurrentFetch(b *testing.B, sameKey bool, mode string) {
 							client,
 							keys[keyIndex],
 							loaders[keyIndex],
+							cacheq.QueryOptions{},
 						)
 					}
 				}

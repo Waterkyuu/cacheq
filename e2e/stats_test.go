@@ -37,10 +37,10 @@ func TestHTTPStatsSharedRetry(t *testing.T) {
 	})
 	t.Cleanup(client.Close)
 	fetch := readJSON[user](server.Client(), server.URL)
-	first := cacheq.Query(client, "user", fetch)
+	first := cacheq.Query(client, "user", fetch, cacheq.QueryOptions{})
 	t.Cleanup(first.Close)
 	<-started
-	second := cacheq.Query(client, "user", fetch)
+	second := cacheq.Query(client, "user", fetch, cacheq.QueryOptions{})
 	t.Cleanup(second.Close)
 	if state := client.Stats(); state.CacheMisses != 2 || state.MergedRequests != 1 || state.Loads != 1 ||
 		state.LoadSuccesses != 0 || state.Retries != 0 || state.TotalLoadDuration != 0 {
@@ -55,6 +55,7 @@ func TestHTTPStatsSharedRetry(t *testing.T) {
 		client,
 		"user",
 		fetch,
+		cacheq.QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +86,12 @@ func TestHTTPStatsFailures(t *testing.T) {
 	})
 	t.Cleanup(client.Close)
 	api.failNext(2)
-	detail := cacheq.Query(client, "user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
+	detail := cacheq.Query(
+		client,
+		"user",
+		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+		cacheq.QueryOptions{},
+	)
 	t.Cleanup(detail.Close)
 	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.Err != nil && !s.Fetching })
 	if state := client.Stats(); state.LoadFailures != 1 || state.Retries != 1 || state.Loads != 1 ||
@@ -95,7 +101,7 @@ func TestHTTPStatsFailures(t *testing.T) {
 	if _, err := detail.Refetch(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Invalidate("user"); err != nil {
+	if err := client.Invalidate("user", cacheq.InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching && s.Err == nil })

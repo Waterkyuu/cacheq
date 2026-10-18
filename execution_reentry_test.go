@@ -36,7 +36,7 @@ func TestBatcherExecutionReentry(t *testing.T) {
 					t.Cleanup(c.Close)
 					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 					defer cancel()
-					_, err = Fetch(ctx, c, "key", b.Fetcher(1))
+					_, err = Fetch(ctx, c, "key", b.Fetcher(1), QueryOptions{})
 					if !errors.Is(err, ErrExecutionReentry) {
 						t.Fatalf("nested load = %v, want ErrExecutionReentry", err)
 					}
@@ -107,16 +107,21 @@ func TestExecutionReentryCallbacks(t *testing.T) {
 				_, err := Fetch(ctx, c, "inner", func(context.Context) (int, error) {
 					t.Error("recursive query executed")
 					return 1, nil
-				})
+				}, QueryOptions{})
 				return 0, fmt.Errorf("nested query: %w", err)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			switch boundary {
 			case "query":
-				_, err = Fetch(ctx, c, "outer", load)
+				_, err = Fetch(ctx, c, "outer", load, QueryOptions{})
 			case "mutation":
-				h := Mutation(c, func(ctx context.Context, _ int) (int, error) { return load(ctx) }, nil)
+				h := Mutation(
+					c,
+					func(ctx context.Context, _ int) (int, error) { return load(ctx) },
+					nil,
+					MutationOptions{},
+				)
 				t.Cleanup(h.Close)
 				_, err = h.Mutate(ctx, 1)
 			case "batch":

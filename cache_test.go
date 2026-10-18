@@ -304,6 +304,7 @@ func TestClientRetries(t *testing.T) {
 				}
 				return "", failure
 			},
+			QueryOptions{},
 		)
 		if calls != 3 || succeed && (err != nil || value != "recovered") || !succeed && !errors.Is(err, failure) {
 			t.Fatalf(
@@ -334,6 +335,7 @@ func TestRetryCancellation(t *testing.T) {
 		client,
 		"a",
 		func(context.Context) (string, error) { return "", errors.New("offline") },
+		QueryOptions{},
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("retry cancellation = %v", err)
@@ -352,6 +354,7 @@ func TestClientTimeout(t *testing.T) {
 			<-ctx.Done()
 			return "", ctx.Err()
 		},
+		QueryOptions{},
 	)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("query timeout = %v", err)
@@ -516,18 +519,24 @@ func TestGCUseRestartsRetention(t *testing.T) {
 					client,
 					"a",
 					nil,
+					QueryOptions{},
 				); err != nil {
 					t.Fatal(err)
 				}
 			case "query":
-				handle := Query(client, "a", func(context.Context) (string, error) { return "unused", nil })
+				handle := Query(
+					client,
+					"a",
+					func(context.Context) (string, error) { return "unused", nil },
+					QueryOptions{},
+				)
 				handle.Close()
 			case "snapshot":
 				Get[string](client, "a")
 			case "set":
 				Set(client, "a", "updated")
 			case "invalidate":
-				client.Invalidate("a")
+				client.Invalidate("a", InvalidateOptions{})
 			}
 			current := scheduler.latest(t)
 			if !previous.stopped.Load() || current == previous {
@@ -623,6 +632,7 @@ func TestGCLoads(t *testing.T) {
 					client,
 					"a",
 					fetch,
+					QueryOptions{},
 				)
 				finished <- err
 			}()
@@ -678,6 +688,7 @@ func TestGCInitialLoad(t *testing.T) {
 		func(context.Context) (string, error) {
 			return "loaded", nil
 		},
+		QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -693,6 +704,7 @@ func TestGCInitialLoad(t *testing.T) {
 		func(context.Context) (string, error) {
 			return "reloaded", nil
 		},
+		QueryOptions{},
 	)
 	if value != "reloaded" || err != nil {
 		t.Fatalf("fetch after cleanup = %q, %v", value, err)
@@ -710,6 +722,7 @@ func TestGCInitialFailure(t *testing.T) {
 		func(context.Context) (string, error) {
 			return "", failure
 		},
+		QueryOptions{},
 	)
 	if !errors.Is(err, failure) {
 		t.Fatalf("initial failure = %v", err)
@@ -787,12 +800,14 @@ func Example_sharedCache() {
 		client,
 		"models",
 		fetch,
+		QueryOptions{},
 	)
 	second, _ := Fetch(
 		context.Background(),
 		client,
 		"models",
 		fetch,
+		QueryOptions{},
 	)
 	fmt.Println(first, second, calls)
 	// Output: shared shared 1

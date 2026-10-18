@@ -36,13 +36,13 @@ type QueryHandle[V any] struct {
 }
 
 // Query creates a typed handle and loads missing or stale data in the background.
-// Automatic loading defaults to enabled; if options are supplied, the last option wins.
+// Automatic loading defaults to enabled; pass QueryOptions{} to use Client defaults.
 // Nil policy fields inherit Client defaults; each handle evaluates its own ordinary freshness.
 // Concurrent loads share the initiator's policy; automatic invalidation uses the oldest enabled handle.
 // Invalid keys, incompatible result types, and nil fetchers are reported through Snapshot and Updates.
 // Disabled handles still receive shared updates and may explicitly Refetch. Close releases the subscription.
-func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOptions) *QueryHandle[V] {
-	definition := QueryDefinition(key, fetch, options...)
+func Query[V any](client *Client, key any, fetch Fetcher[V], options QueryOptions) *QueryHandle[V] {
+	definition := QueryDefinition(key, fetch, options)
 	return query(client, definition)
 }
 
@@ -181,7 +181,7 @@ func (h *QueryHandle[V]) activeLocked() error {
 
 // Fetch waits for fresh data without owning a long-lived subscription.
 // The result type is inferred from fetch, allowing one client to serve unrelated data types.
-// Optional per-call overrides are copied; only the last options value overrides Client defaults.
+// The single per-call configuration is copied; empty QueryOptions inherit Client defaults.
 // Disable controls automatic subscriptions only and does not suppress this explicit read.
 // Ordinary freshness is evaluated independently; explicit loader deadlines stay authoritative.
 // Joining in-flight work preserves its initiator's loader, retries, and timeout.
@@ -191,23 +191,10 @@ func Fetch[V any](
 	client *Client,
 	key any,
 	fetch Fetcher[V],
-	options ...QueryOptions,
-) (V, error) {
-	definition := QueryDefinition(key, fetch, options...)
-	return definition.Fetch(ctx, client)
-}
-
-// FetchWithOptions is a compatibility wrapper for callers predating optional Fetch arguments.
-//
-// Deprecated: pass QueryOptions directly to Fetch instead.
-func FetchWithOptions[V any](
-	ctx context.Context,
-	client *Client,
-	key any,
-	fetch Fetcher[V],
 	options QueryOptions,
 ) (V, error) {
-	return Fetch(ctx, client, key, fetch, options)
+	definition := QueryDefinition(key, fetch, options)
+	return definition.Fetch(ctx, client)
 }
 
 // FetchWithExpiry loads data with an absolute freshness deadline, preserving the age of restored data.
@@ -232,15 +219,15 @@ func FetchWithExpiry[V any](ctx context.Context, client *Client, key any, load L
 }
 
 // Prefetch warms a typed key without returning its data; unlike browser prefetch APIs it returns errors.
-// It uses the same loading policy as Fetch, ignores Disable, and applies only the last options value.
+// It uses the supplied loading policy like Fetch and ignores Disable.
 func Prefetch[V any](
 	ctx context.Context,
 	client *Client,
 	key any,
 	fetch Fetcher[V],
-	options ...QueryOptions,
+	options QueryOptions,
 ) error {
-	definition := QueryDefinition(key, fetch, options...)
+	definition := QueryDefinition(key, fetch, options)
 	return definition.Prefetch(ctx, client)
 }
 

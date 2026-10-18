@@ -45,7 +45,7 @@ func TestQueryDisabled(t *testing.T) {
 				Set(client, "users", 7)
 			}
 			if cache == "stale" {
-				client.Invalidate("users")
+				client.Invalidate("users", InvalidateOptions{})
 			}
 			var calls atomic.Int32
 			observer := Query(
@@ -65,7 +65,7 @@ func TestQueryDisabled(t *testing.T) {
 			if state.Stale != (cache != "fresh") {
 				t.Fatalf("disabled initial freshness = %+v", state)
 			}
-			client.Invalidate("users")
+			client.Invalidate("users", InvalidateOptions{})
 			state = awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Stale })
 			if state.Fetching || calls.Load() != 0 {
 				t.Fatalf("disabled invalidation = %+v; calls = %d", state, calls.Load())
@@ -102,7 +102,7 @@ func TestQueryEnableTransitions(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatal("enabling requested already fresh data")
 	}
-	client.Invalidate("users")
+	client.Invalidate("users", InvalidateOptions{})
 	awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching })
 	observer.SetEnabled(false)
 	client.Invalidate([]any{"users"}, InvalidateOptions{})
@@ -135,7 +135,7 @@ func TestQueryFreshData(t *testing.T) {
 	if state := observer.Snapshot(); state.Data != 7 || state.Fetching || calls.Load() != 0 {
 		t.Fatalf("fresh observation = %+v", state)
 	}
-	client.Invalidate("users")
+	client.Invalidate("users", InvalidateOptions{})
 	state := awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Data == 8 && !s.Fetching })
 	if state.Stale || calls.Load() != 1 {
 		t.Fatalf("fresh cache invalidation = %+v; calls = %d", state, calls.Load())
@@ -189,14 +189,14 @@ func TestQuerySharedEnablement(t *testing.T) {
 		awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
 	}
 	first.SetEnabled(false)
-	client.Invalidate("users")
+	client.Invalidate("users", InvalidateOptions{})
 	awaitState(t, disabled.Updates(), func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching })
 	awaitState(t, second.Updates(), func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching })
 	if disabledCalls.Load() != 0 || activeCalls.Load() != 2 {
 		t.Fatalf("shared loads = disabled %d, active %d", disabledCalls.Load(), activeCalls.Load())
 	}
 	second.SetEnabled(false)
-	client.Invalidate("users")
+	client.Invalidate("users", InvalidateOptions{})
 	if state := first.Snapshot(); state.Fetching || !state.Stale || activeCalls.Load() != 2 {
 		t.Fatalf("all observers disabled = %+v", state)
 	}
@@ -228,11 +228,12 @@ func TestQueryManualRequests(t *testing.T) {
 					client,
 					"users",
 					fetch,
+					QueryOptions{},
 				); err != nil {
 					t.Fatal(err)
 				}
 			case "query":
-				active := Query(client, "users", fetch)
+				active := Query(client, "users", fetch, QueryOptions{})
 				active.Close()
 			case "refetch":
 				if _, err := observer.Refetch(context.Background()); err != nil {
@@ -240,7 +241,7 @@ func TestQueryManualRequests(t *testing.T) {
 				}
 			}
 			awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
-			client.Invalidate("users")
+			client.Invalidate("users", InvalidateOptions{})
 			if state := observer.Snapshot(); state.Fetching || !state.Stale || calls.Load() != 1 {
 				t.Fatalf("disabled retained loader = %+v; calls = %d", state, calls.Load())
 			}
@@ -273,7 +274,7 @@ func TestQueryDisableDuringLoad(t *testing.T) {
 	t.Cleanup(observer.Close)
 	<-started
 	observer.SetEnabled(false)
-	client.Invalidate("users")
+	client.Invalidate("users", InvalidateOptions{})
 	close(release)
 	state := awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.HasData && !s.Fetching })
 	if state.Data != 1 || state.Err != nil || !state.Stale || calls.Load() != 1 {
@@ -290,7 +291,7 @@ func TestQueryDisableDuringLoad(t *testing.T) {
 func TestQueryFailure(t *testing.T) {
 	client := newInvalidationClient(t)
 	Set(client, "users", 7)
-	client.Invalidate("users")
+	client.Invalidate("users", InvalidateOptions{})
 	failure := errors.New("offline")
 	var calls atomic.Int32
 	observer := Query(
@@ -308,7 +309,7 @@ func TestQueryFailure(t *testing.T) {
 		t.Fatalf("failed observation = %+v", state)
 	}
 	observer.SetEnabled(false)
-	client.Invalidate("users")
+	client.Invalidate("users", InvalidateOptions{})
 	if state = observer.Snapshot(); state.Fetching || calls.Load() != 1 || !errors.Is(state.Err, failure) {
 		t.Fatalf("disabled failed observation = %+v", state)
 	}
@@ -465,15 +466,15 @@ func TestHeterogeneousQueries(t *testing.T) {
 	detail := Query(c, "user:42", func(context.Context) (testUser, error) {
 		detailCalls.Add(1)
 		return testUser{Name: "Alice"}, nil
-	})
+	}, QueryOptions{})
 	list := Query(c, "users", func(context.Context) ([]testUser, error) {
 		listCalls.Add(1)
 		return []testUser{{Name: "Alice"}}, nil
-	})
+	}, QueryOptions{})
 	settings := Query(c, "settings", func(context.Context) (map[string]bool, error) {
 		settingsCalls.Add(1)
 		return map[string]bool{"dark": true}, nil
-	})
+	}, QueryOptions{})
 	t.Cleanup(detail.Close)
 	t.Cleanup(list.Close)
 	t.Cleanup(settings.Close)
@@ -507,7 +508,7 @@ func TestTypeMismatch(t *testing.T) {
 		t.Fatalf("get mismatch = %+v", state)
 	}
 	var calls atomic.Int32
-	wrong := Query(c, "user", func(context.Context) (int, error) { calls.Add(1); return 0, nil })
+	wrong := Query(c, "user", func(context.Context) (int, error) { calls.Add(1); return 0, nil }, QueryOptions{})
 	if state := <-wrong.Updates(); !errors.Is(state.Err, ErrTypeMismatch) {
 		t.Fatalf("query mismatch = %+v", state)
 	}
@@ -525,6 +526,7 @@ func TestTypeMismatch(t *testing.T) {
 			calls.Add(1)
 			return 0, nil
 		},
+		QueryOptions{},
 	); !errors.Is(err, ErrTypeMismatch) {
 		t.Fatalf("fetch mismatch = %v", err)
 	}
@@ -546,7 +548,7 @@ func TestPendingTypeMismatch(t *testing.T) {
 		case <-release:
 			return testUser{Name: "Alice"}, nil
 		}
-	})
+	}, QueryOptions{})
 	t.Cleanup(good.Close)
 	<-started
 	if err := Set(c, "user", 42); !errors.Is(err, ErrTypeMismatch) {
@@ -559,6 +561,7 @@ func TestPendingTypeMismatch(t *testing.T) {
 		func(context.Context) (int, error) {
 			return 42, nil
 		},
+		QueryOptions{},
 	); !errors.Is(err, ErrTypeMismatch) {
 		t.Fatalf("pending fetch = %v", err)
 	}
@@ -574,7 +577,12 @@ func TestLiveHandleTypeBinding(t *testing.T) {
 	for _, action := range []string{"remove", "clear"} {
 		t.Run(action, func(t *testing.T) {
 			c := newInvalidationClient(t)
-			handle := Query(c, "user", func(context.Context) (testUser, error) { return testUser{Name: "Alice"}, nil })
+			handle := Query(
+				c,
+				"user",
+				func(context.Context) (testUser, error) { return testUser{Name: "Alice"}, nil },
+				QueryOptions{},
+			)
 			awaitState(t, handle.Updates(), func(s Snapshot[testUser]) bool { return s.HasData && !s.Fetching })
 			if action == "remove" {
 				c.Remove("user")
@@ -613,6 +621,7 @@ func TestNilAndInterfaceResults(t *testing.T) {
 		c,
 		"pointer",
 		func(context.Context) (*testUser, error) { return nil, nil },
+		QueryOptions{},
 	)
 	if pointer != nil || err != nil || !Get[*testUser](c, "pointer").HasData {
 		t.Fatalf("nil pointer = %v, %v", pointer, err)
@@ -622,6 +631,7 @@ func TestNilAndInterfaceResults(t *testing.T) {
 		c,
 		"interface",
 		func(context.Context) (any, error) { return nil, nil },
+		QueryOptions{},
 	)
 	if value != nil || err != nil || !Get[any](c, "interface").HasData {
 		t.Fatalf("nil interface = %v, %v", value, err)
@@ -664,13 +674,14 @@ func TestInvalidKeys(t *testing.T) {
 			c,
 			key,
 			func(context.Context) (int, error) { return 1, nil },
+			QueryOptions{},
 		); !errors.Is(
 			err,
 			ErrInvalidKey,
 		) {
 			t.Fatalf("invalid fetch = %v", err)
 		}
-		handle := Query(c, key, func(context.Context) (int, error) { return 1, nil })
+		handle := Query(c, key, func(context.Context) (int, error) { return 1, nil }, QueryOptions{})
 		if !errors.Is(handle.Snapshot().Err, ErrInvalidKey) {
 			t.Fatal("invalid query accepted")
 		}
@@ -680,7 +691,7 @@ func TestInvalidKeys(t *testing.T) {
 		if err := c.Remove(key); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid remove = %v", err)
 		}
-		if err := c.Invalidate(key); !errors.Is(err, ErrInvalidKey) {
+		if err := c.Invalidate(key, InvalidateOptions{}); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid invalidate = %v", err)
 		}
 		if err := c.Invalidate([]any{"safe", key}, InvalidateOptions{}); !errors.Is(err, ErrInvalidKey) {
@@ -725,6 +736,7 @@ func TestQueryLifecycle(t *testing.T) {
 		c,
 		"user",
 		nil,
+		QueryOptions{},
 	); !errors.Is(err, ErrClosed) {
 		t.Fatalf("closed fetch = %v", err)
 	}
@@ -741,6 +753,7 @@ func TestNoFetcher(t *testing.T) {
 		c,
 		"user",
 		nil,
+		QueryOptions{},
 	); !errors.Is(err, ErrNoFetcher) {
 		t.Fatalf("nil fetch = %v", err)
 	}
@@ -763,7 +776,7 @@ func TestFailedRefreshRetainsData(t *testing.T) {
 	c := newInvalidationClient(t)
 	Set(c, "user", "cached")
 	failure := errors.New("offline")
-	handle := Query(c, "user", func(context.Context) (string, error) { return "", failure })
+	handle := Query(c, "user", func(context.Context) (string, error) { return "", failure }, QueryOptions{})
 	t.Cleanup(handle.Close)
 	if _, err := handle.Refetch(context.Background()); !errors.Is(err, failure) {
 		t.Fatalf("refresh = %v", err)
@@ -791,6 +804,7 @@ func TestSetAndRemovePreventLateWrites(t *testing.T) {
 						<-release
 						return "obsolete", nil
 					},
+					QueryOptions{},
 				)
 				finished <- err
 			}()
@@ -821,7 +835,12 @@ func TestInvalidateDeferred(t *testing.T) {
 	Set(c, "user", "cached")
 	Set(c, "users", []string{"cached"})
 	var calls atomic.Int32
-	handle := Query(c, "user", func(context.Context) (string, error) { calls.Add(1); return "new", nil })
+	handle := Query(
+		c,
+		"user",
+		func(context.Context) (string, error) { calls.Add(1); return "new", nil },
+		QueryOptions{},
+	)
 	t.Cleanup(handle.Close)
 	c.Invalidate([]any{"user", "users"}, InvalidateOptions{Refetch: RefetchNone})
 	if state := handle.Snapshot(); !state.Stale || state.Data != "cached" || state.Fetching || calls.Load() != 0 {
@@ -838,11 +857,12 @@ func TestInvalidateDeferred(t *testing.T) {
 			calls.Add(1)
 			return "new", nil
 		},
+		QueryOptions{},
 	); value != "new" || err != nil || calls.Load() != 1 {
 		t.Fatalf("next fetch = %q, %v", value, err)
 	}
 	c.Invalidate("user", InvalidateOptions{Refetch: RefetchNone})
-	next := Query(c, "user", func(context.Context) (string, error) { return "newer", nil })
+	next := Query(c, "user", func(context.Context) (string, error) { return "newer", nil }, QueryOptions{})
 	t.Cleanup(next.Close)
 	awaitState(t, next.Updates(), func(s Snapshot[string]) bool { return s.Data == "newer" && !s.Fetching })
 }
@@ -861,7 +881,7 @@ func TestInvalidateDuringLoad(t *testing.T) {
 		case <-release:
 			return "loaded", nil
 		}
-	})
+	}, QueryOptions{})
 	t.Cleanup(handle.Close)
 	<-started
 	c.Invalidate([]any{"user", "user"}, InvalidateOptions{})
@@ -907,6 +927,7 @@ func TestInvalidatePredicate(t *testing.T) {
 	foundRemoved := false
 	if err := c.Invalidate(
 		func(candidate any) bool { foundRemoved = foundRemoved || candidate == "removed"; return false },
+		InvalidateOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -922,7 +943,7 @@ func TestInvalidatePredicate(t *testing.T) {
 	if err := c.Invalidate(func(any) bool {
 		t.Fatal("closed client evaluated predicate")
 		return true
-	}); !errors.Is(err, ErrClosed) {
+	}, InvalidateOptions{}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("closed invalidation = %v", err)
 	}
 }
@@ -966,7 +987,7 @@ func TestInvalidateTargets(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := c.Invalidate(tc.target); !errors.Is(err, tc.err) {
+			if err := c.Invalidate(tc.target, InvalidateOptions{}); !errors.Is(err, tc.err) {
 				t.Fatalf("invalidation = %v, want %v", err, tc.err)
 			}
 			stale := make(map[any]bool, len(tc.stale))
@@ -980,37 +1001,35 @@ func TestInvalidateTargets(t *testing.T) {
 				}
 			}
 			c.Close()
-			if err := c.Invalidate(tc.target); !errors.Is(err, ErrClosed) {
+			if err := c.Invalidate(tc.target, InvalidateOptions{}); !errors.Is(err, ErrClosed) {
 				t.Fatalf("closed invalidation = %v", err)
 			}
 		})
 	}
 }
 
-// TestInvalidateRefreshModes applies default and last-option refresh policies to all selection forms.
+// TestInvalidateRefreshModes applies observed and deferred refresh policies to all selection forms.
 func TestInvalidateRefreshModes(t *testing.T) {
 	for _, target := range []any{"users", []any{"users", "users"}, func(key any) bool { return key == "users" }} {
 		for _, tc := range []struct {
-			// name identifies the option precedence scenario.
+			// name identifies the refresh policy.
 			name string
 			// options configures whether invalidation should start a refresh.
-			options []InvalidateOptions
+			options InvalidateOptions
 			// refresh reports whether the observer should receive fresh data.
 			refresh bool
 		}{
 			{name: "default", refresh: true},
-			{name: "deferred", options: []InvalidateOptions{{Refetch: RefetchNone}}},
-			{name: "last enables", options: []InvalidateOptions{{Refetch: RefetchNone}, {}}, refresh: true},
-			{name: "last defers", options: []InvalidateOptions{{}, {Refetch: RefetchNone}}},
+			{name: "deferred", options: InvalidateOptions{Refetch: RefetchNone}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				c := newInvalidationClient(t)
 				if err := Set(c, "users", 1); err != nil {
 					t.Fatal(err)
 				}
-				query := Query(c, "users", func(context.Context) (int, error) { return 2, nil })
+				query := Query(c, "users", func(context.Context) (int, error) { return 2, nil }, QueryOptions{})
 				t.Cleanup(query.Close)
-				if err := c.Invalidate(target, tc.options...); err != nil {
+				if err := c.Invalidate(target, tc.options); err != nil {
 					t.Fatal(err)
 				}
 				state := query.Snapshot()
@@ -1038,7 +1057,7 @@ func TestInvalidatePredicateClose(t *testing.T) {
 	if err := c.Invalidate(func(any) bool {
 		c.Close()
 		return true
-	}); !errors.Is(err, ErrClosed) {
+	}, InvalidateOptions{}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("closure during matching = %v", err)
 	}
 }
@@ -1059,13 +1078,13 @@ func TestQueryBackgroundRefresh(t *testing.T) {
 			return testUser{Name: "new"}, nil
 		}
 	}
-	first := Query(c, "user", fetch)
+	first := Query(c, "user", fetch, QueryOptions{})
 	t.Cleanup(first.Close)
 	if first.Snapshot().Fetching {
 		t.Fatal("fresh cached query started a load")
 	}
 	now = now.Add(time.Hour)
-	second := Query(c, "user", fetch)
+	second := Query(c, "user", fetch, QueryOptions{})
 	t.Cleanup(second.Close)
 	<-started
 	state := second.Snapshot()
@@ -1093,6 +1112,7 @@ func TestPrefetchAndCancel(t *testing.T) {
 		c,
 		"warm",
 		func(context.Context) (string, error) { return "ready", nil },
+		QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -1101,6 +1121,7 @@ func TestPrefetchAndCancel(t *testing.T) {
 		c,
 		"warm",
 		nil,
+		QueryOptions{},
 	); value != "ready" || err != nil {
 		t.Fatalf("prefetched value = %q, %v", value, err)
 	}
@@ -1115,6 +1136,7 @@ func TestPrefetchAndCancel(t *testing.T) {
 				<-ctx.Done()
 				return 0, ctx.Err()
 			},
+			QueryOptions{},
 		)
 		finished <- err
 	}()

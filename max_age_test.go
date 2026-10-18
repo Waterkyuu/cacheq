@@ -29,7 +29,7 @@ func TestMaxAgeBoundary(t *testing.T) {
 			case "get":
 				Get[string](c, "a")
 			case "fetch":
-				if _, err := Fetch[string](context.Background(), c, "a", nil); err != nil {
+				if _, err := Fetch[string](context.Background(), c, "a", nil, QueryOptions{}); err != nil {
 					t.Fatal(err)
 				}
 			case "invalidate":
@@ -43,7 +43,16 @@ func TestMaxAgeBoundary(t *testing.T) {
 			if state.HasData || state.Data != "" || !state.Stale || state.Status != Idle {
 				t.Fatalf("at deadline = %+v", state)
 			}
-			if _, err := Fetch[string](context.Background(), c, "a", nil); !errors.Is(err, ErrNoFetcher) {
+			if _, err := Fetch[string](
+				context.Background(),
+				c,
+				"a",
+				nil,
+				QueryOptions{},
+			); !errors.Is(
+				err,
+				ErrNoFetcher,
+			) {
 				t.Fatalf("over-age fresh cache was reused: %v", err)
 			}
 		})
@@ -105,14 +114,14 @@ func TestMaxAgeFailedRefresh(t *testing.T) {
 	now.Store(int64(30 * time.Second))
 	failure := errors.New("offline")
 	fetch := func(context.Context) (string, error) { return "", failure }
-	if _, err := Fetch(context.Background(), c, "a", fetch); !errors.Is(err, failure) {
+	if _, err := Fetch(context.Background(), c, "a", fetch, QueryOptions{}); !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
 	if state := Get[string](c, "a"); !state.HasData || state.Data != "old" || !errors.Is(state.Err, failure) {
 		t.Fatalf("failed refresh before deadline = %+v", state)
 	}
 	now.Store(int64(time.Minute))
-	if _, err := Fetch(context.Background(), c, "a", fetch); !errors.Is(err, failure) {
+	if _, err := Fetch(context.Background(), c, "a", fetch, QueryOptions{}); !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
 	if state := Get[string](c, "a"); state.HasData || state.Data != "" || !errors.Is(state.Err, failure) {
@@ -141,7 +150,7 @@ func TestMaxAgeRefreshCompletion(t *testing.T) {
 						}
 						return "new", nil
 					}
-				})
+				}, QueryOptions{})
 				finished <- err
 			}()
 			<-started
@@ -185,7 +194,7 @@ func TestMaxAgeRenewal(t *testing.T) {
 				Set(c, "a", "new")
 			} else if _, err := Fetch(context.Background(), c, "a", func(context.Context) (string, error) {
 				return "new", nil
-			}); err != nil {
+			}, QueryOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			now.Store(int64(time.Minute))

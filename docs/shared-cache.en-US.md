@@ -103,7 +103,7 @@ For user 8, create a configuration with a different key such as `tenant:42:user:
 
 ### Define a query using the shared cache
 
-Call `cacheq.QueryDefinition(key, fetcher)` to define the local query identity and source read. The loader returns `User`, so the function infers `User` and returns `cacheq.Definition[User]`. Assign the shared object from the previous step to the returned definition's `Shared` field; it must have type `*cacheq.SharedCache[User]`.
+Call `cacheq.QueryDefinition(key, fetcher, cacheq.QueryOptions{})` to define the local query identity and source read. The loader returns `User`, so the function infers `User` and returns `cacheq.Definition[User]`. Assign the shared object from the previous step to the returned definition's `Shared` field; it must have type `*cacheq.SharedCache[User]`.
 
 Here source is a concurrency-safe database substitute and calls counts source reads. This code only defines the Fetcher callback; constructing a query definition does not execute it. In application code, replace it with a database or API read that uses its supplied context.
 
@@ -116,7 +116,7 @@ var calls atomic.Int64
 definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 	calls.Add(1)
 	return source.Load().(User), nil
-})
+}, cacheq.QueryOptions{})
 definition.Shared = shared
 
 ```
@@ -181,7 +181,7 @@ Additional output:
 A refreshed: Bob, source calls: 2
 ```
 
-`RefetchNone` marks data stale without starting an automatic refresh; the next Fetch performs the read here. Without that option, enabled observed queries can refresh under the default policy, but InvalidateShared itself does not wait for refresh completion.
+`RefetchNone` marks data stale without starting an automatic refresh; the next Fetch performs the read here. With `InvalidateOptions{}`, enabled observed queries can refresh under the default policy, but InvalidateShared itself does not wait for refresh completion.
 
 B can still return its local Alice until its freshness deadline or local invalidation. This example has no cross-instance notifications. To have other instances process invalidations promptly, configure EnableNotifications and WatchShared using [shared invalidation and tags](shared-invalidation.en-US.md). Enable remote tags when grouping several shared keys.
 
@@ -214,9 +214,9 @@ Choose an invalidation API by its scope:
 
 | API | Effect |
 | --- | --- |
-| `definition.InvalidateShared(ctx, client)` | Invalidate the shared record, then the supplied Client's query; other watchers can receive the event asynchronously when notifications are enabled |
+| `definition.InvalidateShared(ctx, client, options)` | Invalidate the shared record, then the supplied Client's query; other watchers can receive the event asynchronously when notifications are enabled |
 | `shared.Invalidate(ctx)` | Perform shared invalidation without directly operating on a Client; enabled watchers can still process it asynchronously |
-| `client.Invalidate(key)` | Invalidate only this Client's query; a subsequent newly started load bypasses shared data |
+| `client.Invalidate(key, cacheq.InvalidateOptions{})` | Invalidate only this Client's query; a subsequent newly started load bypasses shared data |
 
 ## Configuration
 
@@ -372,7 +372,7 @@ func main() {
 	definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 		calls.Add(1)
 		return source.Load().(User), nil
-	})
+	}, cacheq.QueryOptions{})
 	definition.Shared = shared
 
 	// Both Clients use the same shared configuration and keep separate local results.

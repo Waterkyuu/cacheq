@@ -14,9 +14,24 @@ func TestHTTPQueryFilter(t *testing.T) {
 	api := newUserAPI(t)
 	c := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)
-	detail := cacheq.Query(c, "tenant:42:user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
-	list := cacheq.Query(c, "tenant:42:users", readJSON[[]user](api.server.Client(), api.server.URL+"/users"))
-	other := cacheq.Query(c, "tenant:99:user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
+	detail := cacheq.Query(
+		c,
+		"tenant:42:user",
+		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+		cacheq.QueryOptions{},
+	)
+	list := cacheq.Query(
+		c,
+		"tenant:42:users",
+		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
+		cacheq.QueryOptions{},
+	)
+	other := cacheq.Query(
+		c,
+		"tenant:99:user",
+		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+		cacheq.QueryOptions{},
+	)
 	t.Cleanup(detail.Close)
 	t.Cleanup(list.Close)
 	t.Cleanup(other.Close)
@@ -25,7 +40,7 @@ func TestHTTPQueryFilter(t *testing.T) {
 	await(t, other, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 	filter := cacheq.QueryFilter{Keys: []any{"tenant:42:users", "tenant:42:user", "tenant:42:user"}}
 	api.update(t, user{Name: "Bob"})
-	results, err := c.InvalidateAndWait(context.Background(), filter)
+	results, err := c.InvalidateAndWait(context.Background(), filter, cacheq.InvalidateOptions{})
 	if err != nil || len(results) != 2 || !results[0].Refreshed || !results[1].Refreshed {
 		t.Fatalf("refresh = %+v, %v", results, err)
 	}

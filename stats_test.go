@@ -49,6 +49,7 @@ func TestStatsCacheDecisions(t *testing.T) {
 		c,
 		"a",
 		nil,
+		QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -58,12 +59,12 @@ func TestStatsCacheDecisions(t *testing.T) {
 	if err := disabled.SetEnabled(true); err != nil {
 		t.Fatal(err)
 	}
-	active := Query(c, "a", func(context.Context) (int, error) { return 3, nil })
+	active := Query(c, "a", func(context.Context) (int, error) { return 3, nil }, QueryOptions{})
 	t.Cleanup(active.Close)
 	if _, err := active.Refetch(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Invalidate("a"); err != nil {
+	if err := c.Invalidate("a", InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	awaitState(t, active.Updates(), func(s Snapshot[int]) bool { return s.HasData && !s.Fetching })
@@ -72,6 +73,7 @@ func TestStatsCacheDecisions(t *testing.T) {
 		c,
 		"missing",
 		nil,
+		QueryOptions{},
 	); !errors.Is(err, ErrNoFetcher) {
 		t.Fatal(err)
 	}
@@ -91,12 +93,14 @@ func TestStatsRejectedCalls(t *testing.T) {
 		c,
 		"a",
 		nil,
+		QueryOptions{},
 	)
 	Fetch[int](
 		context.Background(),
 		c,
 		[]string{"invalid"},
 		nil,
+		QueryOptions{},
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -105,8 +109,9 @@ func TestStatsRejectedCalls(t *testing.T) {
 		c,
 		"a",
 		nil,
+		QueryOptions{},
 	)
-	invalid := Query[int](c, "a", nil)
+	invalid := Query[int](c, "a", nil, QueryOptions{})
 	invalid.Close()
 	if state := c.Stats(); state != before {
 		t.Fatalf("rejected requests changed statistics: %+v", state)
@@ -151,6 +156,7 @@ func TestStatsLoadOutcomes(t *testing.T) {
 					}
 					return 1, tc.terminal
 				},
+				QueryOptions{},
 			)
 			if !errors.Is(err, tc.wantErr) || calls != tc.attempts {
 				t.Fatalf("load = %v, calls = %d", err, calls)
@@ -216,6 +222,7 @@ func TestStatsOwnerCancellation(t *testing.T) {
 				<-ctx.Done()
 				return 0, ctx.Err()
 			},
+			QueryOptions{},
 		)
 		owner <- err
 	}()
@@ -227,6 +234,7 @@ func TestStatsOwnerCancellation(t *testing.T) {
 			c,
 			"a",
 			func(context.Context) (int, error) { return 2, nil },
+			QueryOptions{},
 		)
 		waiter <- err
 	}()
@@ -256,7 +264,7 @@ func TestStatsWaiterCancellation(t *testing.T) {
 		case <-release:
 			return 1, nil
 		}
-	})
+	}, QueryOptions{})
 	t.Cleanup(query.Close)
 	<-started
 	ctx, cancel := context.WithCancel(context.Background())
@@ -268,6 +276,7 @@ func TestStatsWaiterCancellation(t *testing.T) {
 			c,
 			"a",
 			func(context.Context) (int, error) { return 2, nil },
+			QueryOptions{},
 		)
 		finished <- err
 	}()
@@ -301,6 +310,7 @@ func TestStatsDetachedLoads(t *testing.T) {
 						<-ctx.Done()
 						return 0, ctx.Err()
 					},
+					QueryOptions{},
 				)
 				finished <- err
 			}()
@@ -337,6 +347,7 @@ func TestStatsCanceledBackoff(t *testing.T) {
 		c,
 		"a",
 		func(context.Context) (int, error) { return 0, errors.New("offline") },
+		QueryOptions{},
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
@@ -397,6 +408,7 @@ func TestStatsLifetime(t *testing.T) {
 			c,
 			"a",
 			func(context.Context) (int, error) { return 1, nil },
+			QueryOptions{},
 		); err != nil {
 			t.Fatal(err)
 		}

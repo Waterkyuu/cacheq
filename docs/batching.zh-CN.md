@@ -49,9 +49,9 @@ func main() {
 	}
 	defer products.Close()
 
-	first := cacheq.Query(client, "product:42", products.Fetcher(42))
+	first := cacheq.Query(client, "product:42", products.Fetcher(42), cacheq.QueryOptions{})
 	defer first.Close()
-	second := cacheq.Query(client, "product:43", products.Fetcher(43))
+	second := cacheq.Query(client, "product:43", products.Fetcher(43), cacheq.QueryOptions{})
 	defer second.Close()
 	for _, handle := range []*cacheq.QueryHandle[string]{first, second} {
 		for state := range handle.Updates() {
@@ -64,7 +64,7 @@ func main() {
 			}
 		}
 	}
-	value, err := cacheq.Fetch(context.Background(), client, "product:42", products.Fetcher(42))
+	value, err := cacheq.Fetch(context.Background(), client, "product:42", products.Fetcher(42), cacheq.QueryOptions{})
 	if err != nil {
 		panic(err)
 	}

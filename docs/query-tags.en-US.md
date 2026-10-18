@@ -43,15 +43,15 @@ func main() {
 
 	detailDefinition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 		return backend.Load().(User), nil
-	})
+	}, cacheq.QueryOptions{})
 	detailDefinition.Tags = tags
 	listDefinition := cacheq.QueryDefinition("tenant:42:users", func(context.Context) ([]User, error) {
 		return []User{backend.Load().(User)}, nil
-	})
+	}, cacheq.QueryOptions{})
 	listDefinition.Tags = tags
 	otherDefinition := cacheq.QueryDefinition("tenant:99:user:7", func(context.Context) (User, error) {
 		return User{Name: "Carol"}, nil
-	})
+	}, cacheq.QueryOptions{})
 	otherDefinition.Tags = []string{"tenant:99:users"}
 	if err := detailDefinition.Prefetch(ctx, client); err != nil {
 		panic(err)
@@ -69,7 +69,7 @@ func main() {
 
 	backend.Store(User{Name: "Bob"})
 	filter := cacheq.QueryFilter{Tags: []string{"tenant:42:users"}}
-	results, err := client.InvalidateAndWait(ctx, filter)
+	results, err := client.InvalidateAndWait(ctx, filter, cacheq.InvalidateOptions{})
 	if err != nil {
 		panic(err)
 	}
@@ -136,8 +136,8 @@ Only registered queries still retained by the Client participate. Unused definit
 
 | Operation | Behavior |
 | --- | --- |
-| `client.Invalidate(filter, options...)` | Retain data, mark it stale, and schedule refreshes according to options without awaiting completion |
-| `client.InvalidateAndWait(ctx, filter, options...)` | Await post-invalidation refresh outcomes for selected queries |
+| `client.Invalidate(filter, options)` | Retain data, mark it stale, and schedule refreshes according to options without awaiting completion |
+| `client.InvalidateAndWait(ctx, filter, options)` | Await post-invalidation refresh outcomes for selected queries |
 | `client.Cancel(filter)` | Cancel selected shared loads while retaining completed data and subscriptions |
 | `client.Remove(filter)` | Cancel selected shared loads and remove cached data while retaining subscriptions |
 

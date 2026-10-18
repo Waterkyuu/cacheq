@@ -46,7 +46,7 @@ func main() {
 		calls.Add(1)
 		return User{Name: "Alice"}, nil
 	}
-	profile := cacheq.Query(client, "user:42", loadUser)
+	profile := cacheq.Query(client, "user:42", loadUser, cacheq.QueryOptions{})
 	defer profile.Close()
 
 	user, err := cacheq.Fetch(
@@ -54,6 +54,7 @@ func main() {
 		client,
 		"user:42",
 		loadUser,
+		cacheq.QueryOptions{},
 	)
 	if err != nil {
 		panic(err)

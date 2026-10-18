@@ -183,7 +183,7 @@ func TestSharedWatcherClose(t *testing.T) {
 			t.Cleanup(c.Close)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			watch, err := c.WatchShared(ctx, store)
+			watch, err := c.WatchShared(ctx, store, InvalidateOptions{RefetchAfterLoad: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -264,7 +264,7 @@ func TestSharedUnknownTagNotificationConfirmsSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := QueryDefinition("detail", func(context.Context) (int, error) { return 7, nil })
+	d := QueryDefinition("detail", func(context.Context) (int, error) { return 7, nil }, QueryOptions{})
 	d.Shared = shared
 	d.Tags = []string{"declared"}
 	bootstrap := NewClient(Options{StaleTime: time.Hour})
@@ -292,7 +292,7 @@ func TestSharedUnknownTagNotificationConfirmsSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sentinel := QueryDefinition("sentinel", func(context.Context) (int, error) { return 1, nil })
+	sentinel := QueryDefinition("sentinel", func(context.Context) (int, error) { return 1, nil }, QueryOptions{})
 	sentinel.Shared = sentinelShared
 	sentinel.Tags = []string{"remote-only"}
 	if _, err := sentinel.Fetch(context.Background(), c); err != nil {
@@ -357,7 +357,7 @@ func TestSharedTagsLocalSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := QueryDefinition("detail", func(context.Context) (int, error) { return 7, nil })
+	d := QueryDefinition("detail", func(context.Context) (int, error) { return 7, nil }, QueryOptions{})
 	d.Shared = shared
 	d.Tags = []string{"tenant:42:users"}
 	c := NewClient(Options{StaleTime: time.Hour})
@@ -369,7 +369,7 @@ func TestSharedTagsLocalSelection(t *testing.T) {
 	if err := Set(c, "tenant:99", 9); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.InvalidateSharedTags(ctx, store, []string{}); err != nil || store.sequence != 0 {
+	if err := c.InvalidateSharedTags(ctx, store, []string{}, InvalidateOptions{}); err != nil || store.sequence != 0 {
 		t.Fatalf("empty = %v", err)
 	}
 	failure := errors.New("remote tag operation failed")
@@ -378,6 +378,7 @@ func TestSharedTagsLocalSelection(t *testing.T) {
 		ctx,
 		store,
 		[]string{"tenant:42:users"},
+		InvalidateOptions{},
 	); !errors.Is(err, failure) ||
 		Get[int](c, d.Key).Stale {
 		t.Fatalf("failure = %v", err)
@@ -385,10 +386,15 @@ func TestSharedTagsLocalSelection(t *testing.T) {
 	store.tagErr = nil
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := c.InvalidateSharedTags(canceled, store, d.Tags); !errors.Is(err, context.Canceled) {
+	if err := c.InvalidateSharedTags(canceled, store, d.Tags, InvalidateOptions{}); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if err := c.InvalidateSharedTags(ctx, store, []string{"unknown", "tenant:42:users"}); err != nil {
+	if err := c.InvalidateSharedTags(
+		ctx,
+		store,
+		[]string{"unknown", "tenant:42:users"},
+		InvalidateOptions{},
+	); err != nil {
 		t.Fatal(err)
 	}
 	if !Get[int](c, d.Key).Stale || Get[int](c, "tenant:99").Stale {
@@ -410,7 +416,7 @@ func TestSharedWatcherAutomaticRefresh(t *testing.T) {
 	t.Cleanup(c.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	watch, err := c.WatchShared(ctx, store)
+	watch, err := c.WatchShared(ctx, store, InvalidateOptions{RefetchAfterLoad: true})
 	if err != nil {
 		t.Fatal(err)
 	}

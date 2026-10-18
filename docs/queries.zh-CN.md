@@ -48,9 +48,9 @@ func main() {
 	getSettings := func(context.Context) (Settings, error) {
 		return Settings{Theme: "dark"}, nil
 	}
-	detail := cacheq.Query(client, "user:42", getUser)
-	users := cacheq.Query(client, "users", getUsers)
-	settings := cacheq.Query(client, "settings", getSettings)
+	detail := cacheq.Query(client, "user:42", getUser, cacheq.QueryOptions{})
+	users := cacheq.Query(client, "users", getUsers, cacheq.QueryOptions{})
+	settings := cacheq.Query(client, "settings", getSettings, cacheq.QueryOptions{})
 	defer detail.Close()
 	defer users.Close()
 	defer settings.Close()
@@ -61,6 +61,7 @@ func main() {
 		client,
 		"user:42",
 		getUser,
+		cacheq.QueryOptions{},
 	)
 	if err != nil {
 		panic(err)
@@ -88,14 +89,15 @@ Alice
 ## `Query`：读取状态与后台加载
 
 ```go
-users := cacheq.Query(client, "users", getUsers)
+users := cacheq.Query(client, "users", getUsers, cacheq.QueryOptions{})
 defer users.Close()
 state := users.Snapshot()
+
 ```
 
 没有缓存时启动首次请求；缓存新鲜时直接复用；缓存过期时保留旧数据并在后台刷新。`Query` 不等待网络请求完成，`Snapshot()` 也是一次快照，之前拿到的变量不会自己变化。
 
-不传 `QueryOptions`、传空配置或省略 `Disable` 时都默认启用；设置 `Disable: true` 才禁用自动加载。如果传多个配置，最后一个生效。
+传入 `QueryOptions{}` 或省略 `Disable` 字段时默认启用；设置 `Disable: true` 才禁用自动加载。每次调用必须传入一份配置。
 
 无效键、类型冲突或缺少加载函数等构造错误通过 `Snapshot().Err` 和 `Updates()` 的初始状态返回；失败对象的更新通道随后关闭。
 
@@ -157,11 +159,13 @@ users, err := cacheq.Fetch(
 	client,
 	"users",
 	getUsers,
+	cacheq.QueryOptions{},
 )
 if err != nil {
 	return err
 }
 _ = users // []User
+
 ```
 
 缓存新鲜时立即返回；缺失或过期时等待请求。它不建立长期订阅，适合 HTTP 处理器、后台任务或依赖查询结果的业务步骤。与同键 `Query` 共用数据和正在进行的请求。

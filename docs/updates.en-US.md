@@ -71,7 +71,7 @@ after: Bob
 | --- | --- |
 | A complete new value for the key, or data to initialize the cache | `Set(client, key, value)` |
 | A transformation that depends on the key's current data | `Update(client, key, update)` |
-| Knowledge that data changed and must be fetched again | `client.Invalidate(key)` |
+| Knowledge that data changed and must be fetched again | `client.Invalidate(key, cacheq.InvalidateOptions{})` |
 
 With separate `Get` and `Set` calls, another write can occur between them and be overwritten by the final `Set`. `Update` checks for changes during computation to prevent an older value from replacing a newer result.
 
@@ -111,10 +111,11 @@ switch {
 case errors.Is(err, cacheq.ErrNoData):
 	return nil
 case errors.Is(err, cacheq.ErrUpdateConflict):
-	return client.Invalidate("users")
+	return client.Invalidate("users", cacheq.InvalidateOptions{})
 default:
 	return err
 }
+
 ```
 
 `ErrUpdateConflict` means the computed result was not written. The example's `Invalidate` retains current data and refreshes an enabled observed list by default. Without subscribers, it only marks data stale. See [invalidation](invalidation.en-US.md).

@@ -218,13 +218,13 @@ func waitStale[V any](ctx context.Context, query *cacheq.QueryHandle[V]) error {
 
 | API | 契约 |
 | --- | --- |
-| `client.WatchShared(ctx, store, options...)` | 确认订阅建立，将已有绑定查询标记为 stale，并返回 `*SharedWatcher`；最后一份完整配置生效 |
+| `client.WatchShared(ctx, store, options)` | 确认订阅建立，将已有绑定查询标记为 stale，并返回 `*SharedWatcher`，使用一份显式刷新配置 |
 | `watch.Close()` | 取消处理并等待 watcher 自己拥有的订阅释放；幂等，支持并发关闭 |
 | `watch.Done()` | 事件处理停止且资源释放后关闭 |
 | `watch.Stats()` | 返回累计投递与恢复统计 |
-| `definition.InvalidateShared(ctx, client, options...)` | 先提交远端按 key 失效，再处理指定本地 key；发布一个操作回执 |
+| `definition.InvalidateShared(ctx, client, options)` | 先提交远端按 key 失效，再处理指定本地 key；发布一个操作回执 |
 | `shared.Invalidate(ctx)` | 只执行远端按 key 失效；活动 watcher 仍可能异步使本地查询失效 |
-| `client.InvalidateSharedTags(ctx, store, tags, options...)` | 提交远端 OR 标签失效，再处理当前 Client 的绑定查询；本地失败不回滚远端操作 |
+| `client.InvalidateSharedTags(ctx, store, tags, options)` | 提交远端 OR 标签失效，再处理当前 Client 的绑定查询；本地失败不回滚远端操作 |
 | `store.InvalidateTags(ctx, tags)` | 返回已提交的标签回执，不直接操作 Client |
 
 同一个 Client 的查询配置和 watcher 应复用同一个 `Store` 对象。`InvalidationScope()` 是进程内路由身份，不是跨进程缓存 key。不同进程可以各自创建 Store，使用相同的 Redis 地址、Prefix 和 EnableTags 配置，通过同一个远端 channel 收到通知。不同本地 Store 对象具有不同路由身份，即使它们的远端配置恰好相同。
@@ -237,7 +237,7 @@ watcher 建立过程受调用方 context 和 Client 生命周期约束。Redis �
 
 ## 通知策略与本地生命周期
 
-不传 watcher 配置时，采用 `RefetchObserved`，并启用 `RefetchAfterLoad: true`。匹配结果变为 stale，已启用订阅启动刷新，执行中的加载最多合并一次补刷。传入配置时，整份配置替换默认值；未填写字段采用零值。`RefetchNone` 发布 stale 状态而不启动新工作。
+`WatchShared` 必须传入一份 `InvalidateOptions`。其零值采用 `RefetchObserved`，且 `RefetchAfterLoad: false`：匹配结果变为 stale，没有执行中加载时，已启用订阅启动刷新。显式设置 `RefetchAfterLoad: true` 后，执行中的加载最多合并一次补刷。迁移原先省略 watcher 配置的调用时，应传入 `InvalidateOptions{RefetchAfterLoad: true}` 保留原行为。`RefetchNone` 发布 stale 状态而不启动新工作。
 
 通知保留 HasData 和已有值，不启用禁用的查询对象，也不为未观察的查询创建订阅。后续显式 Fetch 可以加载替代值。QueryHandle 的 Close 仍由调用方独立管理，不随 watcher 关闭而自动关闭。
 

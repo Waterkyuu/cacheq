@@ -81,7 +81,7 @@ func TestBatcherFetchSharedBudget(t *testing.T) {
 		if _, err := Fetch(context.Background(), c, "ordinary", func(context.Context) (int, error) {
 			t.Error("ordinary query bypassed the shared limit")
 			return 0, nil
-		}); !errors.Is(err, ErrQueueFull) {
+		}, QueryOptions{}); !errors.Is(err, ErrQueueFull) {
 			t.Errorf("ordinary admission = %v", err)
 		}
 		return map[int]BatchResult[int]{keys[0]: {Data: keys[0]}}, nil
@@ -124,7 +124,7 @@ func TestBatcherQueryBudgetLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitState(t, h.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
-	if err := c.Invalidate("key"); err != nil {
+	if err := c.Invalidate("key", InvalidateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	awaitState(t, h.Updates(), func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching })

@@ -147,7 +147,7 @@ func TestQueryFilterInvalidCancel(t *testing.T) {
 		close(started)
 		<-ctx.Done()
 		return 0, ctx.Err()
-	})
+	}, QueryOptions{})
 	t.Cleanup(q.Close)
 	select {
 	case <-started:
@@ -217,7 +217,7 @@ func TestQueryFilterWait(t *testing.T) {
 	if err := Set(c, key, 1); err != nil {
 		t.Fatal(err)
 	}
-	q := Query(c, key, func(context.Context) (int, error) { return 2, nil })
+	q := Query(c, key, func(context.Context) (int, error) { return 2, nil }, QueryOptions{})
 	t.Cleanup(q.Close)
 	failure := errors.New("backend unavailable")
 	failed := Query(
@@ -239,7 +239,7 @@ func TestQueryFilterWait(t *testing.T) {
 	)
 	t.Cleanup(disabled.Close)
 	filter := QueryFilter{Keys: []any{"empty", key, "failure", key, "unknown"}}
-	results, err := c.InvalidateAndWait(context.Background(), filter)
+	results, err := c.InvalidateAndWait(context.Background(), filter, InvalidateOptions{})
 	if !errors.Is(err, failure) || len(results) != 3 {
 		t.Fatalf("results = %+v, %v", results, err)
 	}
@@ -254,7 +254,12 @@ func TestQueryFilterWait(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.InvalidateAndWait(ctx, filter); !errors.Is(err, context.Canceled) || q.Snapshot().Stale {
+	if _, err := c.InvalidateAndWait(
+		ctx,
+		filter,
+		InvalidateOptions{},
+	); !errors.Is(err, context.Canceled) ||
+		q.Snapshot().Stale {
 		t.Fatalf("pre-canceled selection changed data: %v", err)
 	}
 }

@@ -162,23 +162,15 @@ func NewClient(options Options) *Client {
 
 // Invalidate marks targets selected by an exact key, []any, func(any) bool, or QueryFilter stale.
 // Completed data is retained while selected queries become stale.
-// By default it refreshes enabled observed queries only when no load is active; the last option wins.
+// The zero-value configuration refreshes enabled observed queries only when no load is active.
 // RefetchAfterLoad optionally coalesces in-flight invalidations into one bounded follow-up.
 // Batches are validated before changes; predicates run outside the lock against existing keys.
 // Filter and predicate selection use existing keys only, exclude additions, and skip removed keys.
 // Nil targets or direct predicates are invalid; a nil QueryFilter.Predicate imposes no restriction.
 // Empty batches succeed; closed clients return ErrClosed without evaluating predicates.
-func (c *Client) Invalidate(target any, options ...InvalidateOptions) error {
-	_, err := c.invalidate(target, lastInvalidateOptions(options), nil)
+func (c *Client) Invalidate(target any, options InvalidateOptions) error {
+	_, err := c.invalidate(target, options, nil)
 	return err
-}
-
-// lastInvalidateOptions applies the existing last-option-wins convention.
-func lastInvalidateOptions(options []InvalidateOptions) InvalidateOptions {
-	if len(options) == 0 {
-		return InvalidateOptions{}
-	}
-	return options[len(options)-1]
 }
 
 // invalidate applies shared target selection and records the scheduled refresh for each selected key.

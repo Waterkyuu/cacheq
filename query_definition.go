@@ -28,10 +28,10 @@ type Definition[V any] struct {
 
 // QueryDefinition creates a reusable typed query, inferring its result type from fetch.
 // Construction performs no loading or validation; operations validate using their Client.
-// Only the last options value applies; omitted fields inherit Client defaults at execution.
+// Exactly one configuration is required; nil fields inherit Client defaults at execution.
 // Set Shared and Tags on the returned definition before use to configure shared caching and grouping.
-func QueryDefinition[V any](key any, fetch Fetcher[V], options ...QueryOptions) Definition[V] {
-	return Definition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
+func QueryDefinition[V any](key any, fetch Fetcher[V], options QueryOptions) Definition[V] {
+	return Definition[V]{Key: key, Fetcher: fetch, Options: options}
 }
 
 // Fetch waits for this definition's result using the supplied Client and caller context.
@@ -87,7 +87,7 @@ func (d Definition[V]) request(defaults Options, trigger EventTrigger) queryRequ
 func (d Definition[V]) InvalidateShared(
 	ctx context.Context,
 	client *Client,
-	options ...InvalidateOptions,
+	options InvalidateOptions,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -105,5 +105,5 @@ func (d Definition[V]) InvalidateShared(
 	if err != nil {
 		return err
 	}
-	return client.applySharedKey(d.Key, event, lastInvalidateOptions(options))
+	return client.applySharedKey(d.Key, event, options)
 }

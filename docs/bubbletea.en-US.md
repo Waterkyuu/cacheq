@@ -68,7 +68,7 @@ the loop processes those messages.
 ## Mutate and refresh
 
 Space or enter changes the selected record in the local backend, then calls
-`client.Invalidate("tasks")`. Invalidation marks the shared data stale and starts
+`client.Invalidate("tasks", cacheq.InvalidateOptions{})`. Invalidation marks the shared data stale and starts
 one observed refresh. The list, detail, and summary retain their previous data
 until the refreshed copy arrives.
 

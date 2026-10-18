@@ -64,7 +64,7 @@ func run() error {
 	definition := cacheq.QueryDefinition("user:7", func(context.Context) (User, error) {
 		calls.Add(1)
 		return source.Load().(User), nil
-	})
+	}, cacheq.QueryOptions{})
 	definition.Shared = shared
 	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})

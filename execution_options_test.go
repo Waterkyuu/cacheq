@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// TestExecutionOptions resolves inheritance, replacement, disabling, and last-option precedence per initiator.
+// TestExecutionOptions resolves inheritance, replacement, and disabling per initiator.
 func TestExecutionOptions(t *testing.T) {
 	for _, api := range []string{"fetch", "prefetch", "query"} {
-		for _, mode := range []string{"inherit", "override", "disable", "disable wins", "last inherits", "last disables"} {
+		for _, mode := range []string{"inherit", "override", "disable", "disable wins"} {
 			t.Run(api+"/"+mode, func(t *testing.T) {
 				shared, err := NewExecutor(ExecutionOptions{MaxConcurrent: 1})
 				if err != nil {
@@ -27,18 +27,14 @@ func TestExecutionOptions(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer release()
-				options := []QueryOptions{{}}
+				options := QueryOptions{}
 				switch mode {
 				case "override":
-					options = []QueryOptions{{Executor: separate}}
+					options = QueryOptions{Executor: separate}
 				case "disable":
-					options = []QueryOptions{{DisableExecutor: true}}
+					options = QueryOptions{DisableExecutor: true}
 				case "disable wins":
-					options = []QueryOptions{{Executor: separate, DisableExecutor: true}}
-				case "last inherits":
-					options = []QueryOptions{{DisableExecutor: true}, {}}
-				case "last disables":
-					options = []QueryOptions{{Executor: separate}, {DisableExecutor: true}}
+					options = QueryOptions{Executor: separate, DisableExecutor: true}
 				}
 				calls := 0
 				load := func(context.Context) (int, error) {
@@ -55,22 +51,20 @@ func TestExecutionOptions(t *testing.T) {
 				var value int
 				switch api {
 				case "fetch":
-					value, err = Fetch(context.Background(), c, "key", load, options...)
+					value, err = Fetch(context.Background(), c, "key", load, options)
 				case "prefetch":
-					err = Prefetch(context.Background(), c, "key", load, options...)
+					err = Prefetch(context.Background(), c, "key", load, options)
 					value = Get[int](c, "key").Data
 				case "query":
-					for index := range options {
-						options[index].Disable = true
-					}
-					h := Query(c, "key", load, options...)
+					options.Disable = true
+					h := Query(c, "key", load, options)
 					t.Cleanup(h.Close)
 					// Mutation of the source options must not reconfigure this handle's future loads.
-					options[len(options)-1].Executor = shared
-					options[len(options)-1].DisableExecutor = false
+					options.Executor = shared
+					options.DisableExecutor = false
 					value, err = h.Refetch(context.Background())
 				}
-				if mode == "inherit" || mode == "last inherits" {
+				if mode == "inherit" {
 					if !errors.Is(err, ErrQueueFull) || calls != 0 {
 						t.Fatalf("inherited budget = %d, %v, calls=%d", value, err, calls)
 					}

@@ -132,9 +132,11 @@ if err := cacheq.Prefetch(
 	client,
 	"greeting",
 	getGreeting,
+	cacheq.QueryOptions{},
 ); err != nil {
 	return err
 }
+
 ```
 
 等待缓存准备完成，只返回错误，不返回数据。后续 `Fetch` 或 `Query` 能复用它。已有新鲜缓存不会重新加载；同键正在加载时共用请求。实际加载函数可以是查询文档中的 HTTP 请求。

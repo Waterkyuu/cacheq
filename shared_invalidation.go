@@ -102,13 +102,13 @@ type SharedWatcher struct {
 }
 
 // WatchShared subscribes one Client to the supplied store and repairs any pre-subscription local gap.
-// The default refresh policy uses enabled observers and permits one bounded in-flight follow-up.
-// The last supplied option wins. Disabled observers receive stale snapshots without loading.
+// The zero-value policy refreshes enabled observers; RefetchAfterLoad opts into one bounded follow-up.
+// Exactly one policy is required. Disabled observers receive stale snapshots without loading.
 // Caller cancellation, Client.Close, or watcher.Close releases the subscription; the borrowed store stays open.
 func (c *Client) WatchShared(
 	ctx context.Context,
 	store SharedInvalidationStore,
-	options ...InvalidateOptions,
+	options InvalidateOptions,
 ) (*SharedWatcher, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -121,10 +121,6 @@ func (c *Client) WatchShared(
 	c.mu.Unlock()
 	if closed {
 		return nil, ErrClosed
-	}
-	policy := InvalidateOptions{RefetchAfterLoad: true}
-	if len(options) > 0 {
-		policy = lastInvalidateOptions(options)
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(c.ctx, cancel)
@@ -146,7 +142,7 @@ func (c *Client) WatchShared(
 		return nil, ErrSharedCapability
 	}
 	watch := &SharedWatcher{cancel: cancel, done: make(chan struct{})}
-	_, err = c.applySharedInvalidation(store.InvalidationScope(), SharedInvalidation{Reset: true}, policy)
+	_, err = c.applySharedInvalidation(store.InvalidationScope(), SharedInvalidation{Reset: true}, options)
 	if err != nil {
 		stop()
 		cancel()
@@ -154,7 +150,7 @@ func (c *Client) WatchShared(
 		return nil, err
 	}
 	watch.stats.Resyncs = 1
-	go watch.run(lifetime, stop, c, store.InvalidationScope(), stream, policy)
+	go watch.run(lifetime, stop, c, store.InvalidationScope(), stream, options)
 	return watch, nil
 }
 
@@ -295,7 +291,7 @@ func (c *Client) InvalidateSharedTags(
 	ctx context.Context,
 	store SharedTagStore,
 	tags []string,
-	options ...InvalidateOptions,
+	options InvalidateOptions,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -316,6 +312,6 @@ func (c *Client) InvalidateSharedTags(
 	if err != nil {
 		return err
 	}
-	_, err = c.applySharedInvalidation(store.InvalidationScope(), event, lastInvalidateOptions(options))
+	_, err = c.applySharedInvalidation(store.InvalidationScope(), event, options)
 	return err
 }

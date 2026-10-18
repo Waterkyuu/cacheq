@@ -7,20 +7,19 @@ import (
 	"time"
 )
 
-// TestQueryDefinitionOptions preserves Client defaults and applies only the last loading policy.
+// TestQueryDefinitionOptions verifies inheritance and explicit freshness in one configuration.
 func TestQueryDefinitionOptions(t *testing.T) {
 	zero := time.Duration(0)
 	for _, tc := range []struct {
 		// name identifies the policy selection case.
 		name string
-		// options supplies the constructor's loading policy arguments.
-		options []QueryOptions
+		// options supplies the constructor's single loading policy.
+		options QueryOptions
 		// calls is the number of source reads expected after two explicit fetches.
 		calls int
 	}{
-		{name: "defaults", options: []QueryOptions{}, calls: 1},
-		{name: "override", options: []QueryOptions{{StaleTime: &zero}}, calls: 2},
-		{name: "last wins", options: []QueryOptions{{StaleTime: &zero}, {}}, calls: 1},
+		{name: "defaults", options: QueryOptions{}, calls: 1},
+		{name: "override", options: QueryOptions{StaleTime: &zero}, calls: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := newAgeClient(t, Options{StaleTime: time.Hour})
@@ -28,7 +27,7 @@ func TestQueryDefinitionOptions(t *testing.T) {
 			definition := QueryDefinition("answer", func(context.Context) (int, error) {
 				calls++
 				return 42, nil
-			}, tc.options...)
+			}, tc.options)
 			for range 2 {
 				value, err := definition.Fetch(context.Background(), c)
 				if err != nil || value != 42 {
@@ -46,7 +45,7 @@ func TestQueryDefinitionOptions(t *testing.T) {
 func TestQueryDefinitionNilFetcher(t *testing.T) {
 	c, _ := newAgeClient(t, Options{StaleTime: time.Hour})
 	var load Fetcher[int]
-	definition := QueryDefinition("answer", load)
+	definition := QueryDefinition("answer", load, QueryOptions{})
 	if _, err := definition.Fetch(context.Background(), c); !errors.Is(err, ErrNoFetcher) {
 		t.Fatal(err)
 	}
@@ -56,7 +55,14 @@ func TestQueryDefinitionNilFetcher(t *testing.T) {
 	if value, err := definition.Fetch(context.Background(), c); err != nil || value != 42 {
 		t.Fatalf("cached fetch = %d, %v", value, err)
 	}
-	if _, err := QueryDefinition[int]("missing", nil).Fetch(context.Background(), c); !errors.Is(err, ErrNoFetcher) {
+	if _, err := QueryDefinition[int](
+		"missing",
+		nil,
+		QueryOptions{},
+	).Fetch(context.Background(), c); !errors.Is(
+		err,
+		ErrNoFetcher,
+	) {
 		t.Fatal(err)
 	}
 }
@@ -94,7 +100,7 @@ func TestQueryDefinition(t *testing.T) {
 	}
 	// Creating a handle copies policy; modifying the definition does not change its subscription.
 	definition.Options.Disable = false
-	if err := c.Invalidate(definition.Key); err != nil || calls != 2 || h.Snapshot().Fetching {
+	if err := c.Invalidate(definition.Key, InvalidateOptions{}); err != nil || calls != 2 || h.Snapshot().Fetching {
 		t.Fatalf("existing definition handle changed permission: %v, calls=%d", err, calls)
 	}
 	other, _ := newAgeClient(t, Options{})

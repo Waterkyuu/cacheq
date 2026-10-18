@@ -143,12 +143,23 @@ func TestHTTPMutationRefreshFollowup(t *testing.T) {
 			api := newHeldListAPI(t, [2]*heldHTTPResponse{old, next})
 			client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 			t.Cleanup(client.Close)
-			detail := cacheq.Query(client, "user:42", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
-			list := cacheq.Query(client, "users", readJSON[[]user](api.server.Client(), api.server.URL+"/users"))
+			detail := cacheq.Query(
+				client,
+				"user:42",
+				readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+				cacheq.QueryOptions{},
+			)
+			list := cacheq.Query(
+				client,
+				"users",
+				readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
+				cacheq.QueryOptions{},
+			)
 			config := cacheq.Query(
 				client,
 				"settings",
 				readJSON[settings](api.server.Client(), api.server.URL+"/settings"),
+				cacheq.QueryOptions{},
 			)
 			t.Cleanup(detail.Close)
 			t.Cleanup(list.Close)
@@ -169,7 +180,11 @@ func TestHTTPMutationRefreshFollowup(t *testing.T) {
 				updateErr := cacheq.Set(client, "user:42", value)
 				var invalidateErr error
 				if wait {
-					_, invalidateErr = client.InvalidateAndWait(ctx, []any{"users", "users"})
+					_, invalidateErr = client.InvalidateAndWait(
+						ctx,
+						[]any{"users", "users"},
+						cacheq.InvalidateOptions{},
+					)
 				} else {
 					invalidateErr = client.Invalidate(
 						[]any{"users", "users"},
@@ -177,7 +192,7 @@ func TestHTTPMutationRefreshFollowup(t *testing.T) {
 					)
 				}
 				return errors.Join(updateErr, invalidateErr)
-			})
+			}, cacheq.MutationOptions{})
 			t.Cleanup(mutation.Close)
 			done := make(chan httpMutationResult, 1)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -242,12 +257,23 @@ func TestHTTPInvalidateAndWaitResults(t *testing.T) {
 			api := newUserAPI(t)
 			client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 			t.Cleanup(client.Close)
-			detail := cacheq.Query(client, "user:42", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
-			list := cacheq.Query(client, "users", readJSON[[]user](api.server.Client(), api.server.URL+"/users"))
+			detail := cacheq.Query(
+				client,
+				"user:42",
+				readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+				cacheq.QueryOptions{},
+			)
+			list := cacheq.Query(
+				client,
+				"users",
+				readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
+				cacheq.QueryOptions{},
+			)
 			config := cacheq.Query(
 				client,
 				"settings",
 				readJSON[settings](api.server.Client(), api.server.URL+"/settings"),
+				cacheq.QueryOptions{},
 			)
 			t.Cleanup(detail.Close)
 			t.Cleanup(list.Close)
@@ -263,6 +289,7 @@ func TestHTTPInvalidateAndWaitResults(t *testing.T) {
 			results, err := client.InvalidateAndWait(
 				context.Background(),
 				[]any{"user:42", "users", "users", "unobserved"},
+				cacheq.InvalidateOptions{},
 			)
 			if len(results) != 3 || (err != nil) != fail {
 				t.Fatalf("HTTP refresh results = %+v, %v", results, err)
@@ -314,13 +341,13 @@ func TestHTTPRefreshWaitCancellation(t *testing.T) {
 	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
 	cacheq.Set(client, "user", user{Name: "Alice"})
-	query := cacheq.Query(client, "user", readJSON[user](server.Client(), server.URL))
+	query := cacheq.Query(client, "user", readJSON[user](server.Client(), server.URL), cacheq.QueryOptions{})
 	t.Cleanup(query.Close)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		results, err := client.InvalidateAndWait(ctx, "user")
+		results, err := client.InvalidateAndWait(ctx, "user", cacheq.InvalidateOptions{})
 		if len(results) != 1 || results[0].Refreshed || !errors.Is(results[0].Err, context.Canceled) {
 			t.Errorf("canceled HTTP refresh results = %+v, %v", results, err)
 		}
@@ -351,7 +378,12 @@ func TestHTTPMutationRefreshFailure(t *testing.T) {
 	api := newUserAPI(t)
 	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
-	list := cacheq.Query(client, "users", readJSON[[]user](api.server.Client(), api.server.URL+"/users"))
+	list := cacheq.Query(
+		client,
+		"users",
+		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
+		cacheq.QueryOptions{},
+	)
 	t.Cleanup(list.Close)
 	await(t, list, func(s cacheq.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
 	api.failNext(1)
@@ -363,9 +395,9 @@ func TestHTTPMutationRefreshFailure(t *testing.T) {
 		if committed.Name != "Bob" || input != "Bob" {
 			t.Fatalf("HTTP callback committed=%+v input=%q", committed, input)
 		}
-		_, err := client.InvalidateAndWait(ctx, "users")
+		_, err := client.InvalidateAndWait(ctx, "users", cacheq.InvalidateOptions{})
 		return err
-	})
+	}, cacheq.MutationOptions{})
 	t.Cleanup(mutation.Close)
 	result, err := mutation.Mutate(context.Background(), "Bob")
 	if err != nil || result.Data.Name != "Bob" || result.SyncErr == nil || writes != 1 {

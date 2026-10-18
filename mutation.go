@@ -36,7 +36,7 @@ type MutationHandle[I, V any] struct {
 	err error
 }
 
-// Mutation constructs an idle handle without executing a write. The last option wins.
+// Mutation constructs an idle handle without executing a write, using one execution configuration.
 // Input and result types are inferred from write and onSuccess and checked together at compile time.
 // onSuccess receives the committed result and original input once outside internal locks; nil skips it.
 // Mutate stays Pending through synchronization and reports callback errors through SyncErr.
@@ -48,15 +48,12 @@ func Mutation[I, V any](
 	client *Client,
 	write Mutator[I, V],
 	onSuccess func(context.Context, V, I) error,
-	options ...MutationOptions,
+	options MutationOptions,
 ) *MutationHandle[I, V] {
 	ctx, cancel := context.WithCancel(client.ctx) // #nosec G118 -- Close owns this handle's lifetime.
 	h := &MutationHandle[I, V]{
-		client: client, ctx: ctx, cancel: cancel, write: write, onSuccess: onSuccess,
+		client: client, ctx: ctx, cancel: cancel, write: write, onSuccess: onSuccess, options: options,
 		updates: make(chan MutationSnapshot[V], 1),
-	}
-	for _, option := range options {
-		h.options = option
 	}
 	if h.options.Executor == nil {
 		h.options.Executor = client.options.Executor

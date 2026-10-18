@@ -4,7 +4,7 @@
 
 Invalidation retains data but marks it stale. After updating a user, detail and list results can become stale together even though they return `User` and `[]User` respectively.
 
-`Invalidate` accepts an exact key, a `[]any` list, a `func(any) bool` predicate, or a reusable `QueryFilter`. [Query filters](query-filters.en-US.md) combine exact keys and predicates and also apply to waiting for refresh, cancellation, and removal. Options are optional; when multiple options are supplied, the last one wins. Only `[]any` is treated as a batch, so convert other slice types explicitly. Nil targets and invalid keys return `ErrInvalidKey`; empty or nil `[]any` batches do nothing.
+`Invalidate` accepts an exact key, a `[]any` list, a `func(any) bool` predicate, or a reusable `QueryFilter`. [Query filters](query-filters.en-US.md) combine exact keys and predicates and also apply to waiting for refresh, cancellation, and removal. Exactly one `InvalidateOptions` value is required; pass `InvalidateOptions{}` for the default refresh policy. Only `[]any` is treated as a batch, so convert other slice types explicitly. Nil targets and invalid keys return `ErrInvalidKey`; empty or nil `[]any` batches do nothing.
 
 ## Quick start
 
@@ -33,7 +33,7 @@ func main() {
 	load := func(context.Context) (string, error) {
 		return backend.Load().(string), nil
 	}
-	query := cacheq.Query(client, "message", load)
+	query := cacheq.Query(client, "message", load, cacheq.QueryOptions{})
 	defer query.Close()
 	ctx := context.Background()
 	before, err := cacheq.Fetch(
@@ -41,6 +41,7 @@ func main() {
 		client,
 		"message",
 		load,
+		cacheq.QueryOptions{},
 	)
 	if err != nil {
 		panic(err)
@@ -48,7 +49,7 @@ func main() {
 	fmt.Println("before:", before)
 
 	backend.Store("updated")
-	if _, err := client.InvalidateAndWait(ctx, "message"); err != nil {
+	if _, err := client.InvalidateAndWait(ctx, "message", cacheq.InvalidateOptions{}); err != nil {
 		panic(err)
 	}
 	after := query.Snapshot().Data
@@ -78,9 +79,10 @@ from the [query guide](queries.en-US.md), inside a function returning `error`.
 ## Single-key invalidation
 
 ```go
-if err := client.Invalidate("user:42"); err != nil {
+if err := client.Invalidate("user:42", InvalidateOptions{}); err != nil {
 	return err
 }
+
 ```
 
 Data remains available, `Stale` becomes true, and handles are notified. An enabled handle supplies its fetcher for background refresh; keys without enabled handles are only marked stale.
@@ -92,19 +94,21 @@ Invalidation does not wait for refresh completion. Observe results through `Upda
 Create queries with different result types:
 
 ```go
-detail := cacheq.Query(client, "user:42", getUser) // QueryHandle[User]
-users := cacheq.Query(client, "users", getUsers)   // QueryHandle[[]User]
+detail := cacheq.Query(client, "user:42", getUser, cacheq.QueryOptions{}) // QueryHandle[User]
+users := cacheq.Query(client, "users", getUsers, cacheq.QueryOptions{})   // QueryHandle[[]User]
 defer detail.Close()
 defer users.Close()
+
 ```
 
 After the business mutation succeeds:
 
 ```go
 // Call the application's user-update API successfully before invalidating.
-if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
+if err := client.Invalidate([]any{"user:42", "users"}, InvalidateOptions{}); err != nil {
 	return err
 }
+
 ```
 
 One operation spans multiple result types in the shared client. Enabled consumers refresh by default; other keys simply become stale. Duplicate keys are processed once, avoiding duplicate work or invalidating a refresh just started by an earlier occurrence.
@@ -120,7 +124,7 @@ All keys are validated before mutation. A non-comparable key returns `ErrInvalid
 | `RefetchObserved` | Default and zero value: refresh keys with enabled handles |
 | `RefetchNone` | Mark stale without starting new work |
 
-Single-key invalidation accepts optional configuration:
+Single-key invalidation accepts one configuration:
 
 ```go
 if err := client.Invalidate("user:42", cacheq.InvalidateOptions{
@@ -178,9 +182,10 @@ type ResourceKey struct {
 if err := client.Invalidate(func(key any) bool {
 	resource, ok := key.(ResourceKey)
 	return ok && resource.Resource == "users" && resource.Tenant == 42
-}); err != nil {
+}, InvalidateOptions{}); err != nil {
 	return err
 }
+
 ```
 
 String prefixes have no built-in semantics. Match prefixes yourself, or use comparable structs and inspect their fields. Structs containing slices or maps are not valid keys.
@@ -212,16 +217,17 @@ If all observers close or become disabled before dispatch, the follow-up is skip
 ## `InvalidateAndWait`: wait for associated refreshes
 
 ```go
-results, err := client.InvalidateAndWait(ctx, []any{"user:42", "users"})
+results, err := client.InvalidateAndWait(ctx, []any{"user:42", "users"}, InvalidateOptions{})
 for _, result := range results {
 	fmt.Printf("key=%v refreshed=%t err=%v\n", result.Key, result.Refreshed, result.Err)
 }
 if err != nil {
 	return err
 }
+
 ```
 
-Import `fmt` for this snippet. This entry enables `RefetchAfterLoad` automatically and accepts the same single key, `[]any`, predicate, and optional configuration as `Invalidate`. Only keys with enabled observers and loaders refresh. Unobserved or disabled keys, and keys selected with `RefetchNone`, are only marked stale and return skipped results. It does not retain loaders for Fetch-only keys.
+Import `fmt` for this snippet. This entry enables `RefetchAfterLoad` automatically and accepts the same single key, `[]any`, predicate, and single configuration as `Invalidate`. Only keys with enabled observers and loaders refresh. Unobserved or disabled keys, and keys selected with `RefetchNone`, are only marked stale and return skipped results. It does not retain loaders for Fetch-only keys.
 
 All selected refreshes are scheduled before waiting; individual failures do not stop other keys. Explicit batches retain first-occurrence order and remove duplicates. Predicate order is unspecified; keys removed during matching are excluded. Invalid selections cause no changes and return no results. Empty selections return an empty result slice.
 

@@ -17,9 +17,9 @@ func TestMutationExecution(t *testing.T) {
 		}
 		return 1, nil
 	}, func(ctx context.Context, _, _ int) error {
-		_, err := Fetch(ctx, c, "related", func(context.Context) (int, error) { return 2, nil })
+		_, err := Fetch(ctx, c, "related", func(context.Context) (int, error) { return 2, nil }, QueryOptions{})
 		return err
-	})
+	}, MutationOptions{})
 	t.Cleanup(h.Close)
 	release, _ := e.acquire(context.Background())
 	if _, err := h.Mutate(context.Background(), 0); !errors.Is(err, ErrQueueFull) {
@@ -65,6 +65,7 @@ func TestMutationExecutionCancellation(t *testing.T) {
 		c,
 		func(context.Context, int) (int, error) { t.Error("canceled queued write executed"); return 0, nil },
 		nil,
+		MutationOptions{},
 	)
 	t.Cleanup(h.Close)
 	finished := make(chan error, 1)

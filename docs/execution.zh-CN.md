@@ -48,7 +48,7 @@ func main() {
 			return "", ctx.Err()
 		}
 	}
-	first := cacheq.Query(client, "product:42", loadFirst)
+	first := cacheq.Query(client, "product:42", loadFirst, cacheq.QueryOptions{})
 	defer first.Close()
 	<-started
 
@@ -57,12 +57,13 @@ func main() {
 		client,
 		"product:43",
 		func(context.Context) (string, error) { return "product 43", nil },
+		cacheq.QueryOptions{},
 	)
 	fmt.Println("second rejected:", errors.Is(err, cacheq.ErrQueueFull))
 	fmt.Println("active:", budget.Stats().Active)
 
 	close(release)
-	value, err := cacheq.Fetch(context.Background(), client, "product:42", loadFirst)
+	value, err := cacheq.Fetch(context.Background(), client, "product:42", loadFirst, cacheq.QueryOptions{})
 	if err != nil {
 		panic(err)
 	}

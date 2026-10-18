@@ -56,7 +56,7 @@ func TestUpdateConflicts(t *testing.T) {
 				case "set":
 					Set(c, "key", 2)
 				case "invalidate":
-					c.Invalidate("key")
+					c.Invalidate("key", InvalidateOptions{})
 				case "remove":
 					c.Remove("key")
 				case "clear":
@@ -65,12 +65,13 @@ func TestUpdateConflicts(t *testing.T) {
 					c.Remove("key")
 					Set(c, "key", 1)
 				case "load":
-					c.Invalidate("key")
+					c.Invalidate("key", InvalidateOptions{})
 					_, loadErr := Fetch(
 						context.Background(),
 						c,
 						"key",
 						func(context.Context) (int, error) { return 3, nil },
+						QueryOptions{},
 					)
 					if loadErr != nil {
 						t.Fatal(loadErr)
@@ -140,9 +141,14 @@ func TestUpdateCancelsOldLoad(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	t.Cleanup(func() { once.Do(func() { close(release) }) })
-	h := Query(c, "key", func(context.Context) (int, error) { close(started); <-release; return 99, nil })
+	h := Query(
+		c,
+		"key",
+		func(context.Context) (int, error) { close(started); <-release; return 99, nil },
+		QueryOptions{},
+	)
 	t.Cleanup(h.Close)
-	c.Invalidate("key")
+	c.Invalidate("key", InvalidateOptions{})
 	<-started
 	if err := Update(c, "key", func(value int) (int, error) { return value + 1, nil }); err != nil {
 		t.Fatal(err)

@@ -113,7 +113,7 @@ func TestClientGetLoadingAndCancellation(t *testing.T) {
 				close(started)
 				<-ctx.Done()
 				return "", ctx.Err()
-			})
+			}, QueryOptions{})
 			t.Cleanup(handle.Close)
 			<-started
 			state := c.Get("key")
@@ -171,6 +171,7 @@ func TestClientGetExpiryAndErrors(t *testing.T) {
 		func(context.Context) (string, error) {
 			return "", failure
 		},
+		QueryOptions{},
 	)
 	if !errors.Is(err, failure) {
 		t.Fatal(err)

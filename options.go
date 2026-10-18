@@ -69,7 +69,7 @@ type Options struct {
 
 // QueryOptions overrides loading policy for Query, Fetch, and Prefetch.
 // Disable only controls Query's automatic loading; explicit reads and Refetch still execute.
-// Nil policy fields inherit Client defaults; the last complete options value wins.
+// Nil policy fields inherit Client defaults; each operation accepts exactly one options value.
 // Duration and retry values are copied when applied; execution budgets are shared.
 // Callbacks run outside the Client lock and must synchronize captured mutable state.
 type QueryOptions struct {
@@ -93,14 +93,6 @@ type QueryOptions struct {
 	// DisableExecutor skips the outer loader budget, taking precedence over Executor.
 	// Use it with a budgeted Batcher so only the actual bulk callback acquires capacity.
 	DisableExecutor bool
-}
-
-// lastQueryOptions selects one complete override value without merging separate arguments.
-func lastQueryOptions(options []QueryOptions) QueryOptions {
-	if len(options) == 0 {
-		return QueryOptions{}
-	}
-	return options[len(options)-1]
 }
 
 // resolvePolicy copies scalar overrides while sharing callbacks and the selected execution budget.

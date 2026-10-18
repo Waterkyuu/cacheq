@@ -20,21 +20,26 @@ func TestExecutionSharing(t *testing.T) {
 	var once sync.Once
 	t.Cleanup(func() { once.Do(func() { close(release) }) })
 	load := func(context.Context) (int, error) { close(started); <-release; return 1, nil }
-	first := Query(c, "first", load)
+	first := Query(c, "first", load, QueryOptions{})
 	t.Cleanup(first.Close)
 	<-started
 	queuedCalls := atomic.Int32{}
-	queued := Query(c, "queued", func(context.Context) (int, error) { queuedCalls.Add(1); return 2, nil })
+	queued := Query(
+		c,
+		"queued",
+		func(context.Context) (int, error) { queuedCalls.Add(1); return 2, nil },
+		QueryOptions{},
+	)
 	t.Cleanup(queued.Close)
 	awaitExecution(t, e, 1, 1)
 	joined := make(chan error, 1)
-	go func() { _, err := Fetch(context.Background(), c, "first", load); joined <- err }()
+	go func() { _, err := Fetch(context.Background(), c, "first", load, QueryOptions{}); joined <- err }()
 	awaitStats(t, c, func(s Stats) bool { return s.MergedRequests == 1 })
-	if _, err := Fetch(context.Background(), c, "overload", load); !errors.Is(err, ErrQueueFull) {
+	if _, err := Fetch(context.Background(), c, "overload", load, QueryOptions{}); !errors.Is(err, ErrQueueFull) {
 		t.Fatal(err)
 	}
 	Set(c, "cached", 9)
-	if value, err := Fetch[int](context.Background(), c, "cached", nil); err != nil || value != 9 {
+	if value, err := Fetch[int](context.Background(), c, "cached", nil, QueryOptions{}); err != nil || value != 9 {
 		t.Fatalf("cached value = %d, %v", value, err)
 	}
 	c.Cancel("queued")
@@ -63,6 +68,7 @@ func TestExecutionRetryRelease(t *testing.T) {
 			other,
 			"other",
 			func(context.Context) (int, error) { return 2, nil },
+			QueryOptions{},
 		); err != nil {
 			t.Error(err)
 		}
@@ -76,7 +82,7 @@ func TestExecutionRetryRelease(t *testing.T) {
 			return 0, errors.New("transient")
 		}
 		return 1, nil
-	})
+	}, QueryOptions{})
 	if err != nil || value != 1 || calls != 2 || c.Stats().Retries != 1 {
 		t.Fatalf("retry = %d, %v, calls=%d, %+v", value, err, calls, c.Stats())
 	}
@@ -91,7 +97,12 @@ func TestExecutionClientLifetime(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	t.Cleanup(func() { once.Do(func() { close(release) }) })
-	first := Query(c, "first", func(context.Context) (int, error) { close(started); <-release; return 1, nil })
+	first := Query(
+		c,
+		"first",
+		func(context.Context) (int, error) { close(started); <-release; return 1, nil },
+		QueryOptions{},
+	)
 	t.Cleanup(first.Close)
 	<-started
 	other := NewClient(Options{Executor: e})
@@ -100,6 +111,7 @@ func TestExecutionClientLifetime(t *testing.T) {
 		other,
 		"queued",
 		func(context.Context) (int, error) { t.Error("canceled loader ran"); return 0, nil },
+		QueryOptions{},
 	)
 	t.Cleanup(queued.Close)
 	awaitExecution(t, e, 1, 1)

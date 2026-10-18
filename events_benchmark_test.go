@@ -31,7 +31,14 @@ func BenchmarkEventFiltering(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if value, err := cacheq.Fetch[int](ctx, client, "hot", nil); err != nil || value != 1 {
+				if value, err := cacheq.Fetch[int](
+					ctx,
+					client,
+					"hot",
+					nil,
+					cacheq.QueryOptions{},
+				); err != nil ||
+					value != 1 {
 					b.Fatalf("cache hit = %d, %v", value, err)
 				}
 			}

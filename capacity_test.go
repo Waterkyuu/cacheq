@@ -19,11 +19,11 @@ func TestCapacityLRU(t *testing.T) {
 			case "get":
 				Get[int](c, "a")
 			case "fetch":
-				if _, err := Fetch[int](context.Background(), c, "a", nil); err != nil {
+				if _, err := Fetch[int](context.Background(), c, "a", nil, QueryOptions{}); err != nil {
 					t.Fatal(err)
 				}
 			case "query":
-				query := Query(c, "a", func(context.Context) (int, error) { return 4, nil })
+				query := Query(c, "a", func(context.Context) (int, error) { return 4, nil }, QueryOptions{})
 				t.Cleanup(query.Close)
 			case "set":
 				Set(c, "a", 4)
@@ -59,7 +59,7 @@ func TestCapacitySubscription(t *testing.T) {
 	c := NewClient(Options{StaleTime: time.Hour, MaxEntries: 1})
 	t.Cleanup(c.Close)
 	Set(c, "a", 1)
-	query := Query(c, "a", func(context.Context) (int, error) { return 3, nil })
+	query := Query(c, "a", func(context.Context) (int, error) { return 3, nil }, QueryOptions{})
 	t.Cleanup(query.Close)
 	<-query.Updates()
 	Set(c, "b", "second")
@@ -94,7 +94,7 @@ func TestCapacityActiveLoad(t *testing.T) {
 			case <-release:
 				return 2, nil
 			}
-		})
+		}, QueryOptions{})
 		finished <- err
 	}()
 	<-started
@@ -120,7 +120,13 @@ func TestCapacityErrors(t *testing.T) {
 	t.Cleanup(c.Close)
 	Set(c, "a", 1)
 	failure := errors.New("offline")
-	_, err := Fetch(context.Background(), c, "b", func(context.Context) (string, error) { return "", failure })
+	_, err := Fetch(
+		context.Background(),
+		c,
+		"b",
+		func(context.Context) (string, error) { return "", failure },
+		QueryOptions{},
+	)
 	if !errors.Is(err, failure) || Get[int](c, "a").HasData {
 		t.Fatalf("cached failure did not consume capacity: %v", err)
 	}
@@ -169,7 +175,7 @@ func TestCapacityHandleClose(t *testing.T) {
 	c := NewClient(Options{MaxEntries: 2, StaleTime: time.Hour})
 	t.Cleanup(c.Close)
 	Set(c, "a", 1)
-	query := Query(c, "a", func(context.Context) (int, error) { return 4, nil })
+	query := Query(c, "a", func(context.Context) (int, error) { return 4, nil }, QueryOptions{})
 	Set(c, "b", 2)
 	query.Close()
 	Set(c, "c", 3)
@@ -183,7 +189,7 @@ func TestCapacityEvictedHandleRelease(t *testing.T) {
 	c := NewClient(Options{MaxEntries: 1, StaleTime: time.Hour})
 	t.Cleanup(c.Close)
 	Set(c, "a", 1)
-	query := Query(c, "a", func(context.Context) (int, error) { return 3, nil })
+	query := Query(c, "a", func(context.Context) (int, error) { return 3, nil }, QueryOptions{})
 	Set(c, "b", 2)
 	query.Close()
 	if err := Set(c, "a", "new type"); err != nil {
@@ -202,7 +208,7 @@ func TestCapacityCanceledBinding(t *testing.T) {
 			close(started)
 			<-ctx.Done()
 			return 0, ctx.Err()
-		})
+		}, QueryOptions{})
 		finished <- err
 	}()
 	<-started

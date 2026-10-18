@@ -103,7 +103,7 @@ if err != nil {
 
 ### 定义使用共享缓存的查询
 
-调用 `cacheq.QueryDefinition(key, fetcher)` 定义本地查询身份和数据源读取函数。加载函数返回 `User`，因此函数推断结果类型为 `User`，返回 `cacheq.Definition[User]`。将前一步返回的 `shared` 赋给定义的 `Shared` 字段，其类型必须为 `*cacheq.SharedCache[User]`。
+调用 `cacheq.QueryDefinition(key, fetcher, cacheq.QueryOptions{})` 定义本地查询身份和数据源读取函数。加载函数返回 `User`，因此函数推断结果类型为 `User`，返回 `cacheq.Definition[User]`。将前一步返回的 `shared` 赋给定义的 `Shared` 字段，其类型必须为 `*cacheq.SharedCache[User]`。
 
 下面的 `source` 是模拟数据库的并发安全变量，`calls` 统计真实回源次数。此处只定义 Fetcher 回调；创建查询定义时不会执行它。业务接入时将回调替换为数据库或 API 读取，并使用传入的 context。
 
@@ -116,7 +116,7 @@ var calls atomic.Int64
 definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 	calls.Add(1)
 	return source.Load().(User), nil
-})
+}, cacheq.QueryOptions{})
 definition.Shared = shared
 
 ```
@@ -181,7 +181,7 @@ fmt.Printf("A refreshed: %s, source calls: %d\n", updated.Name, calls.Load())
 A refreshed: Bob, source calls: 2
 ```
 
-`RefetchNone` 只标记失效，不自动启动刷新；这里由紧接着的 `Fetch` 发起读取。省略该选项时，已观察且启用的查询可以按默认规则刷新，但 `InvalidateShared` 本身不等待刷新完成。
+`RefetchNone` 只标记失效，不自动启动刷新；这里由紧接着的 `Fetch` 发起读取。传入 `InvalidateOptions{}` 时，已观察且启用的查询可以按默认规则刷新，但 `InvalidateShared` 本身不等待刷新完成。
 
 此时 B 仍可能返回本地的 Alice，直到新鲜期结束或本地失效。本例没有启用跨实例通知。若需要其他实例及时处理失效，按[共享失效通知与标签](shared-invalidation.zh-CN.md)配置 `EnableNotifications` 和 `WatchShared`；关联多个共享 key 时再启用远端标签。
 
@@ -214,9 +214,9 @@ B refreshed: Bob, source calls: 3
 
 | API | 作用 |
 | --- | --- |
-| `definition.InvalidateShared(ctx, client)` | 先使共享记录失效，再使指定 Client 的查询失效；启用通知后其他 watcher 可异步收到事件 |
+| `definition.InvalidateShared(ctx, client, options)` | 先使共享记录失效，再使指定 Client 的查询失效；启用通知后其他 watcher 可异步收到事件 |
 | `shared.Invalidate(ctx)` | 只执行共享失效，不直接操作任何 Client；启用通知后 watcher 仍可异步处理 |
-| `client.Invalidate(key)` | 只使当前 Client 的查询失效；之后新启动的加载绕过共享数据 |
+| `client.Invalidate(key, cacheq.InvalidateOptions{})` | 只使当前 Client 的查询失效；之后新启动的加载绕过共享数据 |
 
 ## 配置说明
 
@@ -372,7 +372,7 @@ func main() {
 	definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 		calls.Add(1)
 		return source.Load().(User), nil
-	})
+	}, cacheq.QueryOptions{})
 	definition.Shared = shared
 
 	// Both Clients use the same shared configuration and keep separate local results.

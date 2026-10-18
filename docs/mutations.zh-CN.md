@@ -42,9 +42,9 @@ func main() {
 	getUsers := func(context.Context) ([]User, error) {
 		return []User{backend.Load().(User)}, nil
 	}
-	users := cacheq.Query(client, "users", getUsers)
+	users := cacheq.Query(client, "users", getUsers, cacheq.QueryOptions{})
 	defer users.Close()
-	before, err := cacheq.Fetch(ctx, client, "users", getUsers)
+	before, err := cacheq.Fetch(ctx, client, "users", getUsers, cacheq.QueryOptions{})
 	if err != nil {
 		panic(err)
 	}
@@ -59,9 +59,9 @@ func main() {
 		return user, nil
 	}, func(ctx context.Context, user User, _ string) error {
 		updateErr := cacheq.Set(client, "user:42", user)
-		_, refreshErr := client.InvalidateAndWait(ctx, "users")
+		_, refreshErr := client.InvalidateAndWait(ctx, "users", cacheq.InvalidateOptions{})
 		return errors.Join(updateErr, refreshErr)
-	})
+	}, cacheq.MutationOptions{})
 	defer rename.Close()
 	result, err := rename.Mutate(ctx, "Bob")
 	if err != nil {
@@ -85,7 +85,7 @@ detail: Bob
 list: Bob
 ```
 
-`rename.Mutate(ctx, "Bob")` 先修改后端数据。写入成功后，`onSuccess` 将返回的 `User` 存入 `"user:42"`，再调用 `client.InvalidateAndWait(ctx, "users")`。列表有启用的 `Query`，因此会在回调返回前完成刷新。
+`rename.Mutate(ctx, "Bob")` 先修改后端数据。写入成功后，`onSuccess` 将返回的 `User` 存入 `"user:42"`，再调用 `client.InvalidateAndWait(ctx, "users", cacheq.InvalidateOptions{})`。列表有启用的 `Query`，因此会在回调返回前完成刷新。
 
 `Mutate` 等待写入和 `onSuccess` 完成。回调通过 `Client.Invalidate` 选择后台刷新，或通过 `Client.InvalidateAndWait` 选择等待刷新。本例采用等待方式，因此 `Mutate` 返回且没有同步错误时，列表快照已经包含 Bob。
 
@@ -95,7 +95,7 @@ list: Bob
 
 ## `Mutation` 与 `Mutate`：创建和执行写入
 
-`Mutation(client, write, onSuccess, options...)` 返回 `MutationHandle[I, V]`，从传入的函数推断输入和结果类型。不需要同步时，第三个参数传 nil。可选的 `MutationOptions` 不再包含泛型类型参数，只配置执行策略。`I` 是输入类型，`V` 是写入结果类型；快速开始中分别为 `string` 和 `User`。业务函数 `Mutator[I, V]` 的签名为 `func(context.Context, I) (V, error)`。
+`Mutation(client, write, onSuccess, options)` 返回 `MutationHandle[I, V]`，从传入的函数推断输入和结果类型。不需要同步时，第三个参数传 nil。必须传入一份不带泛型类型参数的 `MutationOptions`，只配置执行策略；传入 `MutationOptions{}` 继承 Client 预算。`I` 是输入类型，`V` 是写入结果类型；快速开始中分别为 `string` 和 `User`。业务函数 `Mutator[I, V]` 的签名为 `func(context.Context, I) (V, error)`。
 
 `Mutate(ctx, input)` 执行一次业务函数，等待成功后的缓存同步，并返回 `MutationResult[V]` 和错误。数据库操作应在事务提交成功后才返回成功。cacheq 不自动重试或合并写入；完成后再次传入相同参数，会再次执行业务函数。
 
@@ -144,9 +144,10 @@ onSuccess := func(context.Context, User, string) error {
 
 ```go
 onSuccess := func(ctx context.Context, _ User, _ string) error {
-	_, err := client.InvalidateAndWait(ctx, "users")
+	_, err := client.InvalidateAndWait(ctx, "users", InvalidateOptions{})
 	return err
 }
+
 ```
 
 `Mutate` 等待列表的失效后刷新，包括较早请求尚未结束时的有界补刷。检查 `err` 和 `result.SyncErr` 后，通过 `users.Snapshot().Data` 读取列表。需要区分已刷新和跳过的目标时，可以检查返回的逐键结果。
@@ -198,7 +199,7 @@ return nil
 
 原 `MutationOptions[I, V].OnSuccess` 字段改为 `Mutation` 的第三个参数。迁移时移除 `MutationOptions` 的类型参数，并单独传入成功回调。回调的结果或输入类型与写入函数不匹配时，编译器会拒绝该调用。
 
-多份配置以最后一份为准，不合并字段。配置会被复制；回调捕获的应用数据仍需自行保护。缓存键和失效条件应包含影响结果的租户及用户范围。
+必须传入一份 `MutationOptions`，传入额外配置参数会编译失败。配置会被复制；回调捕获的应用数据仍需自行保护。缓存键和失效条件应包含影响结果的租户及用户范围。
 
 [执行预算](execution.zh-CN.md)只在业务写入回调期间占用名额，在缓存同步前释放。Client 的查询重试和超时配置不作用于 Mutation；写入截止时间通过 `Mutate` 的 context 设置。
 

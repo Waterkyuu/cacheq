@@ -143,8 +143,8 @@ Order is unspecified without an explicit key list. A filter retains criteria, no
 
 | Method | Return value | Effect on selected queries |
 | --- | --- | --- |
-| `client.Invalidate(target, options...)` | `error` | Retain data, mark it stale, and schedule refreshes according to options; return without awaiting refresh completion |
-| `client.InvalidateAndWait(ctx, target, options...)` | `([]RefreshResult, error)` | Mark data stale and await the refresh outcomes associated with this invalidation |
+| `client.Invalidate(target, options)` | `error` | Retain data, mark it stale, and schedule refreshes according to options; return without awaiting refresh completion |
+| `client.InvalidateAndWait(ctx, target, options)` | `([]RefreshResult, error)` | Mark data stale and await the refresh outcomes associated with this invalidation |
 | `client.Cancel(target)` | `error` | Cancel active shared loads while retaining completed data and subscriptions |
 | `client.Remove(target)` | `error` | Cancel active shared loads, clear cached data, errors, and associated cleanup timers, and retain subscriptions |
 
@@ -183,15 +183,15 @@ func main() {
 	load := func(context.Context) (string, error) {
 		return backend.Load().(string), nil
 	}
-	if err := cacheq.Prefetch(ctx, client, "profile", load); err != nil {
+	if err := cacheq.Prefetch(ctx, client, "profile", load, cacheq.QueryOptions{}); err != nil {
 		panic(err)
 	}
-	query := cacheq.Query(client, "profile", load)
+	query := cacheq.Query(client, "profile", load, cacheq.QueryOptions{})
 	defer query.Close()
 
 	backend.Store("Bob")
 	filter := cacheq.QueryFilter{Keys: []any{"profile"}}
-	results, err := client.InvalidateAndWait(ctx, filter)
+	results, err := client.InvalidateAndWait(ctx, filter, cacheq.InvalidateOptions{})
 	if err != nil {
 		panic(err)
 	}

@@ -143,8 +143,8 @@ filter := cacheq.QueryFilter{
 
 | 方法 | 返回值 | 对选中查询的影响 |
 | --- | --- | --- |
-| `client.Invalidate(target, options...)` | `error` | 保留数据并标记为过期，按配置安排刷新；不等待刷新结束 |
-| `client.InvalidateAndWait(ctx, target, options...)` | `([]RefreshResult, error)` | 标记为过期，并等待本次失效所关联的刷新结果 |
+| `client.Invalidate(target, options)` | `error` | 保留数据并标记为过期，按配置安排刷新；不等待刷新结束 |
+| `client.InvalidateAndWait(ctx, target, options)` | `([]RefreshResult, error)` | 标记为过期，并等待本次失效所关联的刷新结果 |
 | `client.Cancel(target)` | `error` | 取消正在进行的共享加载，保留已完成的数据和订阅 |
 | `client.Remove(target)` | `error` | 取消正在进行的共享加载，清除缓存数据、错误和对应清理定时器，保留订阅 |
 
@@ -183,15 +183,15 @@ func main() {
 	load := func(context.Context) (string, error) {
 		return backend.Load().(string), nil
 	}
-	if err := cacheq.Prefetch(ctx, client, "profile", load); err != nil {
+	if err := cacheq.Prefetch(ctx, client, "profile", load, cacheq.QueryOptions{}); err != nil {
 		panic(err)
 	}
-	query := cacheq.Query(client, "profile", load)
+	query := cacheq.Query(client, "profile", load, cacheq.QueryOptions{})
 	defer query.Close()
 
 	backend.Store("Bob")
 	filter := cacheq.QueryFilter{Keys: []any{"profile"}}
-	results, err := client.InvalidateAndWait(ctx, filter)
+	results, err := client.InvalidateAndWait(ctx, filter, cacheq.InvalidateOptions{})
 	if err != nil {
 		panic(err)
 	}

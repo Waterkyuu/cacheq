@@ -41,7 +41,7 @@ func TestEventsLoadDecisions(t *testing.T) {
 	c.loadNow = func() time.Time { return time.Unix(0, 0).Add(time.Duration(ticks.Add(1)) * time.Millisecond) }
 	s := subscribeTestEvents(t, c, EventOptions{Key: "a"})
 	load := func(context.Context) (int, error) { return 7, nil }
-	if _, err := Fetch(context.Background(), c, "a", load); err != nil {
+	if _, err := Fetch(context.Background(), c, "a", load, QueryOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	start := receiveTestEvent(t, s.Events())
@@ -68,7 +68,7 @@ func TestEventsLoadDecisions(t *testing.T) {
 		hit.LoadID != 0 {
 		t.Fatalf("long-window decision = %+v", hit)
 	}
-	handle := Query(c, "a", load)
+	handle := Query(c, "a", load, QueryOptions{})
 	t.Cleanup(handle.Close)
 	start = receiveTestEvent(t, s.Events())
 	end = receiveTestEvent(t, s.Events())
@@ -91,7 +91,7 @@ func TestEventsTriggers(t *testing.T) {
 		call func(*testing.T, *Client) error
 	}{
 		{name: "fetch", trigger: TriggerFetch, reason: ReasonMissing, call: func(t *testing.T, c *Client) error {
-			_, err := Fetch(context.Background(), c, "a", load)
+			_, err := Fetch(context.Background(), c, "a", load, QueryOptions{})
 			return err
 		}},
 		{name: "fetch options", trigger: TriggerFetch, reason: ReasonMissing, call: func(t *testing.T, c *Client) error {
@@ -105,10 +105,10 @@ func TestEventsTriggers(t *testing.T) {
 			return err
 		}},
 		{name: "prefetch", trigger: TriggerPrefetch, reason: ReasonMissing, call: func(t *testing.T, c *Client) error {
-			return Prefetch(context.Background(), c, "a", load)
+			return Prefetch(context.Background(), c, "a", load, QueryOptions{})
 		}},
 		{name: "query", trigger: TriggerQuery, reason: ReasonMissing, call: func(t *testing.T, c *Client) error {
-			h := Query(c, "a", load)
+			h := Query(c, "a", load, QueryOptions{})
 			t.Cleanup(h.Close)
 			return nil
 		}},
@@ -127,9 +127,9 @@ func TestEventsTriggers(t *testing.T) {
 			if err := Set(c, "a", 1); err != nil {
 				return err
 			}
-			h := Query(c, "a", load)
+			h := Query(c, "a", load, QueryOptions{})
 			t.Cleanup(h.Close)
-			return c.Invalidate("a")
+			return c.Invalidate("a", InvalidateOptions{})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -166,10 +166,10 @@ func TestEventsSharing(t *testing.T) {
 			return 7, nil
 		}
 	}
-	first := Query(c, "a", load)
+	first := Query(c, "a", load, QueryOptions{})
 	t.Cleanup(first.Close)
 	start := receiveTestEvent(t, s.Events())
-	second := Query(c, "a", load)
+	second := Query(c, "a", load, QueryOptions{})
 	t.Cleanup(second.Close)
 	if join := receiveTestEvent(
 		t,
@@ -190,7 +190,7 @@ func TestEventsSharing(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := Fetch(ctx, c, "a", load)
+		_, err := Fetch(ctx, c, "a", load, QueryOptions{})
 		done <- err
 	}()
 	if join := receiveTestEvent(t, s.Events()); join.Trigger != TriggerFetch || join.Joined != 3 {
@@ -227,7 +227,7 @@ func TestEventsRetry(t *testing.T) {
 			return 0, failure
 		}
 		return 7, nil
-	})
+	}, QueryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,12 +250,12 @@ func TestEventsFailureReasons(t *testing.T) {
 	c := NewClient(Options{Clock: func() time.Time { return now }})
 	t.Cleanup(c.Close)
 	s := subscribeTestEvents(t, c, EventOptions{})
-	_, _ = Fetch(context.Background(), c, "a", func(context.Context) (int, error) { return 0, failure })
+	_, _ = Fetch(context.Background(), c, "a", func(context.Context) (int, error) { return 0, failure }, QueryOptions{})
 	receiveTestEvent(t, s.Events())
 	if end := receiveTestEvent(t, s.Events()); !errors.Is(end.Err, failure) || !end.Applied {
 		t.Fatalf("failed outcome = %+v", end)
 	}
-	_, _ = Fetch(context.Background(), c, "a", func(context.Context) (int, error) { return 7, nil })
+	_, _ = Fetch(context.Background(), c, "a", func(context.Context) (int, error) { return 7, nil }, QueryOptions{})
 	if start := receiveTestEvent(t, s.Events()); start.Reason != ReasonPreviousFailure {
 		t.Fatalf("load after failure = %+v", start)
 	}
@@ -265,12 +265,18 @@ func TestEventsFailureReasons(t *testing.T) {
 	})
 	receiveTestEvent(t, s.Events())
 	receiveTestEvent(t, s.Events())
-	_, _ = Fetch[int](context.Background(), c, "fallback", nil)
+	_, _ = Fetch[int](context.Background(), c, "fallback", nil, QueryOptions{})
 	if hit := receiveTestEvent(t, s.Events()); hit.Kind != EventCacheHit || !errors.Is(hit.Err, failure) {
 		t.Fatalf("fresh fallback = %+v", hit)
 	}
 	now = now.Add(time.Minute)
-	_, _ = Fetch(context.Background(), c, "fallback", func(context.Context) (int, error) { return 7, nil })
+	_, _ = Fetch(
+		context.Background(),
+		c,
+		"fallback",
+		func(context.Context) (int, error) { return 7, nil },
+		QueryOptions{},
+	)
 	if start := receiveTestEvent(t, s.Events()); start.Reason != ReasonExpired {
 		t.Fatalf("expired fallback = %+v", start)
 	}
@@ -304,7 +310,7 @@ func TestEventsDiscardedResult(t *testing.T) {
 				close(started)
 				<-release
 				return 7, nil
-			})
+			}, QueryOptions{})
 			t.Cleanup(h.Close)
 			start := receiveTestEvent(t, s.Events())
 			select {
@@ -342,6 +348,7 @@ func TestEventsLoadBackpressure(t *testing.T) {
 				c,
 				"a",
 				func(context.Context) (int, error) { return 7, nil },
+				QueryOptions{},
 			); err != nil {
 				done <- err
 				return
@@ -384,7 +391,7 @@ func TestEventsOwnerReplacement(t *testing.T) {
 	fetch := func(ctx context.Context) <-chan error {
 		done := make(chan error, 1)
 		go func() {
-			value, err := Fetch(ctx, c, "a", load)
+			value, err := Fetch(ctx, c, "a", load, QueryOptions{})
 			if err == nil && value != 7 {
 				err = errors.New("replacement returned an unexpected value")
 			}
@@ -447,13 +454,13 @@ func TestEventsMidflightSubscription(t *testing.T) {
 			return 7, nil
 		}
 	}
-	first := Query(c, "a", load)
+	first := Query(c, "a", load, QueryOptions{})
 	t.Cleanup(first.Close)
 	if err := waitEventCall(t, entered); err != nil {
 		t.Fatal(err)
 	}
 	s := subscribeTestEvents(t, c, EventOptions{Key: "a"})
-	second := Query(c, "a", load)
+	second := Query(c, "a", load, QueryOptions{})
 	t.Cleanup(second.Close)
 	join := receiveTestEvent(t, s.Events())
 	if join.Kind != EventLoadJoined || join.LoadID == 0 || join.Joined != 1 {
