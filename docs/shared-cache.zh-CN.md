@@ -75,14 +75,14 @@ if err != nil {
 
 ### 创建共享缓存
 
-使用 `cacheq.NewSharedCache[V](store, options)` 为一份查询结果创建共享缓存配置。`V` 是保存和读取的结果类型，本例为上面定义的 `User`；`store` 使用前一步创建的 Redis 存储。
+使用 `cacheq.NewSharedCache(store, options)` 为一份查询结果创建共享缓存配置。函数从 `SharedCacheOptions[V]` 推断保存和读取的结果类型；本例使用 `SharedCacheOptions[User]`，其中 `User` 是上面定义的类型。`store` 使用前一步创建的 Redis 存储。
 
 本例要共享“租户 42 的用户 7 的资料”：共享 key 为 `tenant:42:user:7:v1`，按默认 JSON 编码，格式标识为 `user.json.v1`，从数据源加载完成起最多保留 5 分钟，每次共享存储操作最多等待 200 毫秒。
 
 ```go
 // Bind one User record's identity and caching rules to the Redis adapter.
 // Construction validates configuration without reading or writing Redis.
-shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
+shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
 	// Key identifies this tenant's user profile across service instances.
 	Key: "tenant:42:user:7:v1",
 	// Format must match the schema and encoding expected by every reader.
@@ -349,7 +349,7 @@ func main() {
 
 	// Bind one User record's identity and caching rules to the Redis adapter.
 	// Construction validates configuration without reading or writing Redis.
-	shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
+	shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
 		// Key identifies this tenant's user profile across service instances.
 		Key: "tenant:42:user:7:v1",
 		// Format must match the schema and encoding expected by every reader.

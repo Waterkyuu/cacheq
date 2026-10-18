@@ -75,14 +75,14 @@ In an application, create the Redis connection and store at startup and reuse th
 
 ### Create a shared cache
 
-Use `cacheq.NewSharedCache[V](store, options)` to configure shared caching for one query result. V is the type to save and restore, the User defined above in this example. The store argument is the Redis adapter created in the previous step.
+Use `cacheq.NewSharedCache(store, options)` to configure shared caching for one query result. The function infers the saved and restored result type from `SharedCacheOptions[V]`; this example uses `SharedCacheOptions[User]` with the User defined above. The store argument is the Redis adapter created in the previous step.
 
 This example shares the profile of user 7 in tenant 42 under `tenant:42:user:7:v1`, using default JSON encoding and the format label `user.json.v1`. It retains the result for at most five minutes from source completion and waits at most 200 milliseconds for each shared store operation.
 
 ```go
 // Bind one User record's identity and caching rules to the Redis adapter.
 // Construction validates configuration without reading or writing Redis.
-shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
+shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
 	// Key identifies this tenant's user profile across service instances.
 	Key: "tenant:42:user:7:v1",
 	// Format must match the schema and encoding expected by every reader.
@@ -349,7 +349,7 @@ func main() {
 
 	// Bind one User record's identity and caching rules to the Redis adapter.
 	// Construction validates configuration without reading or writing Redis.
-	shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
+	shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
 		// Key identifies this tenant's user profile across service instances.
 		Key: "tenant:42:user:7:v1",
 		// Format must match the schema and encoding expected by every reader.

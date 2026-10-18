@@ -47,7 +47,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
+	shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
 		Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
 		Timeout: 200 * time.Millisecond,
 	})

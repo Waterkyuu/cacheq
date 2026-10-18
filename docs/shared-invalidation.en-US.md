@@ -100,13 +100,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	detailShared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
+	detailShared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
 		Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute, ShareTags: true,
 	})
 	if err != nil {
 		return err
 	}
-	listShared, err := cacheq.NewSharedCache[[]User](store, cacheq.SharedCacheOptions[[]User]{
+	listShared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[[]User]{
 		Key: "tenant:42:users:v1", Format: "users.json.v1", TTL: 5 * time.Minute, ShareTags: true,
 	})
 	if err != nil {
