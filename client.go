@@ -546,8 +546,9 @@ func (c *Client) checkLocked(key any, typ reflect.Type) error {
 	cached := c.entries[key]
 	typeMismatch := typ != nil && cached.typ != nil && cached.typ != typ
 	if typeMismatch {
+		// Key value formatting can reenter Client APIs while mu is held; type formatting cannot.
 		return fmt.Errorf(
-			"%w: key %v contains %v, requested %v",
+			"%w: key type %T contains %v, requested %v",
 			ErrTypeMismatch,
 			key,
 			cached.typ,
