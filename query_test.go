@@ -3,6 +3,7 @@ package cacheq
 import (
 	"context"
 	"errors"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -643,17 +644,37 @@ func TestNilAndInterfaceResults(t *testing.T) {
 	}
 }
 
-// TestInvalidKeys rejects unhashable keys and validates batches before changing any selected entry.
+// TestInvalidKeys rejects unsafe map keys and validates batches before changing any selected entry.
 func TestInvalidKeys(t *testing.T) {
 	c := newInvalidationClient(t)
 	Set(c, "safe", 1)
-	keys := []any{nil, []string{"users"}, map[string]int{}, struct{ Value any }{Value: []int{1}}}
+	keys := []any{
+		nil, []string{"users"}, map[string]int{}, struct {
+			// Value hides a non-comparable dynamic value inside a comparable struct type.
+			Value any
+		}{Value: []int{1}},
+		math.NaN(), float32(math.NaN()), complex(math.NaN(), 0),
+		struct {
+			// Value makes its containing key non-reflexive.
+			Value float64
+		}{Value: math.NaN()}, [1]float64{math.NaN()},
+		struct {
+			// Value verifies that equality inspects nested interface contents.
+			Value any
+		}{Value: [1]float64{math.NaN()}},
+	}
 	for _, key := range keys {
 		if err := Set(c, key, 1); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid set = %v", err)
 		}
 		if state := Get[int](c, key); !errors.Is(state.Err, ErrInvalidKey) {
 			t.Fatalf("invalid get = %+v", state)
+		}
+		if err := Update(c, key, func(int) (int, error) {
+			t.Fatal("invalid key invoked updater")
+			return 0, nil
+		}); !errors.Is(err, ErrInvalidKey) {
+			t.Fatalf("invalid update = %v", err)
 		}
 		if _, err := Fetch(
 			context.Background(),
@@ -670,6 +691,13 @@ func TestInvalidKeys(t *testing.T) {
 		if !errors.Is(handle.Snapshot().Err, ErrInvalidKey) {
 			t.Fatal("invalid query accepted")
 		}
+		if state := <-handle.Updates(); !errors.Is(state.Err, ErrInvalidKey) {
+			t.Fatalf("invalid query update = %+v", state)
+		}
+		if _, open := <-handle.Updates(); open {
+			t.Fatal("invalid query left updates open")
+		}
+		handle.Close()
 		if err := c.Cancel(key); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid cancel = %v", err)
 		}
@@ -682,9 +710,15 @@ func TestInvalidKeys(t *testing.T) {
 		if err := c.Invalidate([]any{"safe", key}); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid batch = %v", err)
 		}
+		if err := c.Remove(QueryFilter{Keys: []any{"safe", key}}); !errors.Is(err, ErrInvalidKey) {
+			t.Fatalf("invalid filter = %v", err)
+		}
 		if Get[int](c, "safe").Stale {
 			t.Fatal("invalid batch partially invalidated data")
 		}
+	}
+	if stats := c.Stats(); stats.CacheEntries != 1 || stats.Loads != 0 {
+		t.Fatalf("invalid keys retained state or started work: %+v", stats)
 	}
 }
 
