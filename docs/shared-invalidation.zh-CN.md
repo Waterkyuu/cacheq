@@ -12,40 +12,204 @@
 
 权威数据库或 API 写入必须先成功提交，再使缓存失效。通知投递不提供分布式事务、跨实例同步完成屏障或持久化事件重放。
 
-## 环境要求与快速开始
+## 安装
 
 核心契约继续兼容 Go 1.22。可选 Redis 模块要求 Go 1.26，依赖版本由自身 go.mod 声明。在共享缓存原有命令之外，通知需要 `PUBLISH` 和 `SUBSCRIBE`，标签需要 `HGET`、`HSET`、`HGETALL` 和 `HEXISTS`。应使用可写主节点连接，配置相应 ACL 权限、context 和网络操作超时。
 
-在一个终端启动不启用持久化的临时 Redis：
+在仓库检出的目录中，在一个终端启动不启用持久化的临时 Redis：
 
 ```sh
 redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 ```
 
-在另一个终端，从仓库根目录执行：
+在另一个终端，从仓库根目录准备已有的示例模块。检入的 `go.mod` 通过本地替换引用核心库和 Redis 适配器，不要求适配器已发布：
 
 ```sh
 cd examples/redis
-REDIS_ADDR=127.0.0.1:16379 go run ./shared_invalidation
+go mod download
 ```
 
-预期输出：
+## 使用方式
 
-```text
-initial detail: Alice
-initial list: Alice
-source calls: 2
-notified detail stale: true
-notified list stale: true
-retained detail: Alice
-refreshed detail: Bob
-refreshed list: Bob
-source calls: 4
+以下片段扩展应用中返回 `error` 的 `run()` 函数，不是独立程序。复用[创建 Redis 存储](shared-cache.zh-CN.md#创建-redis-存储)中配置的 `remote`（`*redis.Client`）及服务生命周期 context `ctx`。应用拥有该连接并负责配置超时。所需导入为 `context`、`fmt`、`time`、`github.com/Waterkyuu/cacheq` 和 `redistore "github.com/Waterkyuu/cacheq/store/redis"`。下方完整程序包含全部初始化和导入。
+
+已有查询返回以下资料类型，在包级别声明：
+
+```go
+// User represents the immutable source value shared by detail and list queries.
+type User struct {
+	// Name is the display name returned by the authoritative source.
+	Name string
+}
 ```
 
-两个 Client 通过 Redis 复用 `User` 详情和 `[]User` 列表。A 提交数据源修改后，使二者共有的标签失效。B 无须手动本地失效，就能收到两个不同类型结果的 stale 快照；在 stale 期间保留 Alice，再通过显式读取获取 Bob。示例使用 `RefetchNone` 和禁用的查询对象，确保回源次数确定。生产应用可以采用默认的已观察查询刷新策略。
+### 为存储启用通知
 
-示例只重置保留命名空间 `cacheq-invalidation-demo` 中的示例标签。元数据保留到这个临时 Redis 停止。完整程序维护于 [examples/redis/shared_invalidation/main.go](../examples/redis/shared_invalidation/main.go)。
+使用以下配置替换应用原有的 `redistore.New` 调用。`EnableNotifications` 默认为 false；设为 true 后，存储发布失效并允许订阅。生产环境应保留应用已有的 Prefix；`cacheq-notification-usage` 是示例命名空间。需要传播通知的写入方均须启用发布。在[共享缓存命令](shared-cache.zh-CN.md#安装)之外，Redis ACL 还需要 `PUBLISH` 和 `SUBSCRIBE` 权限。
+
+```go
+store, err := redistore.New(remote, redistore.Options{
+	Prefix: "cacheq-notification-usage", EnableNotifications: true,
+})
+if err != nil {
+	return err
+}
+```
+
+返回的 `store` 借用 `remote`；构造函数只验证配置，不执行 Redis I/O。同一个 Client 的查询绑定和 watcher 必须复用这个存储对象。不同进程可以为同一远端命名空间各自创建对象。启用通知不要求启用远端标签。
+
+### 将已有查询绑定到通知存储
+
+复用应用按照[定义查询](shared-cache.zh-CN.md#定义使用共享缓存的查询)创建的 `definition`，其类型为 `cacheq.Definition[User]`。其中的 Fetcher 从应用数据源读取已提交的用户资料。`User` 是上方声明的资料结果类型。
+
+`NewSharedCache` 从 `SharedCacheOptions[User]` 推断结果类型 `User`。共享键包含租户、记录身份和模式版本；`Format` 指定 JSON 模式，`TTL` 将共享新鲜期限制为五分钟。更新配置时应保留应用原有的共享键、格式和 TTL。通过 Client 使用定义之前，将返回的共享缓存赋给该定义。
+
+```go
+shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+	Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
+})
+if err != nil {
+	return err
+}
+definition.Shared = shared
+```
+
+构造和赋值均不执行 Redis I/O。后续加载会将查询的本地键绑定到这个存储及共享键。按键失效不需要标签。
+
+### 为 Client 与存储建立一个 watcher
+
+复用应用中长期存在的 `client`，类型为 `*cacheq.Client`（完整示例中的 `a`）。在启动时，为这个 Client 与存储组合调用一次 `WatchShared`。该调用执行订阅 I/O，等待订阅确认，并返回 `*SharedWatcher`；建立失败时返回错误，不保留读取协程。已有的存储绑定查询会变为 stale，以修复订阅建立之前的区间。
+
+```go
+watch, err := client.WatchShared(ctx, store, cacheq.InvalidateOptions{
+	Refetch: cacheq.RefetchNone,
+})
+if err != nil {
+	return err
+}
+defer watch.Close()
+```
+
+watcher 使用服务生命周期 `ctx`，不能使用短暂的请求 context；Client 关闭也会结束它的生命周期。示例选择 `RefetchNone`，因此通知保留数据并标记 stale，不自动加载。省略配置时使用 `RefetchObserved`，允许已启用的订阅刷新。其他进程在各自的 Client 和存储上建立自己的 watcher。
+
+### 加载绑定的查询
+
+通过同一个 Client 加载已有定义。`Fetch` 返回 `User` 或错误；新鲜本地命中不执行 Redis I/O，需要加载时可能读取 Redis 并调用数据源 Fetcher。返回的用户资料可以立即使用；通知向其他实例的投递仍然是异步的。
+
+```go
+user, err := definition.Fetch(ctx, client)
+if err != nil {
+	return err
+}
+fmt.Printf("loaded user: %s\n", user.Name)
+```
+
+### 在业务提交后使一个共享键失效
+
+权威数据库或 API 写入成功后，使用同一个 Client 调用 `definition.InvalidateShared`。该方法先执行远端按键失效并发布通知，再将定义对应的精确本地键标记为 stale。`RefetchNone` 将加载留给下一次读取；调用不会等待其他实例的 watcher 或刷新完成。
+
+```go
+// The database or API write has already committed successfully.
+if err := definition.InvalidateShared(ctx, client, cacheq.InvalidateOptions{
+	Refetch: cacheq.RefetchNone,
+}); err != nil {
+	return fmt.Errorf("invalidate committed user change: %w", err)
+}
+```
+
+远端失败时返回错误，本地状态不变；超时可能导致远端结果不确定。应独立处理缓存失效失败，不能仅因失效失败而重试已提交的业务写入，否则可能重复产生业务效果。`shared.Invalidate(ctx)` 是只操作远端的替代方法，不会同步处理发起 Client 的本地失效。
+
+### 启用可选的远端标签
+
+按键失效已满足需求时可跳过本节。需要将详情和列表记录关联成组时，创建 `EnableTags: true` 的存储并建立它的 watcher。独立的示例前缀使可选流程与上方按键流程互不干扰。标签模式使用独立 Redis 布局和通知 channel；同一标签命名空间中的参与方必须采用一致的 Prefix 和 EnableTags。标签额外需要 `HGET`、`HSET`、`HGETALL` 和 `HEXISTS` 权限。
+
+```go
+tagStore, err := redistore.New(remote, redistore.Options{
+	Prefix: "cacheq-tag-usage", EnableNotifications: true, EnableTags: true,
+})
+if err != nil {
+	return err
+}
+tagWatch, err := client.WatchShared(ctx, tagStore, cacheq.InvalidateOptions{
+	Refetch: cacheq.RefetchNone,
+})
+if err != nil {
+	return err
+}
+defer tagWatch.Close()
+```
+
+存储构造不执行 I/O；`WatchShared` 按前述确认和生命周期规则订阅。每个标签共享缓存复用 `tagStore`，这个 Client 与存储组合复用 `tagWatch`。启用标签不会迁移原有按键布局中的记录。
+
+### 登记查询定义的远端标签
+
+在 `SharedCacheOptions[User]` 中启用 `ShareTags`，并在加载前设置 `Definition.Tags`。`ShareTags` 请求远端登记；不启用时，新声明的标签仅保留在本地。存储无法登记标签时，构造返回 `ErrSharedCapability`。
+
+以下代码复制已有定义并保留其数据源 Fetcher，使用新的本地键，防止新鲜本地结果跳过首次共享读取。标签包含租户身份，将详情记录与声明同一标签的列表记录关联。`NewSharedCache` 仅验证配置，不执行 I/O；`tagged.Fetch` 执行共享读取并登记关系，即使命中 Redis 缓存也会登记。
+
+```go
+tagShared, err := cacheq.NewSharedCache(tagStore, cacheq.SharedCacheOptions[User]{
+	Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
+	ShareTags: true,
+})
+if err != nil {
+	return err
+}
+tagged := definition
+tagged.Key = "tagged-detail"
+tagged.Shared = tagShared
+tagged.Tags = []string{"tenant:42:users"}
+if _, err := tagged.Fetch(ctx, client); err != nil {
+	return err
+}
+```
+
+构造定义、创建禁用的查询对象或命中新鲜本地数据都不会登记远端关系。为已经加载的本地键添加标签时，应使用更新后的定义创建查询对象，并显式调用 `Refetch(ctx)` 强制登记。远端关系采用追加方式；调整分组可能需要新的版本化共享键或命名空间。
+
+### 在业务提交后使已登记标签失效
+
+`client.InvalidateSharedTags` 接收同一个 `tagStore` 和待失效标签。它先执行远端 I/O，再使当前 Client 中匹配的绑定查询失效。匹配采用区分大小写的精确 OR 规则：任意一个标签匹配即可，空列表不执行操作。其他 Client 通过各自的 watcher 异步接收通知。
+
+```go
+// The business write affecting the tagged records has already committed.
+operation, cancel := context.WithTimeout(ctx, 2*time.Second)
+defer cancel()
+if err := client.InvalidateSharedTags(
+	operation,
+	tagStore,
+	[]string{"tenant:42:users"},
+	cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+); err != nil {
+	return fmt.Errorf("invalidate committed users change: %w", err)
+}
+```
+
+两秒的操作截止时间限制本次标签调用；与共享键失效不同，该方法直接使用传入的 context。远端错误不会改变本地状态；已成功的远端操作不会因后续本地处理失败而回滚。应将这种失败与业务写入分开处理。
+
+### 检查 watcher 诊断并释放订阅
+
+`watch.Stats()` 读取统计，不执行 Redis I/O。`LastError` 在恢复后仍保留最近一次连接或解码错误；结合 `Errors` 和 `Resyncs` 可以诊断通知中断。处理结束并释放订阅资源后，`Done()` 关闭。事件流意外关闭会终止 watcher；如果应用需要恢复监听，应先排查失败原因再重新创建。
+
+```go
+stats := watch.Stats()
+if stats.LastError != nil {
+	fmt.Printf("watcher errors: %d, last error: %v\n", stats.Errors, stats.LastError)
+}
+select {
+case <-watch.Done():
+	fmt.Println("watcher stopped")
+default:
+}
+watch.Close()
+```
+
+`Close()` 取消处理并等待订阅释放。该方法幂等，显式停机清理可以与延迟清理共存。关闭或取消 watcher 不会关闭它的 Client 或借用的 Redis 连接。停机时，应先释放 watcher 和 Client，再关闭 `remote`；查询对象仍需要独立清理。
+
+## 完整示例
+
+下方程序结合远端标签和两个 Client，在提交数据源变更后使用户详情及列表失效。程序维护于 [examples/redis/shared_invalidation/main.go](../examples/redis/shared_invalidation/main.go)。如需运行修改后的副本，在已配置的 `examples/redis` 模块中新建 `invalidation-guide` 目录，将程序保存为其中的 `main.go`，然后从该模块执行 `REDIS_ADDR=127.0.0.1:16379 go run ./invalidation-guide`。
+
+示例只重置保留命名空间 `cacheq-invalidation-demo` 中的示例标签，因此重复运行输出一致。元数据保留到临时 Redis 停止。`RefetchNone` 和禁用的查询对象确保回源次数确定；生产应用可以采用默认的已观察查询刷新策略。
 
 ```go
 // Command shared_invalidation demonstrates typed remote tag invalidation and local notification delivery.
@@ -219,6 +383,29 @@ func waitStale[V any](ctx context.Context, query *cacheq.QueryHandle[V]) error {
 	}
 }
 ```
+
+临时 Redis 运行期间，从仓库根目录执行维护中的示例：
+
+```sh
+cd examples/redis
+REDIS_ADDR=127.0.0.1:16379 go run ./shared_invalidation
+```
+
+预期输出：
+
+```text
+initial detail: Alice
+initial list: Alice
+source calls: 2
+notified detail stale: true
+notified list stale: true
+retained detail: Alice
+refreshed detail: Bob
+refreshed list: Bob
+source calls: 4
+```
+
+两个 Client 通过 Redis 复用 `User` 详情和 `[]User` 列表。A 提交数据源修改后使共有标签失效。B 收到两个结果类型的 stale 快照，在 stale 期间保留 Alice，再通过显式读取获取 Bob。只有显式读取后，回源次数才从二次增加到四次。
 
 ## API 契约
 
