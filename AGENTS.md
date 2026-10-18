@@ -79,6 +79,9 @@ reference Task targets that are absent from `Taskfile.yml`.
 - Use idiomatic snake_case file names, such as `query_options.go`.
 - Keep functions focused and control flow easy to follow. Prefer early returns
   when they reduce nesting.
+- Do not repeat identical conditions in adjacent `if` blocks when their bodies can
+  share one guard without changing evaluation order or behavior. Combine such blocks
+  into a single conditional.
 - Wrap errors with useful context while preserving the original error for
   `errors.Is` and `errors.As`.
 - Accept interfaces at the consumer when substitution is needed; otherwise
@@ -126,6 +129,9 @@ meaning, contract, or reason for existing instead of translating its syntax.
 
 ## Document
 
+- Before creating or reorganizing developer guides, read and follow
+  [the developer documentation template](reference/developer-documentation-template.md).
+  Keep setup, runnable usage, and expected results ahead of implementation details.
 - New features require matching `docs/xxxx.en-US.md` and `docs/xxxx.zh-CN.md` guides;
   fixes update existing guides when needed.
 - Use formal technical documentation: purpose, runnable examples, API contracts,

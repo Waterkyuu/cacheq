@@ -254,7 +254,11 @@ func TestQueryFilterWait(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := c.InvalidateAndWait(ctx, filter); !errors.Is(err, context.Canceled) || q.Snapshot().Stale {
+	if _, err := c.InvalidateAndWait(
+		ctx,
+		filter,
+	); !errors.Is(err, context.Canceled) ||
+		q.Snapshot().Stale {
 		t.Fatalf("pre-canceled selection changed data: %v", err)
 	}
 }

@@ -6,6 +6,8 @@ Query tags declare relationships between queries. Detail, list, and aggregate qu
 
 `Key` identifies a query; `Tags` groups related queries. Sharing a tag does not merge caches for different keys or change result-type constraints or loading policies.
 
+This guide specifies local tag registration and QueryFilter matching. Optional remote registration through `ShareTags` and cross-instance invalidation through `WatchShared` are covered by [shared invalidation and tags](shared-invalidation.en-US.md).
+
 ## Quick start
 
 This complete program assigns the same tag to tenant 42's user detail and list queries. It prefetches data, creates enabled subscriptions, changes the simulated backend value, and awaits both refreshes by tag. Tenant 99's data remains unchanged.
@@ -39,27 +41,27 @@ func main() {
 	backend.Store(User{Name: "Alice"})
 	tags := []string{"tenant:42:users"}
 
-	detailDefinition := cacheq.QueryDefinition[User]{
-		Key:  "tenant:42:user:7",
-		Tags: tags,
-		Fetcher: func(context.Context) (User, error) {
-			return backend.Load().(User), nil
-		},
+	detailDefinition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+		return backend.Load().(User), nil
+	})
+	if err != nil {
+		panic(err)
 	}
-	listDefinition := cacheq.QueryDefinition[[]User]{
-		Key:  "tenant:42:users",
-		Tags: tags,
-		Fetcher: func(context.Context) ([]User, error) {
-			return []User{backend.Load().(User)}, nil
-		},
+	detailDefinition.Tags = tags
+	listDefinition, err := cacheq.QueryDefinition("tenant:42:users", func(context.Context) ([]User, error) {
+		return []User{backend.Load().(User)}, nil
+	})
+	if err != nil {
+		panic(err)
 	}
-	otherDefinition := cacheq.QueryDefinition[User]{
-		Key:  "tenant:99:user:7",
-		Tags: []string{"tenant:99:users"},
-		Fetcher: func(context.Context) (User, error) {
-			return User{Name: "Carol"}, nil
-		},
+	listDefinition.Tags = tags
+	otherDefinition, err := cacheq.QueryDefinition("tenant:99:user:7", func(context.Context) (User, error) {
+		return User{Name: "Carol"}, nil
+	})
+	if err != nil {
+		panic(err)
 	}
+	otherDefinition.Tags = []string{"tenant:99:users"}
 	if err := detailDefinition.Prefetch(ctx, client); err != nil {
 		panic(err)
 	}
@@ -108,10 +110,10 @@ selected removed: true
 
 | Field | Type | Default | Responsibility |
 | --- | --- | --- | --- |
-| `QueryDefinition.Tags` | `[]string` | nil | Declare labels for this query key; nil and empty slices declare no labels |
+| `Definition.Tags` | `[]string` | nil | Declare labels for this query key; nil and empty slices declare no labels |
 | `QueryFilter.Tags` | `[]string` | nil | Select existing queries matching at least one requested label; nil is unrestricted, while a non-nil empty slice selects nothing |
 
-Constructing a `QueryDefinition` does not register tags. Its `Fetch`, `Prefetch`, and `Query` methods register tags after validation when reusing cached data, starting or joining a load, or creating a subscription. Fresh cache hits and disabled subscriptions also register tags without requiring a request.
+Calling `QueryDefinition` does not register tags. The returned definition's `Fetch`, `Prefetch`, and `Query` methods register tags after validation when reusing cached data, starting or joining a load, or creating a subscription. Fresh cache hits and disabled subscriptions also register tags without requiring a request.
 
 Tags are copied when an operation starts. Later changes to the definition's `Tags` slice do not change registered labels. Using the modified definition adds its new labels to the same key. Registration belongs to the supplied Client; another Client using the same definition registers its own labels independently.
 

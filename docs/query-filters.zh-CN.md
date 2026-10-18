@@ -98,7 +98,7 @@ other tenant data: Carol
 
 查询键必须满足 cacheq 的可比较键要求。键按 Go 精确相等规则匹配，动态类型必须一致；字符串和数组不进行前缀匹配。只有 `[]any` 表示批量参数，`[]string` 等其他切片类型不能直接作为批量参数。
 
-“已有查询”是指 Client 仍持有缓存状态、活动加载或订阅的键，包括暂时没有数据的已订阅查询。仅构造 `QueryDefinition` 不会向 Client 注册查询。
+“已有查询”是指 Client 仍持有缓存状态、活动加载或订阅的键，包括暂时没有数据的已订阅查询。仅调用 `QueryDefinition` 不会向 Client 注册查询。
 
 筛选值和条件函数只选中已有查询，缺失的键被跳过。直接传单键或 `[]any` 时按指定键执行；其中 `Invalidate` 可以为缺失的键建立过期状态。空或 nil 的 `[]any` 批量参数均不执行任何操作。
 
@@ -110,7 +110,7 @@ other tenant data: Carol
 | `Tags` | `[]string` | nil | 要求命中任一已登记标签；nil 不限制，非 nil 的空切片不选择任何键 |
 | `Predicate` | `func(key any) bool` | nil | 对候选键进一步筛选；nil 表示接受所有候选键 |
 
-已设置的字段取交集：查询键必须满足 `Keys`、命中 `Tags` 中任一标签，并且 `Predicate` 返回 true，才会被选中。`Keys` 中的重复键只处理一次；完整校验键列表后，满足键和标签条件的候选键最多调用一次条件函数。通过 `QueryDefinition.Tags` 声明标签，登记与生命周期规则见[查询标签](query-tags.zh-CN.md)。
+已设置的字段取交集：查询键必须满足 `Keys`、命中 `Tags` 中任一标签，并且 `Predicate` 返回 true，才会被选中。`Keys` 中的重复键只处理一次；完整校验键列表后，满足键和标签条件的候选键最多调用一次条件函数。通过 `Definition.Tags` 声明标签，登记与生命周期规则见[查询标签](query-tags.zh-CN.md)。
 
 以下局部片段使用快速开始中的 `ResourceKey` 类型，可放在业务函数内：
 

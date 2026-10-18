@@ -43,7 +43,15 @@ func TestMaxAgeBoundary(t *testing.T) {
 			if state.HasData || state.Data != "" || !state.Stale || state.Status != Idle {
 				t.Fatalf("at deadline = %+v", state)
 			}
-			if _, err := Fetch[string](context.Background(), c, "a", nil); !errors.Is(err, ErrNoFetcher) {
+			if _, err := Fetch[string](
+				context.Background(),
+				c,
+				"a",
+				nil,
+			); !errors.Is(
+				err,
+				ErrNoFetcher,
+			) {
 				t.Fatalf("over-age fresh cache was reused: %v", err)
 			}
 		})

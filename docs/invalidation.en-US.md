@@ -4,7 +4,7 @@
 
 Invalidation retains data but marks it stale. After updating a user, detail and list results can become stale together even though they return `User` and `[]User` respectively.
 
-`Invalidate` accepts an exact key, a `[]any` list, a `func(any) bool` predicate, or a reusable `QueryFilter`. [Query filters](query-filters.en-US.md) combine exact keys and predicates and also apply to waiting for refresh, cancellation, and removal. Options are optional; when multiple options are supplied, the last one wins. Only `[]any` is treated as a batch, so convert other slice types explicitly. Nil targets and invalid keys return `ErrInvalidKey`; empty or nil `[]any` batches do nothing.
+`Invalidate` accepts an exact key, a `[]any` list, a `func(any) bool` predicate, or a reusable `QueryFilter`. [Query filters](query-filters.en-US.md) combine exact keys and predicates and also apply to waiting for refresh, cancellation, and removal. Configuration is optional and limited to one `InvalidateOptions` value; extra values return `ErrTooManyOptions` before invalidation. Only `[]any` is treated as a batch, so convert other slice types explicitly. Nil targets and invalid keys return `ErrInvalidKey`; empty or nil `[]any` batches do nothing.
 
 ## Quick start
 
@@ -81,6 +81,7 @@ from the [query guide](queries.en-US.md), inside a function returning `error`.
 if err := client.Invalidate("user:42"); err != nil {
 	return err
 }
+
 ```
 
 Data remains available, `Stale` becomes true, and handles are notified. An enabled handle supplies its fetcher for background refresh; keys without enabled handles are only marked stale.
@@ -96,6 +97,7 @@ detail := cacheq.Query(client, "user:42", getUser) // QueryHandle[User]
 users := cacheq.Query(client, "users", getUsers)   // QueryHandle[[]User]
 defer detail.Close()
 defer users.Close()
+
 ```
 
 After the business mutation succeeds:
@@ -105,6 +107,7 @@ After the business mutation succeeds:
 if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
 	return err
 }
+
 ```
 
 One operation spans multiple result types in the shared client. Enabled consumers refresh by default; other keys simply become stale. Duplicate keys are processed once, avoiding duplicate work or invalidating a refresh just started by an earlier occurrence.
@@ -120,7 +123,7 @@ All keys are validated before mutation. A non-comparable key returns `ErrInvalid
 | `RefetchObserved` | Default and zero value: refresh keys with enabled handles |
 | `RefetchNone` | Mark stale without starting new work |
 
-Single-key invalidation accepts optional configuration:
+Single-key invalidation accepts an optional configuration:
 
 ```go
 if err := client.Invalidate("user:42", cacheq.InvalidateOptions{
@@ -181,6 +184,7 @@ if err := client.Invalidate(func(key any) bool {
 }); err != nil {
 	return err
 }
+
 ```
 
 String prefixes have no built-in semantics. Match prefixes yourself, or use comparable structs and inspect their fields. Structs containing slices or maps are not valid keys.
@@ -219,6 +223,7 @@ for _, result := range results {
 if err != nil {
 	return err
 }
+
 ```
 
 Import `fmt` for this snippet. This entry enables `RefetchAfterLoad` automatically and accepts the same single key, `[]any`, predicate, and optional configuration as `Invalidate`. Only keys with enabled observers and loaders refresh. Unobserved or disabled keys, and keys selected with `RefetchNone`, are only marked stale and return skipped results. It does not retain loaders for Fetch-only keys.

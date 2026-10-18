@@ -51,6 +51,16 @@ export const chapters: Chapter[] = [
 		},
 	},
 	{
+		id: "shared-cache",
+		zh: "共享结果缓存",
+		en: "Shared result cache",
+		description: {
+			en: "Configure optional Redis result caching for typed cacheq queries. Preserve source freshness, invalidate shared keys, fence obsolete writes, and handle cache failures.",
+			"zh-CN":
+				"为 cacheq 类型化查询配置可选 Redis 结果缓存，保留数据源新鲜期，按 key 共享失效，拒绝旧值回填并处理缓存故障。",
+		},
+	},
+	{
 		id: "query-filters",
 		zh: "统一查询筛选",
 		en: "Query filters",
@@ -61,13 +71,23 @@ export const chapters: Chapter[] = [
 		},
 	},
 	{
+		id: "shared-invalidation",
+		zh: "共享失效通知与标签",
+		en: "Shared invalidation & tags",
+		description: {
+			en: "Receive cacheq Redis invalidation notifications, register remote query tags, recover from connection gaps, and manage watcher ownership and conditional generation checks.",
+			"zh-CN":
+				"接收 cacheq Redis 失效通知，登记远端查询标签，修复连接中断区间，管理 watcher 生命周期并执行原子版本校验。",
+		},
+	},
+	{
 		id: "query-tags",
 		zh: "查询标签",
 		en: "Query tags",
 		description: {
-			en: "Group related cacheq queries with QueryDefinition.Tags and select labels through QueryFilter for invalidation, awaited refresh, cancellation, and removal in Go.",
+			en: "Group related cacheq queries with Definition.Tags and select labels through QueryFilter for invalidation, awaited refresh, cancellation, and removal in Go.",
 			"zh-CN":
-				"在 Go 中通过 cacheq QueryDefinition.Tags 声明关联查询分组，使用 QueryFilter 按标签失效、等待刷新、取消和删除，并管理标签登记与生命周期。",
+				"在 Go 中通过 cacheq Definition.Tags 声明关联查询分组，使用 QueryFilter 按标签失效、等待刷新、取消和删除，并管理标签登记与生命周期。",
 		},
 	},
 	{
@@ -115,9 +135,9 @@ export const chapters: Chapter[] = [
 		zh: "查询配置",
 		en: "Query options",
 		description: {
-			en: "Reuse cacheq QueryDefinition values and shared QueryOptions across reading, subscribing, and prefetching in Go. Configure freshness, retries, timeouts, and automatic loading.",
+			en: "Create reusable typed queries with cacheq QueryDefinition and shared QueryOptions across reading, subscribing, and prefetching in Go. Configure freshness, retries, timeouts, and automatic loading.",
 			"zh-CN":
-				"在 Go 中通过 cacheq QueryDefinition 复用类型化查询，并在读取、订阅和预加载间共享 QueryOptions，配置新鲜期、重试、超时和自动加载。",
+				"在 Go 中通过 cacheq QueryDefinition 创建可复用的类型化查询，并在读取、订阅和预加载间共享 QueryOptions，配置新鲜期、重试、超时和自动加载。",
 		},
 	},
 	{

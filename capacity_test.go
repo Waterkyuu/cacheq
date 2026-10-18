@@ -120,7 +120,12 @@ func TestCapacityErrors(t *testing.T) {
 	t.Cleanup(c.Close)
 	Set(c, "a", 1)
 	failure := errors.New("offline")
-	_, err := Fetch(context.Background(), c, "b", func(context.Context) (string, error) { return "", failure })
+	_, err := Fetch(
+		context.Background(),
+		c,
+		"b",
+		func(context.Context) (string, error) { return "", failure },
+	)
 	if !errors.Is(err, failure) || Get[int](c, "a").HasData {
 		t.Fatalf("cached failure did not consume capacity: %v", err)
 	}

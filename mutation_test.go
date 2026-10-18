@@ -8,6 +8,21 @@ import (
 	"time"
 )
 
+// TestMutationCallbackInference retains typed validation when only the success callback supplies the types.
+func TestMutationCallbackInference(t *testing.T) {
+	c := NewClient(Options{})
+	t.Cleanup(c.Close)
+	h := Mutation(c, nil, func(context.Context, int, string) error {
+		t.Fatal("a missing write must not synchronize cache state")
+		return nil
+	})
+	t.Cleanup(h.Close)
+	result, err := h.Mutate(context.Background(), "create-user")
+	if !errors.Is(err, ErrNoMutator) || result.Data != 0 || result.SyncErr != nil {
+		t.Fatalf("missing write = %+v, %v", result, err)
+	}
+}
+
 // TestMutationSuccessCallback passes committed data, original input, and caller cancellation once.
 func TestMutationSuccessCallback(t *testing.T) {
 	for _, failWrite := range []bool{false, true} {
@@ -23,18 +38,16 @@ func TestMutationSuccessCallback(t *testing.T) {
 					return 0, failure
 				}
 				return 42, nil
-			}, MutationOptions[string, int]{
-				OnSuccess: func(callbackCtx context.Context, result int, input string) error {
-					calls++
-					if result != 42 || input != "create-user" {
-						t.Fatalf("callback result=%d input=%q", result, input)
-					}
-					cancel()
-					if !errors.Is(callbackCtx.Err(), context.Canceled) {
-						t.Fatal("success callback lost caller cancellation")
-					}
-					return callbackCtx.Err()
-				},
+			}, func(callbackCtx context.Context, result int, input string) error {
+				calls++
+				if result != 42 || input != "create-user" {
+					t.Fatalf("callback result=%d input=%q", result, input)
+				}
+				cancel()
+				if !errors.Is(callbackCtx.Err(), context.Canceled) {
+					t.Fatal("success callback lost caller cancellation")
+				}
+				return callbackCtx.Err()
 			})
 			t.Cleanup(h.Close)
 			result, err := h.Mutate(ctx, "create-user")
@@ -68,12 +81,10 @@ func TestMutationSynchronization(t *testing.T) {
 	h := Mutation(
 		c,
 		func(_ context.Context, input int) (int, error) { calls.Add(1); return input, nil },
-		MutationOptions[int, int]{
-			OnSuccess: func(_ context.Context, value int, _ int) error {
-				updateErr := Set(c, "detail", value)
-				invalidateErr := c.Invalidate([]any{"list", "summary", "list"})
-				return errors.Join(updateErr, invalidateErr)
-			},
+		func(_ context.Context, value int, _ int) error {
+			updateErr := Set(c, "detail", value)
+			invalidateErr := c.Invalidate([]any{"list", "summary", "list"})
+			return errors.Join(updateErr, invalidateErr)
 		},
 	)
 	t.Cleanup(h.Close)
@@ -104,9 +115,11 @@ func TestMutationFailure(t *testing.T) {
 	t.Cleanup(c.Close)
 	failure := errors.New("write rejected")
 	calls := 0
-	h := Mutation(c, func(context.Context, int) (int, error) { calls++; return 0, failure }, MutationOptions[int, int]{
-		OnSuccess: func(context.Context, int, int) error { t.Fatal("unexpected synchronization"); return nil },
-	})
+	h := Mutation(
+		c,
+		func(context.Context, int) (int, error) { calls++; return 0, failure },
+		func(context.Context, int, int) error { t.Fatal("unexpected synchronization"); return nil },
+	)
 	t.Cleanup(h.Close)
 	result, err := h.Mutate(context.Background(), 1)
 	if !errors.Is(err, failure) || result.SyncErr != nil || calls != 1 {
@@ -123,13 +136,11 @@ func TestMutationSyncFailure(t *testing.T) {
 	t.Cleanup(c.Close)
 	Set(c, "list", 1)
 	failure := errors.New("local update rejected")
-	h := Mutation(c, func(context.Context, int) (int, error) { return 0, nil }, MutationOptions[int, int]{
-		OnSuccess: func(context.Context, int, int) error {
-			return errors.Join(failure, c.Invalidate(
-				func(key any) bool { return key == "list" },
-				InvalidateOptions{Refetch: RefetchNone},
-			))
-		},
+	h := Mutation(c, func(context.Context, int) (int, error) { return 0, nil }, func(context.Context, int, int) error {
+		return errors.Join(failure, c.Invalidate(
+			func(key any) bool { return key == "list" },
+			InvalidateOptions{Refetch: RefetchNone},
+		))
 	})
 	t.Cleanup(h.Close)
 	result, err := h.Mutate(context.Background(), 1)
@@ -140,11 +151,13 @@ func TestMutationSyncFailure(t *testing.T) {
 	if state.Status != Success || !state.HasData || state.Err != nil || !errors.Is(state.SyncErr, failure) {
 		t.Fatalf("committed state = %+v", state)
 	}
-	invalid := Mutation(c, func(context.Context, int) (int, error) { return 7, nil }, MutationOptions[int, int]{
-		OnSuccess: func(context.Context, int, int) error {
+	invalid := Mutation(
+		c,
+		func(context.Context, int) (int, error) { return 7, nil },
+		func(context.Context, int, int) error {
 			return errors.Join(failure, c.Invalidate([]any{"list", []int{1}}))
 		},
-	})
+	)
 	t.Cleanup(invalid.Close)
 	result, err = invalid.Mutate(context.Background(), 1)
 	if err != nil || !errors.Is(result.SyncErr, ErrInvalidKey) || !errors.Is(result.SyncErr, failure) {
@@ -163,7 +176,7 @@ func TestMutationCancellation(t *testing.T) {
 				close(started)
 				<-ctx.Done()
 				return 0, ctx.Err()
-			})
+			}, nil)
 			t.Cleanup(h.Close)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -206,9 +219,7 @@ func TestMutationLateSuccess(t *testing.T) {
 				close(started)
 				<-release
 				return 42, nil
-			}, MutationOptions[int, int]{
-				OnSuccess: func(_ context.Context, value int, _ int) error { return Set(c, "key", value) },
-			})
+			}, func(_ context.Context, value int, _ int) error { return Set(c, "key", value) })
 			t.Cleanup(h.Close)
 			finished := make(chan MutationResult[int], 1)
 			go func() {
@@ -244,13 +255,13 @@ func TestMutationLateSuccess(t *testing.T) {
 func TestMutationValidation(t *testing.T) {
 	c := NewClient(Options{})
 	t.Cleanup(c.Close)
-	nilHandle := Mutation[int, int](c, nil)
+	nilHandle := Mutation[int, int](c, nil, nil)
 	if _, err := nilHandle.Mutate(context.Background(), 1); !errors.Is(err, ErrNoMutator) {
 		t.Fatal(err)
 	}
 	nilHandle.Close()
 	never := func(context.Context, int) (int, error) { t.Fatal("unexpected write"); return 0, nil }
-	h := Mutation(c, never)
+	h := Mutation(c, never, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := h.Mutate(ctx, 1); !errors.Is(err, context.Canceled) || h.Snapshot().Status != Idle {
@@ -262,7 +273,7 @@ func TestMutationValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Close()
-	closed := Mutation(c, never)
+	closed := Mutation(c, never, nil)
 	if _, err := closed.Mutate(context.Background(), 1); !errors.Is(err, ErrClosed) {
 		t.Fatal(err)
 	}

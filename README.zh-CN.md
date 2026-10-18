@@ -27,16 +27,17 @@
 | 多个处理函数或组件读取同一个用户、配置或资源 | 复用新鲜缓存，合并相同 key 的执行中请求 |
 | 列表或聚合查询需要从支持批量接口的后端读取多个对象 | 将不同 key 的加载合并为批次，或通过 `LoadMany` 提交已知的一组 key |
 | 写入成功后，需要更新详情并刷新关联列表或统计 | 通过 Mutation 组织缓存更新和失效，并按需等待关联刷新完成 |
-| 多处调用需要复用相同的查询 key、加载函数和加载策略 | 复用 `QueryDefinition` 和共享 `QueryOptions`，通过标签与筛选管理关联查询 |
+| 多处调用需要复用相同的查询 key、加载函数和加载策略 | 通过 `QueryDefinition` 创建可复用定义并共享 `QueryOptions`，通过标签与筛选管理关联查询 |
 | 界面或持续运行的任务需要响应加载、结果、错误和刷新 | 订阅类型安全的查询更新，通过诊断事件追踪执行过程 |
 | 读取和写入共用一个容量有限的数据库或服务 | 通过共享 `Executor` 限制活动回调与排队工作 |
 
-cacheq 的缓存和查询状态保存在单个进程中。少量本地值只需过期处理时，TTL 缓存可能已经足够；需要持久化或跨进程共享数据时，应使用外部存储。
+cacheq 在单个进程中维护查询状态和本地结果。需要跨进程复用序列化结果的查询，可以启用可选[共享结果缓存](docs/shared-cache.zh-CN.md)，包括独立的 Redis 适配器。少量本地值只需过期处理时，TTL 缓存可能已经足够。
 
 ## 功能
 
 - 类型安全的共享查询与缓存。
 - 缓存策略与生命周期管理。
+- 可选 Redis 共享结果缓存与按 key 失效。
 - 缓存更新、数据写入与失效管理。
 - 自动批量加载。
 - 共享执行预算。
@@ -139,6 +140,12 @@ cd examples/mcp
 go run .
 ```
 
+## Redis 示例
+
+[源码与运行说明](examples/redis/)演示共享结果、缓存故障回源、远端标签和跨实例失效通知。示例需要 Go 1.26+ 与本地 Redis 服务。
+
+配置、预期输出与 API 契约见[共享缓存文档](docs/shared-cache.zh-CN.md)和[共享失效文档](docs/shared-invalidation.zh-CN.md)。
+
 ## 可复现的 benchmark
 
 对同一份数据**串行读取 100 次**，比较**无缓存、首次加载和缓存命中**，见 [benchmark 文档](benchmarks/benchmarks.zh-CN.md)。主表展示总耗时和实际加载次数，内部开销与并发诊断单独说明。
@@ -161,6 +168,8 @@ go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 | [查询标签](docs/query-tags.zh-CN.md) | 声明关联查询分组，按标签筛选，管理登记和保留规则 |
 | [自动批量加载](docs/batching.zh-CN.md) | 并发 key 组批、通过 LoadMany 加载已知 key、查询 API 集成、逐 key 结果和取消 |
 | [缓存与生命周期](docs/cache.zh-CN.md) | 所有缓存读写、配置、自动删除、取消、删除、关闭及错误处理 |
+| [共享结果缓存](docs/shared-cache.zh-CN.md) | 可选 Redis 缓存、Codec、原始新鲜期、按 key 失效、条件写入与故障处理 |
+| [共享失效通知与标签](docs/shared-invalidation.zh-CN.md) | 跨实例通知、远端标签版本、watcher 生命周期、连接恢复和 Redis 原子标签布局 |
 | [失效与刷新](docs/invalidation.zh-CN.md) | 单键、批量、条件失效，可等待刷新及有界补刷 |
 | [原子缓存更新](docs/updates.zh-CN.md) | 类型安全的缓存转换、共享只读值、并发冲突和显式重试契约 |
 | [写入与关联失效](docs/mutations.zh-CN.md) | 写入状态、可选等待刷新、关联失效及独立的同步错误 |

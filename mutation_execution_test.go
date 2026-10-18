@@ -16,10 +16,10 @@ func TestMutationExecution(t *testing.T) {
 			t.Error("write did not acquire Client budget")
 		}
 		return 1, nil
-	}, MutationOptions[int, int]{OnSuccess: func(ctx context.Context, _, _ int) error {
+	}, func(ctx context.Context, _, _ int) error {
 		_, err := Fetch(ctx, c, "related", func(context.Context) (int, error) { return 2, nil })
 		return err
-	}})
+	})
 	t.Cleanup(h.Close)
 	release, _ := e.acquire(context.Background())
 	if _, err := h.Mutate(context.Background(), 0); !errors.Is(err, ErrQueueFull) {
@@ -44,7 +44,8 @@ func TestMutationExecutionOverride(t *testing.T) {
 	h := Mutation(
 		c,
 		func(context.Context, int) (int, error) { return 3, nil },
-		MutationOptions[int, int]{Executor: separate},
+		nil,
+		MutationOptions{Executor: separate},
 	)
 	t.Cleanup(h.Close)
 	if result, err := h.Mutate(context.Background(), 0); err != nil || result.Data != 3 {
@@ -63,6 +64,7 @@ func TestMutationExecutionCancellation(t *testing.T) {
 	h := Mutation(
 		c,
 		func(context.Context, int) (int, error) { t.Error("canceled queued write executed"); return 0, nil },
+		nil,
 	)
 	t.Cleanup(h.Close)
 	finished := make(chan error, 1)

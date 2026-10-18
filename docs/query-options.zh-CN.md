@@ -4,7 +4,7 @@
 
 `QueryOptions` 是 `Query`、`Fetch` 和 `Prefetch` 共用的配置，用于覆盖 Client 默认的新鲜期、重试、超时和执行预算。`Disable` 只控制 Query 的自动加载；显式 `Fetch`、`Prefetch` 和查询对象的 `Refetch` 仍会执行。
 
-`QueryDefinition[V]` 将查询键、类型化加载函数和 `QueryOptions` 组合为可复用的查询定义。创建定义不会加载数据，也不会创建缓存或订阅。
+`QueryDefinition(key, fetcher, options...)` 返回 `(Definition[V], error)`，从加载函数推断结果类型 `V`。使用可复用定义前必须处理构造错误。创建定义不会加载数据，也不会创建缓存或订阅。
 
 ## 快速开始：复用同一份配置
 
@@ -61,18 +61,21 @@ observed: hello
 | `Prefetch` | 使用同一套加载策略显式预热缓存 |
 | 查询对象的 `Refetch` | 禁用自动加载时仍允许显式刷新 |
 
-不传配置或 `Disable` 为 false 时，允许自动加载。禁用对象不会取消共享请求，也不会禁用其他对象。修改原始配置不会改变已有对象；后续启停使用 `SetEnabled(bool)`。
+省略配置、传入 `QueryOptions{}` 或 `Disable` 为 false 时，允许自动加载。禁用对象不会取消共享请求，也不会禁用其他对象。修改原始配置不会改变已有对象；后续启停使用 `SetEnabled(bool)`。
 
 `Fetch(ctx, client, key, load, options)` 和 `Prefetch(ctx, client, key, load, options)` 的配置只对本次调用有效，二者都忽略 `Disable`。它们不修改 Client 默认值，也不注册该键后续调用的策略。`Prefetch` 返回加载错误，不返回数据，也不创建持续订阅。
 
 ## `QueryDefinition`：集中定义类型化查询
 
-查询定义包含四个字段：
+`QueryDefinition` 接收查询键、类型化加载函数和零份或一份 `QueryOptions`，返回 `(Definition[V], error)`，不会执行加载函数或校验查询键。查询键和结果类型的校验在操作使用 Client 时执行。省略配置或传入 `QueryOptions{}` 时使用 Client 默认值；为 nil 的字段继承对应默认值。多份配置会在构造时立即返回零值 `Definition[V]` 和 `ErrTooManyOptions`，定义内部不保留错误状态。在使用返回的定义前，可以配置其 `Shared` 和 `Tags` 字段。
+
+返回的查询定义包含五个导出字段：
 
 | 字段 | 职责 |
 | --- | --- |
 | `Key` | 用非 nil、可比较的键标识查询，包含全部查询参数和身份范围 |
 | `Fetcher` | 通过业务的 HTTP、数据库或其他依赖加载 `V` |
+| `Shared` | 通过可选[共享结果缓存](shared-cache.zh-CN.md)复用序列化结果；nil 保持本地缓存 |
 | `Tags` | 声明用于关联查询分组的标签；登记与生命周期见[查询标签](query-tags.zh-CN.md) |
 | `Options` | 将同一份 `QueryOptions` 用于读取、订阅和预加载 |
 
@@ -98,13 +101,12 @@ func main() {
 	ctx := context.Background()
 	hour := time.Hour
 	calls := 0
-	definition := cacheq.QueryDefinition[string]{
-		Key: "greeting",
-		Fetcher: func(context.Context) (string, error) {
-			calls++
-			return "hello", nil
-		},
-		Options: cacheq.QueryOptions{Disable: true, StaleTime: &hour},
+	definition, err := cacheq.QueryDefinition("greeting", func(context.Context) (string, error) {
+		calls++
+		return "hello", nil
+	}, cacheq.QueryOptions{Disable: true, StaleTime: &hour})
+	if err != nil {
+		panic(err)
 	}
 	query := definition.Query(client)
 	defer query.Close()
@@ -140,6 +142,8 @@ refreshed calls: 2
 | `definition.Fetch(ctx, client)` | `(V, error)`，契约与 `Fetch` 相同 |
 | `definition.Query(client)` | `*QueryHandle[V]`，契约与 `Query` 相同 |
 | `definition.Prefetch(ctx, client)` | 加载错误，契约与 `Prefetch` 相同 |
+
+原 `QueryDefinition` 结构体已替换为函数。创建定义时改用函数调用并处理返回的错误；显式声明变量、参数或返回值类型时使用 `Definition[V]`。类型化加载函数可以推断 `V`，包括有类型的 nil 加载函数。直接传入 nil 时没有可供推断的结果类型，必要时需要显式指定类型参数，例如 `cacheq.QueryDefinition[string]("greeting", nil)`。nil 加载函数遵循已有操作契约，无法加载缺失或过期的数据。
 
 方法直接使用定义中的键、加载函数和配置。如果需要定制一个消费者，可以先复制定义，再修改副本的配置并调用方法。修改 Key、Fetcher 或 Options 影响后续操作，不重新配置已有查询对象。后续操作声明的标签会合并到共享查询状态中。配置指针指向的值在每次操作开始时读取。业务需同步共享定义、指针值以及加载函数捕获的可变状态。
 
@@ -179,10 +183,25 @@ options := cacheq.QueryOptions{
 
 ## 默认值与覆盖规则
 
-- 不传配置或传空配置时，使用 Client 默认值；`QueryOptions.Disable` 默认为 false。
-- 传入多份配置时，仅最后一份生效，不合并各份字段。最后一份中为 nil 的字段继承 Client 默认值。
+查询、读取、预加载、查询定义构造、Mutation 构造和失效入口允许省略配置，最多传入一份。省略配置和传入空结构体使用相同默认值。所有覆盖项应放在同一个结构体中；传入多份配置会在运行时报告 `ErrTooManyOptions`，且不产生操作副作用。弃用入口 `FetchWithOptions` 继续保持移除，统一使用 `Fetch`。
+
+- 省略配置或传入 `QueryOptions{}` 时，使用 Client 默认值；`QueryOptions.Disable` 默认为 false。
+- 每次操作最多接受一份配置；多份配置在运行时被拒绝，不会合并或丢弃。为 nil 的策略字段继承 Client 默认值。
 - 创建 `Query` 或调用 `Fetch`、`Prefetch` 时会复制时间与重试次数指针指向的值。查询定义保留配置指针，直到这些操作实际应用配置。之后修改原变量不会改变已有配置。Executor 引用保持共享，不复制预算容量。
 - 同一个键仍共享数据和请求。不同配置不创建独立缓存，也不替代键中的查询参数或身份范围。
+
+## 配置错误
+
+传入多份配置会报告 `ErrTooManyOptions`，支持 `errors.Is` 判断。被拒绝的操作不会加载数据、注册订阅或标签、使本地状态失效，也不会访问共享存储。
+
+| 入口 | 错误报告方式 |
+| --- | --- |
+| `Fetch`、`Prefetch` 和失效方法 | 返回错误 |
+| `Query` | 失败句柄的 `Snapshot().Err`、`Updates()` 初始状态和 `Refetch` |
+| `Mutation` | 失败句柄的 `Snapshot().Err`、`Updates()` 初始状态和 `Mutate` |
+| `QueryDefinition` | 在构造时立即返回零值 `Definition[V]` 和 `ErrTooManyOptions` |
+
+无效的查询和 Mutation 句柄发布一次错误状态后关闭更新通道。`QueryDefinition` 在创建时直接报告配置错误。设置字段或调用方法前必须检查返回的错误；定义不保留构造错误。
 
 ## 共享请求的配置
 
@@ -192,7 +211,7 @@ options := cacheq.QueryOptions{
 
 ## 缓存策略限制
 
-`StaleTime` 只调整普通缓存的新鲜度判断，不触发轮询。时间经过不会自动发送通知或启动请求；`Snapshot()` 在读取时重新判断状态。`Get` 和未传配置的 `Fetch`、`Prefetch` 使用 Client 默认新鲜期。
+`StaleTime` 只调整普通缓存的新鲜度判断，不触发轮询。时间经过不会自动发送通知或启动请求；`Snapshot()` 在读取时重新判断状态。`Get` 和省略配置或传入空配置的 `Fetch`、`Prefetch` 使用 Client 默认新鲜期。
 
 显式失效和未写入新数据的刷新失败，会使普通缓存对所有查询变旧。`FetchWithExpiry` 返回的绝对截止时间不受 `StaleTime` 覆盖影响，包括显式缓存的兜底数据和错误。
 
