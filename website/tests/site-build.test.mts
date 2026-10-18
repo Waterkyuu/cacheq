@@ -167,7 +167,11 @@ test("Go search results resolve to published sections and public source declarat
 		"SharedCache",
 		"SharedStore",
 		"NewSharedCache",
-		"QueryDefinition.InvalidateShared",
+		"QueryDefinition",
+		"Definition",
+		"Definition.Fetch",
+		"Definition.Query",
+		"Definition.InvalidateShared",
 		"Client.WatchShared",
 		"Client.InvalidateSharedTags",
 		"SharedWatcher",
@@ -182,7 +186,7 @@ test("Go search results resolve to published sections and public source declarat
 		const prefix = locale === "en" ? "" : "zh-CN/";
 		for (const [slug, declaration] of [
 			["query-filters", "QueryFilter"],
-			["query-tags", "QueryDefinition.Tags"],
+			["query-tags", "Definition.Tags"],
 			["shared-cache", "InvalidateShared"],
 			["shared-invalidation", "WatchShared"],
 			["updates", "ErrUpdateConflict"],
@@ -249,7 +253,7 @@ test("new feature guides are discoverable and render the maintained API document
 			["query-filters", ["QueryFilter", "Predicate", "InvalidateAndWait", "Cancel", "Remove"]],
 			[
 				"query-tags",
-				["QueryDefinition.Tags", "QueryFilter.Tags", "InvalidateAndWait", "Cancel", "Remove"],
+				["Definition.Tags", "QueryFilter.Tags", "InvalidateAndWait", "Cancel", "Remove"],
 			],
 			["events", ["SubscribeEvents", "EventResultDiscarded", "Dropped()"]],
 			["updates", ["Update", "ErrUpdateConflict", "ErrNoData"]],

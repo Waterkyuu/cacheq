@@ -85,9 +85,9 @@ export const chapters: Chapter[] = [
 		zh: "查询标签",
 		en: "Query tags",
 		description: {
-			en: "Group related cacheq queries with QueryDefinition.Tags and select labels through QueryFilter for invalidation, awaited refresh, cancellation, and removal in Go.",
+			en: "Group related cacheq queries with Definition.Tags and select labels through QueryFilter for invalidation, awaited refresh, cancellation, and removal in Go.",
 			"zh-CN":
-				"在 Go 中通过 cacheq QueryDefinition.Tags 声明关联查询分组，使用 QueryFilter 按标签失效、等待刷新、取消和删除，并管理标签登记与生命周期。",
+				"在 Go 中通过 cacheq Definition.Tags 声明关联查询分组，使用 QueryFilter 按标签失效、等待刷新、取消和删除，并管理标签登记与生命周期。",
 		},
 	},
 	{
@@ -135,9 +135,9 @@ export const chapters: Chapter[] = [
 		zh: "查询配置",
 		en: "Query options",
 		description: {
-			en: "Reuse cacheq QueryDefinition values and shared QueryOptions across reading, subscribing, and prefetching in Go. Configure freshness, retries, timeouts, and automatic loading.",
+			en: "Create reusable typed queries with cacheq QueryDefinition and shared QueryOptions across reading, subscribing, and prefetching in Go. Configure freshness, retries, timeouts, and automatic loading.",
 			"zh-CN":
-				"在 Go 中通过 cacheq QueryDefinition 复用类型化查询，并在读取、订阅和预加载间共享 QueryOptions，配置新鲜期、重试、超时和自动加载。",
+				"在 Go 中通过 cacheq QueryDefinition 创建可复用的类型化查询，并在读取、订阅和预加载间共享 QueryOptions，配置新鲜期、重试、超时和自动加载。",
 		},
 	},
 	{
