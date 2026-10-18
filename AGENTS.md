@@ -129,6 +129,9 @@ meaning, contract, or reason for existing instead of translating its syntax.
 
 ## Document
 
+- Before creating or reorganizing developer guides, read and follow
+  [the developer documentation template](reference/developer-documentation-template.md).
+  Keep setup, runnable usage, and expected results ahead of implementation details.
 - New features require matching `docs/xxxx.en-US.md` and `docs/xxxx.zh-CN.md` guides;
   fixes update existing guides when needed.
 - Use formal technical documentation: purpose, runnable examples, API contracts,
