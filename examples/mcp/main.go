@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -24,7 +24,7 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	store := newDocumentStore()
-	app := newService(store, cacheq.Options{MaxEntries: 16, GCTime: time.Minute})
+	app := newService(store, soroi.Options{MaxEntries: 16, GCTime: time.Minute})
 	defer app.cache.Close()
 	server := httptest.NewServer(app)
 	defer server.Close()

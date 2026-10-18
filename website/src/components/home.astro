@@ -11,25 +11,25 @@ loadUsers := func(context.Context) ([]User, error) {
     return []User{{Name: "Alice"}}, nil
 }
 
-client := cacheq.NewClient(cacheq.Options{
+client := soroi.NewClient(soroi.Options{
     StaleTime: time.Minute,
 })
 defer client.Close()
 
-profile := cacheq.Query(client, "user:42", loadUser)
-users := cacheq.Query(client, "users", loadUsers)
+profile := soroi.Query(client, "user:42", loadUser)
+users := soroi.Query(client, "users", loadUsers)
 defer profile.Close()
 defer users.Close()`;
 
 const { chinese = false } = Astro.props;
 const base = import.meta.env.BASE_URL;
 const docs = `${base}${chinese ? "zh-CN/" : ""}docs/`;
-const logo = `${base}cacheq.png`;
+const logo = `${base}soroi.png`;
 ---
 
 <div class="home">
 	<section class="home-intro">
-		<img class="home-logo" src={logo} width="88" height="88" alt="cacheq" />
+		<img class="home-logo" src={logo} width="88" height="88" alt="soroi" />
 		<h1 id="_top">{chinese ? "Go 查询，简单一点。" : "Go queries, made simple."}</h1>
 		<p>
 			{chinese ? (
@@ -50,7 +50,7 @@ const logo = `${base}cacheq.png`;
 			{chinese ? "开始使用" : "Get started"}
 		</a>
 		<div class="install-snippet">
-			<Code code="go get github.com/Waterkyuu/cacheq" lang="bash" frame="none" />
+			<Code code="go get github.com/Waterkyuu/soroi" lang="bash" frame="none" />
 		</div>
 		<span class="home-requirements">
 			Go 1.22+ <span>·</span> {chinese ? "核心库零依赖" : "Zero core dependencies"}

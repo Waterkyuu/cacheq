@@ -1,25 +1,25 @@
-package cacheq_test
+package soroi_test
 
 import (
 	"context"
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // ExampleClient_SubscribeEvents observes a first load, cache reuse, and client shutdown for one key.
 func ExampleClient_SubscribeEvents() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
-	events, err := client.SubscribeEvents(cacheq.EventOptions{Key: "product:42", Buffer: 16})
+	events, err := client.SubscribeEvents(soroi.EventOptions{Key: "product:42", Buffer: 16})
 	if err != nil {
 		panic(err)
 	}
 	defer events.Close()
 	load := func(context.Context) (string, error) { return "product 42", nil }
 	for range 2 {
-		if _, err := cacheq.Fetch(context.Background(), client, "product:42", load); err != nil {
+		if _, err := soroi.Fetch(context.Background(), client, "product:42", load); err != nil {
 			panic(err)
 		}
 	}

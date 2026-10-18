@@ -10,7 +10,7 @@ Typical uses include invalidating detail and list queries after a resource chang
 
 This complete program selects tenant 42's detail and list queries, marks them stale, and removes their cached data. Tenant 99's data remains available. `RefetchNone` prevents this invalidation from starting refreshes.
 
-Save the program as `main.go` in a Go module with the cacheq dependency and run `go run .`. No HTTP service or database is required.
+Save the program as `main.go` in a Go module with the soroi dependency and run `go run .`. No HTTP service or database is required.
 
 ```go
 package main
@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // ResourceKey identifies a resource within a tenant.
@@ -32,43 +32,43 @@ type ResourceKey struct {
 
 // main invalidates and removes tenant 42's cached results without affecting tenant 99.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	defer client.Close()
 
 	detailKey := ResourceKey{TenantID: 42, Resource: "profile"}
 	listKey := ResourceKey{TenantID: 42, Resource: "users"}
 	otherKey := ResourceKey{TenantID: 99, Resource: "profile"}
-	if err := cacheq.Set(client, detailKey, "Alice"); err != nil {
+	if err := soroi.Set(client, detailKey, "Alice"); err != nil {
 		panic(err)
 	}
-	if err := cacheq.Set(client, listKey, []string{"Alice"}); err != nil {
+	if err := soroi.Set(client, listKey, []string{"Alice"}); err != nil {
 		panic(err)
 	}
-	if err := cacheq.Set(client, otherKey, "Carol"); err != nil {
+	if err := soroi.Set(client, otherKey, "Carol"); err != nil {
 		panic(err)
 	}
 
-	filter := cacheq.QueryFilter{
+	filter := soroi.QueryFilter{
 		Predicate: func(key any) bool {
 			resource, ok := key.(ResourceKey)
 			return ok && resource.TenantID == 42
 		},
 	}
-	if err := client.Invalidate(filter, cacheq.InvalidateOptions{
-		Refetch: cacheq.RefetchNone,
+	if err := client.Invalidate(filter, soroi.InvalidateOptions{
+		Refetch: soroi.RefetchNone,
 	}); err != nil {
 		panic(err)
 	}
-	fmt.Println("detail stale:", cacheq.Get[string](client, detailKey).Stale)
-	fmt.Println("list stale:", cacheq.Get[[]string](client, listKey).Stale)
-	fmt.Println("other tenant stale:", cacheq.Get[string](client, otherKey).Stale)
+	fmt.Println("detail stale:", soroi.Get[string](client, detailKey).Stale)
+	fmt.Println("list stale:", soroi.Get[[]string](client, listKey).Stale)
+	fmt.Println("other tenant stale:", soroi.Get[string](client, otherKey).Stale)
 
 	if err := client.Remove(filter); err != nil {
 		panic(err)
 	}
-	fmt.Println("detail retained:", cacheq.Get[string](client, detailKey).HasData)
-	fmt.Println("list retained:", cacheq.Get[[]string](client, listKey).HasData)
-	fmt.Println("other tenant data:", cacheq.Get[string](client, otherKey).Data)
+	fmt.Println("detail retained:", soroi.Get[string](client, detailKey).HasData)
+	fmt.Println("list retained:", soroi.Get[[]string](client, listKey).HasData)
+	fmt.Println("other tenant data:", soroi.Get[string](client, otherKey).Data)
 }
 ```
 
@@ -94,9 +94,9 @@ The four methods accept these forms through their `target any` parameter:
 | One query key | `"users"` | Address that exact key |
 | `[]any` | `[]any{"users", "user:42"}` | Address multiple keys in first-occurrence order, without duplicates |
 | `func(any) bool` | `func(key any) bool { return key == "users" }` | Select existing Client queries for which the predicate returns true |
-| A `QueryFilter` value | `cacheq.QueryFilter{Keys: []any{"users"}}` | Combine keys and a predicate for reuse across operations |
+| A `QueryFilter` value | `soroi.QueryFilter{Keys: []any{"users"}}` | Combine keys and a predicate for reuse across operations |
 
-Query keys must satisfy cacheq's comparable-key requirements. Matching uses exact Go equality, including dynamic types; strings and arrays are not matched by prefix. Only `[]any` denotes a batch argument. Other slice types such as `[]string` cannot be passed directly as batches.
+Query keys must satisfy soroi's comparable-key requirements. Matching uses exact Go equality, including dynamic types; strings and arrays are not matched by prefix. Only `[]any` denotes a batch argument. Other slice types such as `[]string` cannot be passed directly as batches.
 
 An existing query is a key for which the Client still retains cached state, an active load, or a subscription. This includes subscribed queries without usable data. Calling `QueryDefinition` alone does not register a query with a Client.
 
@@ -115,7 +115,7 @@ Configured fields are combined with AND: a key must satisfy `Keys`, match any re
 This local fragment uses the `ResourceKey` type from the quick start and can be placed inside an application function:
 
 ```go
-filter := cacheq.QueryFilter{
+filter := soroi.QueryFilter{
 	Keys: []any{
 		ResourceKey{TenantID: 42, Resource: "profile"},
 		ResourceKey{TenantID: 99, Resource: "profile"},
@@ -131,11 +131,11 @@ The filter selects only tenant 42's `profile` query, provided the Client already
 
 | Filter value | Selected queries |
 | --- | --- |
-| `cacheq.QueryFilter{}` | All existing queries |
-| `cacheq.QueryFilter{Keys: nil}` | All existing queries |
-| `cacheq.QueryFilter{Keys: []any{}}` | No queries |
-| `cacheq.QueryFilter{Keys: []any{"users"}}` | The existing `"users"` query |
-| `cacheq.QueryFilter{Predicate: func(key any) bool { return key == "users" }}` | The existing `"users"` query |
+| `soroi.QueryFilter{}` | All existing queries |
+| `soroi.QueryFilter{Keys: nil}` | All existing queries |
+| `soroi.QueryFilter{Keys: []any{}}` | No queries |
+| `soroi.QueryFilter{Keys: []any{"users"}}` | The existing `"users"` query |
+| `soroi.QueryFilter{Predicate: func(key any) bool { return key == "users" }}` | The existing `"users"` query |
 
 Order is unspecified without an explicit key list. A filter retains criteria, not previously matched results; every operation selects queries again.
 
@@ -169,12 +169,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main waits for an enabled query to reload a changed backend value.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	defer client.Close()
 	ctx := context.Background()
 
@@ -183,14 +183,14 @@ func main() {
 	load := func(context.Context) (string, error) {
 		return backend.Load().(string), nil
 	}
-	if err := cacheq.Prefetch(ctx, client, "profile", load); err != nil {
+	if err := soroi.Prefetch(ctx, client, "profile", load); err != nil {
 		panic(err)
 	}
-	query := cacheq.Query(client, "profile", load)
+	query := soroi.Query(client, "profile", load)
 	defer query.Close()
 
 	backend.Store("Bob")
-	filter := cacheq.QueryFilter{Keys: []any{"profile"}}
+	filter := soroi.QueryFilter{Keys: []any{"profile"}}
 	results, err := client.InvalidateAndWait(ctx, filter)
 	if err != nil {
 		panic(err)

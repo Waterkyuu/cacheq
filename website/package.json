@@ -1,11 +1,11 @@
 {
-	"name": "cacheq-docs",
+	"name": "soroi-docs",
 	"version": "0.1.0",
 	"private": true,
 	"scripts": {
 		"prepare:docs": "node scripts/prepare-docs.mts",
 		"start": "pnpm prepare:docs && astro dev",
-		"build": "pnpm prepare:docs && astro build && go run ./search-index -build build -base-path /cacheq",
+		"build": "pnpm prepare:docs && astro build && go run ./search-index -build build -base-path /soroi",
 		"serve": "astro preview",
 		"test": "node --test scripts/*.test.mts && go test -race ./search-index",
 		"lint": "oxlint --deny-warnings .",

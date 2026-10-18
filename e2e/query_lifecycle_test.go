@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // user represents a detail response and an element of a list response.
@@ -127,7 +127,7 @@ func (a *userAPI) update(t *testing.T, value user) {
 }
 
 // readJSON returns a typed HTTP loader whose request responds to the query's context cancellation.
-func readJSON[V any](transport *http.Client, url string) cacheq.Fetcher[V] {
+func readJSON[V any](transport *http.Client, url string) soroi.Fetcher[V] {
 	return func(ctx context.Context) (V, error) {
 		var value V
 		request, err := http.NewRequestWithContext(
@@ -157,9 +157,9 @@ func readJSON[V any](transport *http.Client, url string) cacheq.Fetcher[V] {
 // await waits for a public query result with a deadlock guard rather than a business timing assumption.
 func await[V any](
 	t *testing.T,
-	handle *cacheq.QueryHandle[V],
-	matches func(cacheq.Snapshot[V]) bool,
-) cacheq.Snapshot[V] {
+	handle *soroi.QueryHandle[V],
+	matches func(soroi.Snapshot[V]) bool,
+) soroi.Snapshot[V] {
 	t.Helper()
 	timer := time.NewTimer(3 * time.Second)
 	defer timer.Stop()
@@ -181,19 +181,19 @@ func await[V any](
 // TestSharedClientMutation refreshes heterogeneous detail/list data after a real mutation, leaving settings alone.
 func TestSharedClientMutation(t *testing.T) {
 	api := newUserAPI(t)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
-	detail := cacheq.Query(
+	detail := soroi.Query(
 		client,
 		"user:42",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
 	)
-	list := cacheq.Query(
+	list := soroi.Query(
 		client,
 		"users",
 		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
 	)
-	config := cacheq.Query(
+	config := soroi.Query(
 		client,
 		"settings",
 		readJSON[settings](api.server.Client(), api.server.URL+"/settings"),
@@ -201,9 +201,9 @@ func TestSharedClientMutation(t *testing.T) {
 	t.Cleanup(detail.Close)
 	t.Cleanup(list.Close)
 	t.Cleanup(config.Close)
-	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
-	await(t, list, func(s cacheq.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
-	await(t, config, func(s cacheq.Snapshot[settings]) bool { return s.HasData && !s.Fetching })
+	await(t, detail, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	await(t, list, func(s soroi.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
+	await(t, config, func(s soroi.Snapshot[settings]) bool { return s.HasData && !s.Fetching })
 	api.update(t, user{Name: "Bob"})
 	if detail.Snapshot().Data.Name != "Alice" {
 		t.Fatal("mutation changed cache without invalidation")
@@ -211,15 +211,15 @@ func TestSharedClientMutation(t *testing.T) {
 	if err := client.Invalidate([]any{"user:42", "users", "users"}); err != nil {
 		t.Fatal(err)
 	}
-	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
-	await(t, list, func(s cacheq.Snapshot[[]user]) bool { return s.HasData && s.Data[0].Name == "Bob" && !s.Fetching })
+	await(t, detail, func(s soroi.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
+	await(t, list, func(s soroi.Snapshot[[]user]) bool { return s.HasData && s.Data[0].Name == "Bob" && !s.Fetching })
 	if api.count("/users/42") != 2 || api.count("/users") != 2 || api.count("/settings") != 1 {
 		t.Fatal("invalidation duplicated a request or refreshed unrelated data")
 	}
-	if err := cacheq.Set(client, "user:42", []user{}); !errors.Is(err, cacheq.ErrTypeMismatch) {
+	if err := soroi.Set(client, "user:42", []user{}); !errors.Is(err, soroi.ErrTypeMismatch) {
 		t.Fatalf("wrong local type = %v", err)
 	}
-	if cacheq.Get[user](client, "user:42").Data.Name != "Bob" {
+	if soroi.Get[user](client, "user:42").Data.Name != "Bob" {
 		t.Fatal("rejected update damaged detail cache")
 	}
 }
@@ -227,32 +227,32 @@ func TestSharedClientMutation(t *testing.T) {
 // TestDeferredPredicateInvalidation marks related data stale without HTTP work until its next use.
 func TestDeferredPredicateInvalidation(t *testing.T) {
 	api := newUserAPI(t)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
 	detailFetch := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
 	listFetch := readJSON[[]user](api.server.Client(), api.server.URL+"/users")
-	detail := cacheq.Query(client, "user:42", detailFetch)
-	list := cacheq.Query(client, "users", listFetch)
+	detail := soroi.Query(client, "user:42", detailFetch)
+	list := soroi.Query(client, "users", listFetch)
 	t.Cleanup(detail.Close)
 	t.Cleanup(list.Close)
-	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
-	await(t, list, func(s cacheq.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
-	cacheq.Set(client, "settings", settings{Theme: "dark"})
+	await(t, detail, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	await(t, list, func(s soroi.Snapshot[[]user]) bool { return s.HasData && !s.Fetching })
+	soroi.Set(client, "settings", settings{Theme: "dark"})
 	api.update(t, user{Name: "Bob"})
 	if err := client.Invalidate(func(key any) bool {
 		text, ok := key.(string)
 		return ok && (text == "users" || strings.HasPrefix(text, "user:"))
-	}, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone}); err != nil {
+	}, soroi.InvalidateOptions{Refetch: soroi.RefetchNone}); err != nil {
 		t.Fatal(err)
 	}
 	if !detail.Snapshot().Stale || !list.Snapshot().Stale || detail.Snapshot().Data.Name != "Alice" ||
 		api.count("/users/42") != 1 || api.count("/users") != 1 {
 		t.Fatal("deferred invalidation issued HTTP work")
 	}
-	if cacheq.Get[settings](client, "settings").Stale {
+	if soroi.Get[settings](client, "settings").Stale {
 		t.Fatal("predicate invalidated unrelated type")
 	}
-	updated, err := cacheq.Fetch(
+	updated, err := soroi.Fetch(
 		context.Background(),
 		client,
 		"user:42",
@@ -261,12 +261,12 @@ func TestDeferredPredicateInvalidation(t *testing.T) {
 	if err != nil || updated.Name != "Bob" {
 		t.Fatalf("next fetch = %+v, %v", updated, err)
 	}
-	reopened := cacheq.Query(client, "users", listFetch)
+	reopened := soroi.Query(client, "users", listFetch)
 	t.Cleanup(reopened.Close)
 	await(
 		t,
 		reopened,
-		func(s cacheq.Snapshot[[]user]) bool { return s.HasData && s.Data[0].Name == "Bob" && !s.Fetching },
+		func(s soroi.Snapshot[[]user]) bool { return s.HasData && s.Data[0].Name == "Bob" && !s.Fetching },
 	)
 	if api.count("/users/42") != 2 || api.count("/users") != 2 {
 		t.Fatal("next use failed to refresh each type once")
@@ -276,22 +276,22 @@ func TestDeferredPredicateInvalidation(t *testing.T) {
 // TestConditionalConsumers shares data while keeping each consumer's loading permission independent.
 func TestConditionalConsumers(t *testing.T) {
 	api := newUserAPI(t)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
 	fetch := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
-	disabled := cacheq.Query(
+	disabled := soroi.Query(
 		client,
 		"user:42",
 		fetch,
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	t.Cleanup(disabled.Close)
 	if disabled.Snapshot().Fetching || disabled.Snapshot().HasData || api.count("/users/42") != 0 {
 		t.Fatal("disabled query issued HTTP work")
 	}
-	active := cacheq.Query(client, "user:42", fetch)
-	await(t, disabled, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
-	await(t, active, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	active := soroi.Query(client, "user:42", fetch)
+	await(t, disabled, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	await(t, active, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 	active.Close()
 	api.update(t, user{Name: "Bob"})
 	client.Invalidate("user:42")
@@ -301,7 +301,7 @@ func TestConditionalConsumers(t *testing.T) {
 	if err := disabled.SetEnabled(true); err != nil {
 		t.Fatal(err)
 	}
-	await(t, disabled, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
+	await(t, disabled, func(s soroi.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
 	disabled.SetEnabled(false)
 	if _, err := disabled.Refetch(context.Background()); err != nil {
 		t.Fatal(err)
@@ -310,7 +310,7 @@ func TestConditionalConsumers(t *testing.T) {
 		t.Fatal("manual refresh did not bypass disabled condition")
 	}
 	disabled.Close()
-	if _, err := disabled.Refetch(context.Background()); !errors.Is(err, cacheq.ErrQueryClosed) {
+	if _, err := disabled.Refetch(context.Background()); !errors.Is(err, soroi.ErrQueryClosed) {
 		t.Fatalf("released refetch = %v", err)
 	}
 }
@@ -318,15 +318,15 @@ func TestConditionalConsumers(t *testing.T) {
 // TestHTTPRetriesAndRetainedData retries HTTP failures and preserves prior data after refresh exhaustion.
 func TestHTTPRetriesAndRetainedData(t *testing.T) {
 	api := newUserAPI(t)
-	client := cacheq.NewClient(
-		cacheq.Options{StaleTime: time.Hour, Retry: 2, RetryDelay: func(int) time.Duration { return 0 }},
+	client := soroi.NewClient(
+		soroi.Options{StaleTime: time.Hour, Retry: 2, RetryDelay: func(int) time.Duration { return 0 }},
 	)
 	t.Cleanup(client.Close)
 	api.failNext(2)
 	fetch := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
-	handle := cacheq.Query(client, "user:42", fetch)
+	handle := soroi.Query(client, "user:42", fetch)
 	t.Cleanup(handle.Close)
-	state := await(t, handle, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	state := await(t, handle, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 	if state.Err != nil || api.count("/users/42") != 3 {
 		t.Fatal("HTTP retry did not recover")
 	}
@@ -357,22 +357,22 @@ func TestHTTPSharedBackgroundLoad(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	now := time.Unix(0, 0)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour, Clock: func() time.Time { return now }})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour, Clock: func() time.Time { return now }})
 	t.Cleanup(client.Close)
-	cacheq.Set(client, "user", user{Name: "old"})
+	soroi.Set(client, "user", user{Name: "old"})
 	now = now.Add(time.Hour)
 	fetch := readJSON[user](server.Client(), server.URL)
-	first := cacheq.Query(client, "user", fetch)
+	first := soroi.Query(client, "user", fetch)
 	t.Cleanup(first.Close)
 	<-started
-	second := cacheq.Query(client, "user", fetch)
+	second := soroi.Query(client, "user", fetch)
 	t.Cleanup(second.Close)
 	if state := second.Snapshot(); state.Data.Name != "old" || !state.Stale || !state.Fetching {
 		t.Fatalf("stale HTTP state = %+v", state)
 	}
 	close(release)
-	for _, handle := range []*cacheq.QueryHandle[user]{first, second} {
-		await(t, handle, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "new" && !s.Fetching })
+	for _, handle := range []*soroi.QueryHandle[user]{first, second} {
+		await(t, handle, func(s soroi.Snapshot[user]) bool { return s.Data.Name == "new" && !s.Fetching })
 	}
 	if calls.Load() != 1 {
 		t.Fatal("consumers did not share HTTP request")
@@ -390,11 +390,11 @@ func TestHTTPCancellation(t *testing.T) {
 				close(stopped)
 			}))
 			t.Cleanup(server.Close)
-			client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+			client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 			t.Cleanup(client.Close)
 			finished := make(chan error, 1)
 			go func() {
-				_, err := cacheq.Fetch(
+				_, err := soroi.Fetch(
 					context.Background(),
 					client,
 					"user",
@@ -407,10 +407,10 @@ func TestHTTPCancellation(t *testing.T) {
 			case "cancel":
 				client.Cancel("user")
 			case "set":
-				cacheq.Set(client, "user", user{Name: "local"})
+				soroi.Set(client, "user", user{Name: "local"})
 			case "remove":
 				client.Remove("user")
-				cacheq.Set(client, "user", 42)
+				soroi.Set(client, "user", 42)
 			case "close":
 				client.Close()
 			}
@@ -427,13 +427,13 @@ func TestHTTPCancellation(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("server request was not canceled")
 			}
-			if action == "set" && cacheq.Get[user](client, "user").Data.Name != "local" {
+			if action == "set" && soroi.Get[user](client, "user").Data.Name != "local" {
 				t.Fatal("local value overwritten")
 			}
-			if action == "remove" && cacheq.Get[int](client, "user").Data != 42 {
+			if action == "remove" && soroi.Get[int](client, "user").Data != 42 {
 				t.Fatal("new type overwritten")
 			}
-			if action == "close" && !errors.Is(cacheq.Get[user](client, "user").Err, cacheq.ErrClosed) {
+			if action == "close" && !errors.Is(soroi.Get[user](client, "user").Err, soroi.ErrClosed) {
 				t.Fatal("closed client still readable")
 			}
 		})
@@ -443,9 +443,9 @@ func TestHTTPCancellation(t *testing.T) {
 // TestPublicCacheOperations exercises prefetch, absolute expiry, removal, and cleanup using only exported APIs.
 func TestPublicCacheOperations(t *testing.T) {
 	now := time.Unix(0, 0)
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour, Clock: func() time.Time { return now }})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour, Clock: func() time.Time { return now }})
 	t.Cleanup(client.Close)
-	if err := cacheq.Prefetch(
+	if err := soroi.Prefetch(
 		context.Background(),
 		client,
 		"users",
@@ -455,7 +455,7 @@ func TestPublicCacheOperations(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	value, err := cacheq.Fetch[[]user](
+	value, err := soroi.Fetch[[]user](
 		context.Background(),
 		client,
 		"users",
@@ -469,7 +469,7 @@ func TestPublicCacheOperations(t *testing.T) {
 		calls++
 		return settings{Theme: "dark"}, now.Add(time.Minute), nil
 	}
-	if _, err := cacheq.FetchWithExpiry(
+	if _, err := soroi.FetchWithExpiry(
 		context.Background(),
 		client,
 		"settings",
@@ -478,10 +478,10 @@ func TestPublicCacheOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(time.Minute)
-	if !cacheq.Get[settings](client, "settings").Stale {
+	if !soroi.Get[settings](client, "settings").Stale {
 		t.Fatal("absolute expiry boundary not respected")
 	}
-	if _, err := cacheq.FetchWithExpiry(
+	if _, err := soroi.FetchWithExpiry(
 		context.Background(),
 		client,
 		"settings",
@@ -490,15 +490,15 @@ func TestPublicCacheOperations(t *testing.T) {
 		t.Fatalf("expired load = %v, calls=%d", err, calls)
 	}
 	client.Remove("settings")
-	if state := cacheq.Get[settings](client, "settings"); state.HasData || state.Status != cacheq.Idle {
+	if state := soroi.Get[settings](client, "settings"); state.HasData || state.Status != soroi.Idle {
 		t.Fatalf("remove = %+v", state)
 	}
 	client.Clear()
-	if cacheq.Get[[]user](client, "users").HasData {
+	if soroi.Get[[]user](client, "users").HasData {
 		t.Fatal("clear retained cached list")
 	}
 	client.Close()
-	if err := cacheq.Set(client, "users", []user{}); !errors.Is(err, cacheq.ErrClosed) {
+	if err := soroi.Set(client, "users", []user{}); !errors.Is(err, soroi.ErrClosed) {
 		t.Fatalf("closed cache write = %v", err)
 	}
 }

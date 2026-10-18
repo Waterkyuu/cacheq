@@ -1,4 +1,4 @@
-<!-- Contribution guide: https://github.com/Waterkyuu/cacheq/blob/main/CONTRIBUTING.md -->
+<!-- Contribution guide: https://github.com/Waterkyuu/soroi/blob/main/CONTRIBUTING.md -->
 
 ## Summary
 

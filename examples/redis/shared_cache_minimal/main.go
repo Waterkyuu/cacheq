@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
-	redistore "github.com/Waterkyuu/cacheq/store/redis"
+	"github.com/Waterkyuu/soroi"
+	redistore "github.com/Waterkyuu/soroi/store/redis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -27,19 +27,19 @@ func main() {
 	if addr == "" {
 		addr = "127.0.0.1:6379"
 	}
-	// 1. remote is the Redis connection; store adapts it to cacheq's storage operations.
+	// 1. remote is the Redis connection; store adapts it to soroi's storage operations.
 	remote := redis.NewClient(&redis.Options{Addr: addr, ContextTimeoutEnabled: true})
 	defer func() { _ = remote.Close() }()
 	if err := remote.Ping(ctx).Err(); err != nil {
 		panic(err)
 	}
-	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-minimal-demo"})
+	store, err := redistore.New(remote, redistore.Options{Prefix: "soroi-minimal-demo"})
 	if err != nil {
 		panic(err)
 	}
 
 	// 2. shared holds rules for storing one User; construction does not access Redis.
-	shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+	shared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 		Key: "user:7", Format: "user.json.v1", TTL: time.Minute,
 	})
 	if err != nil {
@@ -50,9 +50,9 @@ func main() {
 		panic(err)
 	}
 
-	// 3. Define the source callback now; cacheq runs it only when neither cache has fresh data.
+	// 3. Define the source callback now; soroi runs it only when neither cache has fresh data.
 	// Each actual source call prints a line and returns User{Name: "Alice"}.
-	definition, err := cacheq.QueryDefinition("user:7", func(context.Context) (User, error) {
+	definition, err := soroi.QueryDefinition("user:7", func(context.Context) (User, error) {
 		fmt.Println("source: loading user 7")
 		return User{Name: "Alice"}, nil
 	})
@@ -63,8 +63,8 @@ func main() {
 	definition.Shared = shared
 
 	// 4. A and B own separate local caches. Fresh local results can be reused for one minute.
-	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	a := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+	b := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer a.Close()
 	defer b.Close()
 

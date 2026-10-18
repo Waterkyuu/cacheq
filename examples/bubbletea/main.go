@@ -7,12 +7,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // main starts a local task board that needs no network service or credentials.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	store := newTaskStore()
 	if err := run(client, store, demoFetcher(store)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -21,11 +21,11 @@ func main() {
 }
 
 // run owns the client and three subscriptions, releasing them even if terminal startup fails.
-func run(client *cacheq.Client, store *taskStore, fetch cacheq.Fetcher[[]task], options ...tea.ProgramOption) error {
+func run(client *soroi.Client, store *taskStore, fetch soroi.Fetcher[[]task], options ...tea.ProgramOption) error {
 	defer client.Close()
 	initial := model{client: client, store: store}
 	for view := range initial.queries {
-		initial.queries[view] = cacheq.Query(client, "tasks", fetch)
+		initial.queries[view] = soroi.Query(client, "tasks", fetch)
 		initial.states[view] = initial.queries[view].Snapshot()
 	}
 	defer initial.closeQueries()
@@ -36,7 +36,7 @@ func run(client *cacheq.Client, store *taskStore, fetch cacheq.Fetcher[[]task], 
 }
 
 // demoFetcher delays each backend read so shared loading and retained data are visible.
-func demoFetcher(store *taskStore) cacheq.Fetcher[[]task] {
+func demoFetcher(store *taskStore) soroi.Fetcher[[]task] {
 	return func(ctx context.Context) ([]task, error) {
 		timer := time.NewTimer(750 * time.Millisecond)
 		defer timer.Stop()

@@ -8,7 +8,7 @@
 
 ## 快速开始：复用同一份配置
 
-以下完整示例为三个入口使用同一份一小时新鲜期配置。禁用自动加载的订阅接收 `Prefetch` 显式加载的数据，`Fetch` 复用这份新鲜缓存。Client 默认值保持不变。将程序保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
+以下完整示例为三个入口使用同一份一小时新鲜期配置。禁用自动加载的订阅接收 `Prefetch` 显式加载的数据，`Fetch` 复用这份新鲜缓存。Client 默认值保持不变。将程序保存为已导入 soroi 的 Go 模块中的 `main.go`，运行 `go run .`。
 
 ```go
 package main
@@ -18,23 +18,23 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main reuses one loading policy across subscription, prefetch, and explicit reads.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 	ctx := context.Background()
 	load := func(context.Context) (string, error) { return "hello", nil }
 	hour := time.Hour
-	options := cacheq.QueryOptions{Disable: true, StaleTime: &hour}
-	query := cacheq.Query(client, "greeting", load, options)
+	options := soroi.QueryOptions{Disable: true, StaleTime: &hour}
+	query := soroi.Query(client, "greeting", load, options)
 	defer query.Close()
-	if err := cacheq.Prefetch(ctx, client, "greeting", load, options); err != nil {
+	if err := soroi.Prefetch(ctx, client, "greeting", load, options); err != nil {
 		panic(err)
 	}
-	value, err := cacheq.Fetch(ctx, client, "greeting", load, options)
+	value, err := soroi.Fetch(ctx, client, "greeting", load, options)
 	if err != nil {
 		panic(err)
 	}
@@ -91,20 +91,20 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main reuses a typed definition without creating a second cache or automatic loading.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{})
+	client := soroi.NewClient(soroi.Options{})
 	defer client.Close()
 	ctx := context.Background()
 	hour := time.Hour
 	calls := 0
-	definition, err := cacheq.QueryDefinition("greeting", func(context.Context) (string, error) {
+	definition, err := soroi.QueryDefinition("greeting", func(context.Context) (string, error) {
 		calls++
 		return "hello", nil
-	}, cacheq.QueryOptions{Disable: true, StaleTime: &hour})
+	}, soroi.QueryOptions{Disable: true, StaleTime: &hour})
 	if err != nil {
 		panic(err)
 	}
@@ -143,7 +143,7 @@ refreshed calls: 2
 | `definition.Query(client)` | `*QueryHandle[V]`，契约与 `Query` 相同 |
 | `definition.Prefetch(ctx, client)` | 加载错误，契约与 `Prefetch` 相同 |
 
-原 `QueryDefinition` 结构体已替换为函数。创建定义时改用函数调用并处理返回的错误；显式声明变量、参数或返回值类型时使用 `Definition[V]`。类型化加载函数可以推断 `V`，包括有类型的 nil 加载函数。直接传入 nil 时没有可供推断的结果类型，必要时需要显式指定类型参数，例如 `cacheq.QueryDefinition[string]("greeting", nil)`。nil 加载函数遵循已有操作契约，无法加载缺失或过期的数据。
+原 `QueryDefinition` 结构体已替换为函数。创建定义时改用函数调用并处理返回的错误；显式声明变量、参数或返回值类型时使用 `Definition[V]`。类型化加载函数可以推断 `V`，包括有类型的 nil 加载函数。直接传入 nil 时没有可供推断的结果类型，必要时需要显式指定类型参数，例如 `soroi.QueryDefinition[string]("greeting", nil)`。nil 加载函数遵循已有操作契约，无法加载缺失或过期的数据。
 
 方法直接使用定义中的键、加载函数和配置。如果需要定制一个消费者，可以先复制定义，再修改副本的配置并调用方法。修改 Key、Fetcher 或 Options 影响后续操作，不重新配置已有查询对象。后续操作声明的标签会合并到共享查询状态中。配置指针指向的值在每次操作开始时读取。业务需同步共享定义、指针值以及加载函数捕获的可变状态。
 
@@ -174,7 +174,7 @@ refreshed calls: 2
 使用 `Executor` 为单个查询选择其他后端预算；如果 Batcher 已经限制实际批量回调，则使用 `DisableExecutor: true`。Executor 为 nil 时继承 Client 预算，除非显式禁用。禁用外层准入不会禁用 Batcher 自身的预算。
 
 ```go
-options := cacheq.QueryOptions{
+options := soroi.QueryOptions{
 	DisableExecutor: true,
 }
 ```

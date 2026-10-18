@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // httpInvalidationStore provides independent subscription streams for two HTTP query clients.
@@ -28,15 +28,15 @@ func (s *httpInvalidationStore) ReadTagged(
 	ctx context.Context,
 	key string,
 	tags []string,
-) (cacheq.SharedRecord, error) {
+) (soroi.SharedRecord, error) {
 	record, err := s.Read(ctx, key)
 	record.Tags = slices.Clone(tags)
 	return record, err
 }
 
 // InvalidateTags broadcasts an OR-matching receipt; real Redis tests verify remote tag generation fencing.
-func (s *httpInvalidationStore) InvalidateTags(_ context.Context, tags []string) (cacheq.SharedInvalidation, error) {
-	event := cacheq.SharedInvalidation{ID: "http-tag-change", Tags: slices.Clone(tags)}
+func (s *httpInvalidationStore) InvalidateTags(_ context.Context, tags []string) (soroi.SharedInvalidation, error) {
+	event := soroi.SharedInvalidation{ID: "http-tag-change", Tags: slices.Clone(tags)}
 	s.guard.Lock()
 	defer s.guard.Unlock()
 	for _, stream := range s.streams {
@@ -49,33 +49,33 @@ func (s *httpInvalidationStore) InvalidateTags(_ context.Context, tags []string)
 func TestHTTPSharedTagInvalidation(t *testing.T) {
 	api := newUserAPI(t)
 	store := &httpInvalidationStore{}
-	shared, err := cacheq.NewSharedCache[user](
+	shared, err := soroi.NewSharedCache[user](
 		store,
-		cacheq.SharedCacheOptions[user]{Key: "user:42", Format: "user.v1", TTL: time.Minute, ShareTags: true},
+		soroi.SharedCacheOptions[user]{Key: "user:42", Format: "user.v1", TTL: time.Minute, ShareTags: true},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := cacheq.QueryDefinition(
+	d, err := soroi.QueryDefinition(
 		"user",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d.Shared = shared
 	d.Tags = []string{"tenant:42:users"}
-	a, b := cacheq.NewClient(
-		cacheq.Options{StaleTime: time.Minute},
-	), cacheq.NewClient(
-		cacheq.Options{StaleTime: time.Minute},
+	a, b := soroi.NewClient(
+		soroi.Options{StaleTime: time.Minute},
+	), soroi.NewClient(
+		soroi.Options{StaleTime: time.Minute},
 	)
 	t.Cleanup(a.Close)
 	t.Cleanup(b.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	watch, err := b.WatchShared(ctx, store, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	watch, err := b.WatchShared(ctx, store, soroi.InvalidateOptions{Refetch: soroi.RefetchNone})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,11 +111,11 @@ func TestHTTPSharedTagInvalidation(t *testing.T) {
 // httpInvalidationStream delivers remote notifications without real network dependencies.
 type httpInvalidationStream struct {
 	// events contains future invalidations.
-	events chan cacheq.SharedInvalidation
+	events chan soroi.SharedInvalidation
 }
 
 // Events exposes controlled delivery to the root watcher.
-func (s *httpInvalidationStream) Events() <-chan cacheq.SharedInvalidation { return s.events }
+func (s *httpInvalidationStream) Events() <-chan soroi.SharedInvalidation { return s.events }
 
 // Close requires no external cleanup in the controlled test transport.
 func (s *httpInvalidationStream) Close() error { return nil }
@@ -124,20 +124,20 @@ func (s *httpInvalidationStream) Close() error { return nil }
 func (s *httpInvalidationStore) InvalidationScope() string { return "http-invalidation" }
 
 // SubscribeInvalidations registers before issuing writes, preventing a setup race.
-func (s *httpInvalidationStore) SubscribeInvalidations(context.Context) (cacheq.SharedInvalidationSubscription, error) {
+func (s *httpInvalidationStore) SubscribeInvalidations(context.Context) (soroi.SharedInvalidationSubscription, error) {
 	s.guard.Lock()
 	defer s.guard.Unlock()
-	stream := &httpInvalidationStream{events: make(chan cacheq.SharedInvalidation, 8)}
+	stream := &httpInvalidationStream{events: make(chan soroi.SharedInvalidation, 8)}
 	s.streams = append(s.streams, stream)
 	return stream, nil
 }
 
 // InvalidateKey advances storage state and notifies every independently owned Client.
-func (s *httpInvalidationStore) InvalidateKey(ctx context.Context, key string) (cacheq.SharedInvalidation, error) {
+func (s *httpInvalidationStore) InvalidateKey(ctx context.Context, key string) (soroi.SharedInvalidation, error) {
 	if err := s.Invalidate(ctx, key); err != nil {
-		return cacheq.SharedInvalidation{}, err
+		return soroi.SharedInvalidation{}, err
 	}
-	event := cacheq.SharedInvalidation{ID: "http-key-change", Key: key}
+	event := soroi.SharedInvalidation{ID: "http-key-change", Key: key}
 	s.guard.Lock()
 	defer s.guard.Unlock()
 	for _, stream := range s.streams {
@@ -150,32 +150,32 @@ func (s *httpInvalidationStore) InvalidateKey(ctx context.Context, key string) (
 func TestHTTPSharedInvalidation(t *testing.T) {
 	api := newUserAPI(t)
 	store := &httpInvalidationStore{}
-	shared, err := cacheq.NewSharedCache[user](
+	shared, err := soroi.NewSharedCache[user](
 		store,
-		cacheq.SharedCacheOptions[user]{Key: "user:42", Format: "user.v1", TTL: time.Minute},
+		soroi.SharedCacheOptions[user]{Key: "user:42", Format: "user.v1", TTL: time.Minute},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := cacheq.QueryDefinition(
+	d, err := soroi.QueryDefinition(
 		"user",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d.Shared = shared
-	a, b := cacheq.NewClient(
-		cacheq.Options{StaleTime: time.Minute},
-	), cacheq.NewClient(
-		cacheq.Options{StaleTime: time.Minute},
+	a, b := soroi.NewClient(
+		soroi.Options{StaleTime: time.Minute},
+	), soroi.NewClient(
+		soroi.Options{StaleTime: time.Minute},
 	)
 	t.Cleanup(a.Close)
 	t.Cleanup(b.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	watch, err := b.WatchShared(ctx, store, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	watch, err := b.WatchShared(ctx, store, soroi.InvalidateOptions{Refetch: soroi.RefetchNone})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestHTTPSharedInvalidation(t *testing.T) {
 	}
 	h := d.Query(b)
 	t.Cleanup(h.Close)
-	if err := d.InvalidateShared(ctx, a, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone}); err != nil {
+	if err := d.InvalidateShared(ctx, a, soroi.InvalidateOptions{Refetch: soroi.RefetchNone}); err != nil {
 		t.Fatal(err)
 	}
 	for {

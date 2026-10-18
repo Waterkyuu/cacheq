@@ -10,10 +10,10 @@ import (
 // TestBuiltRoutesAndUnicode verifies nested locale URLs, real anchors, highlighted code, and sidebar exclusion.
 func TestBuiltRoutesAndUnicode(t *testing.T) {
 	directory := t.TempDir()
-	page := `<html lang="zh-CN"><head><title data-rh="true">缓存 | cacheq</title></head>
+	page := `<html lang="zh-CN"><head><title data-rh="true">缓存 | soroi</title></head>
 <body><nav>not searchable</nav><article><h1>缓存</h1><p>共享数据</p><h2 id="set">Set<span>` +
 		"\u200b" + `</span></h2><span class="sr-only" data-pagefind-ignore>Anchor navigation label</span>
-<pre><code><span>cacheq</span><span>.</span><span>Set</span>(client, &quot;用户&quot;, 1)</code></pre>
+<pre><code><span>soroi</span><span>.</span><span>Set</span>(client, &quot;用户&quot;, 1)</code></pre>
 <h2 id="expiry">过期时间</h2><p>GCTime 自动清理</p><script>private script</script></article></body></html>`
 	target := filepath.Join(directory, "cache", "index.html")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -22,7 +22,7 @@ func TestBuiltRoutesAndUnicode(t *testing.T) {
 	if err := os.WriteFile(target, []byte(page), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	records, err := buildIndex(directory, "/cacheq/")
+	records, err := buildIndex(directory, "/soroi/")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestBuiltRoutesAndUnicode(t *testing.T) {
 	}
 	var found bool
 	for _, record := range records {
-		if !strings.HasPrefix(record.URL, "/cacheq/cache/") || record.Language != "zh-CN" {
+		if !strings.HasPrefix(record.URL, "/soroi/cache/") || record.Language != "zh-CN" {
 			t.Fatalf("wrong route or language: %+v", record)
 		}
 		if strings.Contains(record.Content, "not searchable") ||
@@ -39,9 +39,9 @@ func TestBuiltRoutesAndUnicode(t *testing.T) {
 			strings.Contains(record.Content, "Anchor navigation label") {
 			t.Fatalf("indexed non-document text: %s", record.Content)
 		}
-		if record.URL == "/cacheq/cache/#set" {
+		if record.URL == "/soroi/cache/#set" {
 			found = true
-			if !strings.Contains(record.Content, `cacheq.Set(client, "用户", 1)`) {
+			if !strings.Contains(record.Content, `soroi.Set(client, "用户", 1)`) {
 				t.Fatalf("lost highlighted code or Unicode: %s", record.Content)
 			}
 			if strings.Contains(record.Content, "GCTime") {
@@ -57,7 +57,7 @@ func TestBuiltRoutesAndUnicode(t *testing.T) {
 // TestAPISourceIsolation ensures exported declarations remain discoverable without indexing internal or test code.
 func TestAPISourceIsolation(t *testing.T) {
 	directory := t.TempDir()
-	source := `package cacheq
+	source := `package soroi
 // Client owns shared queries.
 type Client struct{}
 // Query loads typed data.
@@ -104,7 +104,7 @@ var ErrClosed = "closed"
 
 // TestIndexFailures prevents empty or misconfigured indexes from being published successfully.
 func TestIndexFailures(t *testing.T) {
-	if _, err := buildIndex(t.TempDir(), "/cacheq"); err == nil {
+	if _, err := buildIndex(t.TempDir(), "/soroi"); err == nil {
 		t.Fatal("empty build accepted")
 	}
 	if _, err := buildIndex(t.TempDir(), "/../escape"); err == nil {

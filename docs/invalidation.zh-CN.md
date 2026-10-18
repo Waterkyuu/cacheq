@@ -8,7 +8,7 @@
 
 ## 快速开始
 
-在导入 cacheq 的 Go 模块中，将以下完整程序保存为 `main.go`，运行 `go run .`。示例修改本地后端值，使已订阅的键失效，并等待新鲜数据。
+在导入 soroi 的 Go 模块中，将以下完整程序保存为 `main.go`，运行 `go run .`。示例修改本地后端值，使已订阅的键失效，并等待新鲜数据。
 
 ```go
 package main
@@ -19,22 +19,22 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main refreshes an observed value after a successful backend mutation.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	defer client.Close()
 	var backend atomic.Value
 	backend.Store("initial")
 	load := func(context.Context) (string, error) {
 		return backend.Load().(string), nil
 	}
-	query := cacheq.Query(client, "message", load)
+	query := soroi.Query(client, "message", load)
 	defer query.Close()
 	ctx := context.Background()
-	before, err := cacheq.Fetch(
+	before, err := soroi.Fetch(
 		ctx,
 		client,
 		"message",
@@ -89,8 +89,8 @@ if err := client.Invalidate("user:42"); err != nil {
 先建立返回不同类型的查询：
 
 ```go
-detail := cacheq.Query(client, "user:42", getUser) // QueryHandle[User]
-users := cacheq.Query(client, "users", getUsers)   // QueryHandle[[]User]
+detail := soroi.Query(client, "user:42", getUser) // QueryHandle[User]
+users := soroi.Query(client, "users", getUsers)   // QueryHandle[[]User]
 defer detail.Close()
 defer users.Close()
 
@@ -122,8 +122,8 @@ if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
 单键也支持选择模式：
 
 ```go
-if err := client.Invalidate("user:42", cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+if err := client.Invalidate("user:42", soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 }); err != nil {
 	return err
 }
@@ -134,7 +134,7 @@ if err := client.Invalidate("user:42", cacheq.InvalidateOptions{
 ```go
 if err := client.Invalidate(
 	[]any{"user:42", "users"},
-	cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+	soroi.InvalidateOptions{Refetch: soroi.RefetchNone},
 ); err != nil {
 	return err
 }
@@ -150,8 +150,8 @@ if err := client.Invalidate(
 if err := client.Invalidate(func(key any) bool {
 	name, ok := key.(string)
 	return ok && (name == "users" || strings.HasPrefix(name, "user:"))
-}, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+}, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 }); err != nil {
 	return err
 }
@@ -161,7 +161,7 @@ if err := client.Invalidate(func(key any) bool {
 
 条件函数收到键，运行在客户端锁外，可以安全调用 `Get`、`Set` 或其他客户端操作。它针对开始匹配时已有的键快照执行，每个键最多一次；新加入的键不参与，失效前已经删除的键跳过。顺序没有保证。nil 条件函数返回 `ErrInvalidKey`；关闭的客户端返回 `ErrClosed`，不执行匹配。
 
-如果在条件函数里读取数据，应使用该键正确的结果类型，例如 `cacheq.Get[User](client, key)`。所有键不一定都是 `User`，不能无条件按同一种类型读取。
+如果在条件函数里读取数据，应使用该键正确的结果类型，例如 `soroi.Get[User](client, key)`。所有键不一定都是 `User`，不能无条件按同一种类型读取。
 
 ## 结构体键：按租户与资源匹配
 
@@ -196,7 +196,7 @@ if err := client.Invalidate(func(key any) bool {
 只安排补刷，不等待完成：
 
 ```go
-if err := client.Invalidate("users", cacheq.InvalidateOptions{
+if err := client.Invalidate("users", soroi.InvalidateOptions{
 	RefetchAfterLoad: true,
 }); err != nil {
 	return err

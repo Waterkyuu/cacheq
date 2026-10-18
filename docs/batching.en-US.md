@@ -4,11 +4,11 @@
 
 `Batcher[K, V]` collects concurrent loads for different keys and invokes a business-supplied `BatchFunc`. It supports data sources with bulk operations, such as SQL `WHERE id IN (...)` queries and bulk HTTP endpoints.
 
-The application implements the bulk operation. cacheq does not discover backend capabilities or generate SQL. A callback that loops over single-object requests does not reduce backend call counts.
+The application implements the bulk operation. soroi does not discover backend capabilities or generate SQL. A callback that loops over single-object requests does not reduce backend call counts.
 
 ## Quick start
 
-This example loads two products through separate `Query` handles with one shared bulk callback. Save it as `main.go` in a module importing cacheq, then run `go run .`.
+This example loads two products through separate `Query` handles with one shared bulk callback. Save it as `main.go` in a module importing soroi, then run `go run .`.
 
 The example uses `Wait: time.Hour` and `MaxBatchSize: 2` so the size limit triggers dispatch without relying on a short timing window. Application settings should use a collection duration that fits the required load latency.
 
@@ -22,38 +22,38 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main groups different query keys and reuses their individually cached results.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 	var calls atomic.Int32
-	products, err := cacheq.NewBatcher(
+	products, err := soroi.NewBatcher(
 		context.Background(),
-		func(_ context.Context, ids []int) (map[int]cacheq.BatchResult[string], error) {
+		func(_ context.Context, ids []int) (map[int]soroi.BatchResult[string], error) {
 			calls.Add(1)
 			sort.Ints(ids)
 			fmt.Printf("bulk load: %v\n", ids)
-			results := make(map[int]cacheq.BatchResult[string], len(ids))
+			results := make(map[int]soroi.BatchResult[string], len(ids))
 			for _, id := range ids {
-				results[id] = cacheq.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
+				results[id] = soroi.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
 			}
 			return results, nil
 		},
-		cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
+		soroi.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
 	if err != nil {
 		panic(err)
 	}
 	defer products.Close()
 
-	first := cacheq.Query(client, "product:42", products.Fetcher(42))
+	first := soroi.Query(client, "product:42", products.Fetcher(42))
 	defer first.Close()
-	second := cacheq.Query(client, "product:43", products.Fetcher(43))
+	second := soroi.Query(client, "product:43", products.Fetcher(43))
 	defer second.Close()
-	for _, handle := range []*cacheq.QueryHandle[string]{first, second} {
+	for _, handle := range []*soroi.QueryHandle[string]{first, second} {
 		for state := range handle.Updates() {
 			if state.Err != nil {
 				panic(state.Err)
@@ -64,7 +64,7 @@ func main() {
 			}
 		}
 	}
-	value, err := cacheq.Fetch(context.Background(), client, "product:42", products.Fetcher(42))
+	value, err := soroi.Fetch(context.Background(), client, "product:42", products.Fetcher(42))
 	if err != nil {
 		panic(err)
 	}
@@ -87,7 +87,7 @@ The two `Query` handles load in the background, placing IDs 42 and 43 into one b
 
 Use `LoadMany(ctx, keys)` when the complete key list is already available. It returns `[]BatchResult[V]` with the same length and order as the input, so each position carries its own data or error. No per-key goroutines or outer error handling are required.
 
-Save this example as `main.go` in a module importing cacheq and run `go run .`:
+Save this example as `main.go` in a module importing soroi and run `go run .`:
 
 ```go
 package main
@@ -99,27 +99,27 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main loads known product IDs and prints outcomes in input order.
 func main() {
 	var calls atomic.Int32
-	products, err := cacheq.NewBatcher(
+	products, err := soroi.NewBatcher(
 		context.Background(),
-		func(_ context.Context, ids []int) (map[int]cacheq.BatchResult[string], error) {
+		func(_ context.Context, ids []int) (map[int]soroi.BatchResult[string], error) {
 			calls.Add(1)
-			results := make(map[int]cacheq.BatchResult[string], len(ids))
+			results := make(map[int]soroi.BatchResult[string], len(ids))
 			for _, id := range ids {
 				if id == 99 {
-					results[id] = cacheq.BatchResult[string]{Err: errors.New("product not found")}
+					results[id] = soroi.BatchResult[string]{Err: errors.New("product not found")}
 					continue
 				}
-				results[id] = cacheq.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
+				results[id] = soroi.BatchResult[string]{Data: fmt.Sprintf("product %d", id)}
 			}
 			return results, nil
 		},
-		cacheq.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
+		soroi.BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
 	if err != nil {
 		panic(err)

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -25,7 +25,7 @@ type fixture struct {
 }
 
 // newFixture creates an isolated backend, server, and cache and closes them after clients exit.
-func newFixture(t *testing.T, options cacheq.Options) *fixture {
+func newFixture(t *testing.T, options soroi.Options) *fixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
@@ -94,7 +94,7 @@ func receive[V any](t *testing.T, ctx context.Context, events <-chan V) V {
 }
 
 // awaitStats observes request admission or completion using the public client snapshot.
-func (f *fixture) awaitStats(t *testing.T, matches func(cacheq.Stats) bool) cacheq.Stats {
+func (f *fixture) awaitStats(t *testing.T, matches func(soroi.Stats) bool) soroi.Stats {
 	t.Helper()
 	for {
 		state := f.app.cache.Stats()
@@ -110,9 +110,9 @@ func (f *fixture) awaitStats(t *testing.T, matches func(cacheq.Stats) bool) cach
 	}
 }
 
-// TestMCPReuseAndPrivateScopes distinguishes cross-session cacheq reuse from the SDK's local TTL cache.
+// TestMCPReuseAndPrivateScopes distinguishes cross-session soroi reuse from the SDK's local TTL cache.
 func TestMCPReuseAndPrivateScopes(t *testing.T) {
-	f := newFixture(t, cacheq.Options{})
+	f := newFixture(t, soroi.Options{})
 	alice := f.reader(t, "alice")
 	aliceAgain := f.reader(t, "alice")
 	bob := f.reader(t, "bob")
@@ -160,7 +160,7 @@ func TestMCPReuseAndPrivateScopes(t *testing.T) {
 
 // TestMCPNotificationInvalidation proves a mutation invalidates both server and subscribed SDK caches.
 func TestMCPNotificationInvalidation(t *testing.T) {
-	f := newFixture(t, cacheq.Options{})
+	f := newFixture(t, soroi.Options{})
 	alice := f.reader(t, "alice")
 	aliceAgain := f.reader(t, "alice")
 	bob := f.reader(t, "bob")
@@ -207,7 +207,7 @@ func TestMCPNotificationInvalidation(t *testing.T) {
 
 // TestMCPConcurrentReads merges real HTTP resource requests from separate clients into one backend operation.
 func TestMCPConcurrentReads(t *testing.T) {
-	f := newFixture(t, cacheq.Options{})
+	f := newFixture(t, soroi.Options{})
 	started, release := make(chan struct{}), make(chan struct{})
 	var attempts atomic.Int32
 	f.app.load = func(ctx context.Context, principal string) (string, error) {
@@ -226,7 +226,7 @@ func TestMCPConcurrentReads(t *testing.T) {
 	go func() { _, err := alice.read(f.ctx); finished <- err }()
 	receive(t, f.ctx, started)
 	go func() { _, err := another.read(f.ctx); finished <- err }()
-	f.awaitStats(t, func(s cacheq.Stats) bool { return s.MergedRequests == 1 })
+	f.awaitStats(t, func(s soroi.Stats) bool { return s.MergedRequests == 1 })
 	close(release)
 	for range 2 {
 		if err := receive(t, f.ctx, finished); err != nil {
@@ -243,7 +243,7 @@ func TestMCPConcurrentReads(t *testing.T) {
 func TestMCPRemainingTTL(t *testing.T) {
 	var now atomic.Int64
 	now.Store(time.Unix(1000, 0).UnixNano())
-	f := newFixture(t, cacheq.Options{
+	f := newFixture(t, soroi.Options{
 		MaxAge: 20 * time.Second,
 		Clock:  func() time.Time { return time.Unix(0, now.Load()) },
 	})
@@ -264,7 +264,7 @@ func TestMCPRemainingTTL(t *testing.T) {
 func TestMCPImmediateStaleness(t *testing.T) {
 	for _, ttl := range []time.Duration{0, -time.Minute} {
 		t.Run(ttl.String(), func(t *testing.T) {
-			f := newFixture(t, cacheq.Options{})
+			f := newFixture(t, soroi.Options{})
 			f.app.ttl = ttl
 			reader := f.reader(t, "alice")
 			for range 2 {
@@ -281,7 +281,7 @@ func TestMCPImmediateStaleness(t *testing.T) {
 
 // TestMCPReadFailure retries on the next request without caching an error as a successful resource.
 func TestMCPReadFailure(t *testing.T) {
-	f := newFixture(t, cacheq.Options{})
+	f := newFixture(t, soroi.Options{})
 	var attempts atomic.Int32
 	f.app.load = func(ctx context.Context, principal string) (string, error) {
 		if attempts.Add(1) == 1 {
@@ -304,7 +304,7 @@ func TestMCPReadFailure(t *testing.T) {
 
 // TestMCPCancellation propagates a real client's cancellation into backend work and permits later recovery.
 func TestMCPCancellation(t *testing.T) {
-	f := newFixture(t, cacheq.Options{})
+	f := newFixture(t, soroi.Options{})
 	started := make(chan struct{})
 	var attempts atomic.Int32
 	f.app.load = func(ctx context.Context, principal string) (string, error) {
@@ -325,7 +325,7 @@ func TestMCPCancellation(t *testing.T) {
 	if err := receive(t, f.ctx, finished); !errors.Is(err, context.Canceled) {
 		t.Fatalf("MCP cancellation = %v", err)
 	}
-	f.awaitStats(t, func(s cacheq.Stats) bool { return s.LoadCancellations == 1 })
+	f.awaitStats(t, func(s soroi.Stats) bool { return s.LoadCancellations == 1 })
 	f.read(t, reader)
 	if state := f.app.cache.Stats(); state.LoadSuccesses != 1 || state.Loads != 2 {
 		t.Fatalf("canceled read prevented recovery: %+v", state)
@@ -334,7 +334,7 @@ func TestMCPCancellation(t *testing.T) {
 
 // TestMCPMutationDuringRead never advertises a fresh TTL for a response captured before a mutation.
 func TestMCPMutationDuringRead(t *testing.T) {
-	f := newFixture(t, cacheq.Options{})
+	f := newFixture(t, soroi.Options{})
 	started, release := make(chan struct{}), make(chan struct{})
 	var attempts atomic.Int32
 	f.app.load = func(ctx context.Context, principal string) (string, error) {

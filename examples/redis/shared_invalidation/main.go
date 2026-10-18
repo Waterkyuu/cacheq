@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
-	redistore "github.com/Waterkyuu/cacheq/store/redis"
+	"github.com/Waterkyuu/soroi"
+	redistore "github.com/Waterkyuu/soroi/store/redis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -45,18 +45,18 @@ func run() error {
 	}
 	store, err := redistore.New(
 		remote,
-		redistore.Options{Prefix: "cacheq-invalidation-demo", EnableTags: true, EnableNotifications: true},
+		redistore.Options{Prefix: "soroi-invalidation-demo", EnableTags: true, EnableNotifications: true},
 	)
 	if err != nil {
 		return err
 	}
-	detailShared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+	detailShared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 		Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute, ShareTags: true,
 	})
 	if err != nil {
 		return err
 	}
-	listShared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[[]User]{
+	listShared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[[]User]{
 		Key: "tenant:42:users:v1", Format: "users.json.v1", TTL: 5 * time.Minute, ShareTags: true,
 	})
 	if err != nil {
@@ -70,36 +70,36 @@ func run() error {
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
-	detail, err := cacheq.QueryDefinition(
+	detail, err := soroi.QueryDefinition(
 		"detail",
 		func(context.Context) (User, error) { calls.Add(1); return source.Load().(User), nil },
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		return err
 	}
 	detail.Tags = tags
 	detail.Shared = detailShared
-	list, err := cacheq.QueryDefinition(
+	list, err := soroi.QueryDefinition(
 		"list",
 		func(context.Context) ([]User, error) { calls.Add(1); return []User{source.Load().(User)}, nil },
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		return err
 	}
 	list.Tags = tags
 	list.Shared = listShared
-	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	a := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+	b := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer a.Close()
 	defer b.Close()
-	watchA, err := a.WatchShared(ctx, store, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	watchA, err := a.WatchShared(ctx, store, soroi.InvalidateOptions{Refetch: soroi.RefetchNone})
 	if err != nil {
 		return err
 	}
 	defer watchA.Close()
-	watchB, err := b.WatchShared(ctx, store, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	watchB, err := b.WatchShared(ctx, store, soroi.InvalidateOptions{Refetch: soroi.RefetchNone})
 	if err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func run() error {
 		ctx,
 		store,
 		tags,
-		cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+		soroi.InvalidateOptions{Refetch: soroi.RefetchNone},
 	); err != nil {
 		return err
 	}
@@ -156,7 +156,7 @@ func run() error {
 }
 
 // waitStale waits for notification publication without sleeps, polling, or assumptions about delivery latency.
-func waitStale[V any](ctx context.Context, query *cacheq.QueryHandle[V]) error {
+func waitStale[V any](ctx context.Context, query *soroi.QueryHandle[V]) error {
 	for {
 		select {
 		case state := <-query.Updates():

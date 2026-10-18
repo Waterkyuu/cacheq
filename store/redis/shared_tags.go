@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 const (
@@ -94,15 +94,15 @@ type tagSnapshot struct {
 func (s *Store) TagsEnabled() bool { return s.enableTags }
 
 // ReadTagged registers exact labels and returns an atomic key/tag snapshot, preserving remote tag unions.
-func (s *Store) ReadTagged(ctx context.Context, key string, tags []string) (cacheq.SharedRecord, error) {
+func (s *Store) ReadTagged(ctx context.Context, key string, tags []string) (soroi.SharedRecord, error) {
 	if err := ctx.Err(); err != nil {
-		return cacheq.SharedRecord{}, err
+		return soroi.SharedRecord{}, err
 	}
 	if !s.enableTags {
-		return cacheq.SharedRecord{}, cacheq.ErrSharedCapability
+		return soroi.SharedRecord{}, soroi.ErrSharedCapability
 	}
 	if key == "" {
-		return cacheq.SharedRecord{}, ErrInvalidOptions
+		return soroi.SharedRecord{}, ErrInvalidOptions
 	}
 	encodedLabels := make([]string, 0, len(tags))
 	for _, tag := range tags {
@@ -110,53 +110,53 @@ func (s *Store) ReadTagged(ctx context.Context, key string, tags []string) (cach
 	}
 	labels, err := json.Marshal(encodedLabels)
 	if err != nil {
-		return cacheq.SharedRecord{}, err
+		return soroi.SharedRecord{}, err
 	}
 	token := rand.Text()
 	registration, err := marshalInvalidation(
-		cacheq.SharedInvalidation{ID: token, Key: key, RegisteredTags: append([]string{}, tags...)},
+		soroi.SharedInvalidation{ID: token, Key: key, RegisteredTags: append([]string{}, tags...)},
 	)
 	if err != nil {
-		return cacheq.SharedRecord{}, err
+		return soroi.SharedRecord{}, err
 	}
 	result, err := s.client.Eval(ctx, taggedReadScript, s.tagKeys(key), token, labels, s.channel(), registration, s.notificationFlag()).
 		Slice()
 	if err != nil {
-		return cacheq.SharedRecord{}, fmt.Errorf("redis tagged read: %w", err)
+		return soroi.SharedRecord{}, fmt.Errorf("redis tagged read: %w", err)
 	}
 	if len(result) != 2 {
-		return cacheq.SharedRecord{}, ErrInvalidOptions
+		return soroi.SharedRecord{}, ErrInvalidOptions
 	}
 	version, versionOK := result[0].(string)
 	data, dataOK := result[1].(string)
 	if !versionOK || !dataOK {
-		return cacheq.SharedRecord{}, ErrInvalidOptions
+		return soroi.SharedRecord{}, ErrInvalidOptions
 	}
 	var snapshot tagSnapshot
 	if err := json.Unmarshal([]byte(version), &snapshot); err != nil {
-		return cacheq.SharedRecord{}, err
+		return soroi.SharedRecord{}, err
 	}
 	canonical, err := json.Marshal(snapshot)
 	if err != nil {
-		return cacheq.SharedRecord{}, err
+		return soroi.SharedRecord{}, err
 	}
 	membership := make([]string, 0, len(snapshot.Tags))
 	for tag := range snapshot.Tags {
 		decoded, err := base64.StdEncoding.DecodeString(tag)
 		if err != nil {
-			return cacheq.SharedRecord{}, err
+			return soroi.SharedRecord{}, err
 		}
 		membership = append(membership, string(decoded))
 	}
 	slices.Sort(membership)
-	return cacheq.SharedRecord{Version: string(canonical), Data: []byte(data), Tags: membership}, nil
+	return soroi.SharedRecord{Version: string(canonical), Data: []byte(data), Tags: membership}, nil
 }
 
 // writeTagged validates a decoded snapshot before the server performs atomic key and tag comparisons.
 func (s *Store) writeTagged(
 	ctx context.Context,
 	key string,
-	write cacheq.SharedWrite,
+	write soroi.SharedWrite,
 	milliseconds int64,
 ) (bool, error) {
 	var snapshot tagSnapshot
@@ -175,23 +175,23 @@ func (s *Store) writeTagged(
 }
 
 // InvalidateTags advances exact tag generations with OR semantics and broadcasts one committed receipt.
-func (s *Store) InvalidateTags(ctx context.Context, tags []string) (cacheq.SharedInvalidation, error) {
+func (s *Store) InvalidateTags(ctx context.Context, tags []string) (soroi.SharedInvalidation, error) {
 	if err := ctx.Err(); err != nil {
-		return cacheq.SharedInvalidation{}, err
+		return soroi.SharedInvalidation{}, err
 	}
 	if !s.enableTags {
-		return cacheq.SharedInvalidation{}, cacheq.ErrSharedCapability
+		return soroi.SharedInvalidation{}, soroi.ErrSharedCapability
 	}
 	if len(tags) == 0 {
-		return cacheq.SharedInvalidation{}, nil
+		return soroi.SharedInvalidation{}, nil
 	}
 	labels := slices.Clone(tags)
 	slices.Sort(labels)
 	labels = slices.Compact(labels)
-	event := cacheq.SharedInvalidation{ID: rand.Text(), Tags: labels}
+	event := soroi.SharedInvalidation{ID: rand.Text(), Tags: labels}
 	data, err := marshalInvalidation(event)
 	if err != nil {
-		return cacheq.SharedInvalidation{}, err
+		return soroi.SharedInvalidation{}, err
 	}
 	encodedLabels := make([]string, 0, len(labels))
 	for _, tag := range labels {
@@ -199,11 +199,11 @@ func (s *Store) InvalidateTags(ctx context.Context, tags []string) (cacheq.Share
 	}
 	encodedTags, err := json.Marshal(encodedLabels)
 	if err != nil {
-		return cacheq.SharedInvalidation{}, err
+		return soroi.SharedInvalidation{}, err
 	}
 	if err := s.client.Eval(ctx, invalidateTagsScript, []string{s.tagGenerationKey()}, event.ID, encodedTags, s.channel(), data, s.notificationFlag()).
 		Err(); err != nil {
-		return cacheq.SharedInvalidation{}, fmt.Errorf("redis tag invalidation: %w", err)
+		return soroi.SharedInvalidation{}, fmt.Errorf("redis tag invalidation: %w", err)
 	}
 	return event, nil
 }

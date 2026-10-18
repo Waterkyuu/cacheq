@@ -4,11 +4,11 @@
 
 `Mutation` 执行业务写入，提供执行状态，并在写入成功后更新关联缓存。例如修改用户姓名后，可以直接更新用户详情，同时让用户列表重新加载。
 
-业务负责实现 HTTP 请求或数据库写入；cacheq 负责组织写入后的缓存同步。创建 Mutation 不会发起请求，调用 `Mutate` 才开始执行。
+业务负责实现 HTTP 请求或数据库写入；soroi 负责组织写入后的缓存同步。创建 Mutation 不会发起请求，调用 `Mutate` 才开始执行。
 
 ## 快速开始
 
-以下示例修改用户姓名，将返回的用户写入详情缓存，并刷新已订阅的用户列表。将完整程序保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
+以下示例修改用户姓名，将返回的用户写入详情缓存，并刷新已订阅的用户列表。将完整程序保存为已导入 soroi 的 Go 模块中的 `main.go`，运行 `go run .`。
 
 示例使用 `atomic.Value` 保存本地后端数据，无需外部服务；读写可以与列表的后台刷新并发执行。
 
@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // User contains the profile returned by the backend.
@@ -33,7 +33,7 @@ type User struct {
 
 // main synchronizes a detail cache and an observed list after changing a user.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 	ctx := context.Background()
 
@@ -42,15 +42,15 @@ func main() {
 	getUsers := func(context.Context) ([]User, error) {
 		return []User{backend.Load().(User)}, nil
 	}
-	users := cacheq.Query(client, "users", getUsers)
+	users := soroi.Query(client, "users", getUsers)
 	defer users.Close()
-	before, err := cacheq.Fetch(ctx, client, "users", getUsers)
+	before, err := soroi.Fetch(ctx, client, "users", getUsers)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("before:", before[0].Name)
 
-	rename := cacheq.Mutation(client, func(ctx context.Context, name string) (User, error) {
+	rename := soroi.Mutation(client, func(ctx context.Context, name string) (User, error) {
 		if err := ctx.Err(); err != nil {
 			return User{}, err
 		}
@@ -58,7 +58,7 @@ func main() {
 		backend.Store(user)
 		return user, nil
 	}, func(ctx context.Context, user User, _ string) error {
-		updateErr := cacheq.Set(client, "user:42", user)
+		updateErr := soroi.Set(client, "user:42", user)
 		_, refreshErr := client.InvalidateAndWait(ctx, "users")
 		return errors.Join(updateErr, refreshErr)
 	})
@@ -72,7 +72,7 @@ func main() {
 	}
 
 	after := users.Snapshot().Data
-	fmt.Println("detail:", cacheq.Get[User](client, "user:42").Data.Name)
+	fmt.Println("detail:", soroi.Get[User](client, "user:42").Data.Name)
 	fmt.Println("list:", after[0].Name)
 }
 ```
@@ -97,7 +97,7 @@ list: Bob
 
 `Mutation(client, write, onSuccess, options...)` 返回 `MutationHandle[I, V]`，从传入的函数推断输入和结果类型。不需要同步时，第三个参数传 nil。可以省略执行配置，最多传入一份不带泛型类型参数的 `MutationOptions`；省略配置或传入空配置均继承 Client 预算。`I` 是输入类型，`V` 是写入结果类型；快速开始中分别为 `string` 和 `User`。业务函数 `Mutator[I, V]` 的签名为 `func(context.Context, I) (V, error)`。
 
-`Mutate(ctx, input)` 执行一次业务函数，等待成功后的缓存同步，并返回 `MutationResult[V]` 和错误。数据库操作应在事务提交成功后才返回成功。cacheq 不自动重试或合并写入；完成后再次传入相同参数，会再次执行业务函数。
+`Mutate(ctx, input)` 执行一次业务函数，等待成功后的缓存同步，并返回 `MutationResult[V]` 和错误。数据库操作应在事务提交成功后才返回成功。soroi 不自动重试或合并写入；完成后再次传入相同参数，会再次执行业务函数。
 
 同一个句柄同时只接受一次执行，包括缓存同步阶段。重叠调用返回 `ErrMutationBusy`，不会排队或改变正在执行的状态。不同句柄可以并发执行，不会按用户 ID 或其他业务键自动串行化。
 
@@ -109,7 +109,7 @@ list: Bob
 
 回调在业务写入成功后执行一次，写入失败时不会调用。它在 Client 锁外运行，可以调用缓存 API。回调返回前，句柄保持 `Pending`。返回错误会报告同步失败，但不会撤销已提交的业务写入。
 
-此设计参考 [TanStack Query 的 mutation 失效方式](https://tanstack.com/query/latest/docs/framework/react/guides/invalidations-from-mutations)：在成功回调中调用查询客户端的缓存 API，并在回调内等待同步完成。Go 使用阻塞方法调用和错误返回替代 JavaScript Promise；cacheq 保留写入提交后通过独立 `SyncErr` 报告同步失败的契约。
+此设计参考 [TanStack Query 的 mutation 失效方式](https://tanstack.com/query/latest/docs/framework/react/guides/invalidations-from-mutations)：在成功回调中调用查询客户端的缓存 API，并在回调内等待同步完成。Go 使用阻塞方法调用和错误返回替代 JavaScript Promise；soroi 保留写入提交后通过独立 `SyncErr` 报告同步失败的契约。
 
 ## 在 `onSuccess` 中刷新关联查询
 
@@ -117,7 +117,7 @@ list: Bob
 
 ```go
 onSuccess := func(context.Context, User, string) error {
-	return client.Invalidate("users", cacheq.InvalidateOptions{RefetchAfterLoad: true})
+	return client.Invalidate("users", soroi.InvalidateOptions{RefetchAfterLoad: true})
 }
 ```
 
@@ -129,7 +129,7 @@ onSuccess := func(context.Context, User, string) error {
 onSuccess := func(context.Context, User, string) error {
 	return client.Invalidate(
 		[]any{"user:42", "users"},
-		cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+		soroi.InvalidateOptions{Refetch: soroi.RefetchNone},
 	)
 }
 ```
@@ -209,7 +209,7 @@ return nil
 
 显式关闭句柄会立即关闭 `Updates()`，重复关闭没有影响。Client 关闭也会异步关闭所属 Mutation 的更新通道。业务函数未结束前，`Mutate` 仍可能继续等待。
 
-取消不能证明远端写入已经回滚。如果业务函数在取消后仍返回成功，cacheq 会继续执行缓存同步，并保留成功结果。已关闭句柄不再发送通知，但 `Snapshot()` 仍会记录最终结果；Client 已关闭时，缓存同步可能返回单独的 `SyncErr`。
+取消不能证明远端写入已经回滚。如果业务函数在取消后仍返回成功，soroi 会继续执行缓存同步，并保留成功结果。已关闭句柄不再发送通知，但 `Snapshot()` 仍会记录最终结果；Client 已关闭时，缓存同步可能返回单独的 `SyncErr`。
 
 ## 错误处理
 

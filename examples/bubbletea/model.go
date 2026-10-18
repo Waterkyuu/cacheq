@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // viewID identifies the independent consumer receiving a shared query notification.
@@ -25,7 +25,7 @@ type snapshotMsg struct {
 	// view routes the notification to the consumer that scheduled the wait.
 	view viewID
 	// state is an immutable snapshot captured by that consumer's subscription command.
-	state cacheq.Snapshot[[]task]
+	state soroi.Snapshot[[]task]
 }
 
 // queryClosedMsg ends the subscription loops when a handle or client has been released.
@@ -34,13 +34,13 @@ type queryClosedMsg struct{}
 // model owns UI state for three consumers of the same task query.
 type model struct {
 	// client supplies shared query ownership, invalidation, and load statistics.
-	client *cacheq.Client
+	client *soroi.Client
 	// store owns backend mutations separately from the immutable cache.
 	store *taskStore
 	// queries are independently owned subscriptions for the list, detail, and summary.
-	queries [3]*cacheq.QueryHandle[[]task]
+	queries [3]*soroi.QueryHandle[[]task]
 	// states are the latest snapshots processed for each consumer on the UI loop.
-	states [3]cacheq.Snapshot[[]task]
+	states [3]soroi.Snapshot[[]task]
 	// selected is the list position shown by the detail view; the demo keeps record ordering stable.
 	selected int
 	// actionErr reports a rejected mutation or invalidation separately from load failures.
@@ -114,7 +114,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() tea.View {
 	var content strings.Builder
 	stats := m.client.Stats()
-	fmt.Fprintf(&content, "cacheq task board\n3 subscriptions, 1 shared query\nBackend loads: %d\n\n", stats.Loads)
+	fmt.Fprintf(&content, "soroi task board\n3 subscriptions, 1 shared query\nBackend loads: %d\n\n", stats.Loads)
 	list := m.states[listView]
 	fmt.Fprintf(&content, "LIST [%s]\n", queryStatus(list))
 	if !list.HasData {
@@ -171,7 +171,7 @@ func (m model) closeQueries() {
 }
 
 // queryStatus distinguishes initial loading, retained-data refresh, failure, and ready state.
-func queryStatus(state cacheq.Snapshot[[]task]) string {
+func queryStatus(state soroi.Snapshot[[]task]) string {
 	if state.Fetching {
 		if state.HasData {
 			return "Refreshing (keeping previous data)"
@@ -188,7 +188,7 @@ func queryStatus(state cacheq.Snapshot[[]task]) string {
 }
 
 // waitForUpdate consumes one notification; Update schedules this consumer's next wait.
-func waitForUpdate(view viewID, updates <-chan cacheq.Snapshot[[]task]) tea.Cmd {
+func waitForUpdate(view viewID, updates <-chan soroi.Snapshot[[]task]) tea.Cmd {
 	return func() tea.Msg {
 		state, ok := <-updates
 		if !ok {

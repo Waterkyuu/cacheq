@@ -38,7 +38,7 @@ func connect(ctx context.Context, endpoint, credential string) (*demoClient, err
 	c := &demoClient{
 		updated: make(chan string, 1), acknowledged: make(chan struct{}, 1),
 	}
-	client := mcp.NewClient(&mcp.Implementation{Name: "cacheq-reader", Version: "1.0.0"}, &mcp.ClientOptions{
+	client := mcp.NewClient(&mcp.Implementation{Name: "soroi-reader", Version: "1.0.0"}, &mcp.ClientOptions{
 		ResourceUpdatedHandler: func(_ context.Context, req *mcp.ResourceUpdatedNotificationRequest) {
 			select {
 			case c.updated <- req.Params.URI:

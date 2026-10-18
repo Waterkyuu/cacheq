@@ -1,10 +1,10 @@
-module github.com/Waterkyuu/cacheq/examples/bubbletea
+module github.com/Waterkyuu/soroi/examples/bubbletea
 
 go 1.26.0
 
 require (
 	charm.land/bubbletea/v2 v2.1.0
-	github.com/Waterkyuu/cacheq v0.0.0
+	github.com/Waterkyuu/soroi v0.0.0
 )
 
 require (
@@ -25,4 +25,4 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 )
 
-replace github.com/Waterkyuu/cacheq => ../..
+replace github.com/Waterkyuu/soroi => ../..

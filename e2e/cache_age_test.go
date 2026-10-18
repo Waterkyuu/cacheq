@@ -9,26 +9,26 @@ import (
 	"testing"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // TestHTTPMaxAgeAfterFailedRefresh expires retained HTTP data and renews successful replacements.
 func TestHTTPMaxAgeAfterFailedRefresh(t *testing.T) {
 	api := newUserAPI(t)
 	var now atomic.Int64
-	client := cacheq.NewClient(cacheq.Options{
+	client := soroi.NewClient(soroi.Options{
 		StaleTime: 30 * time.Second,
 		MaxAge:    time.Minute,
 		Clock:     func() time.Time { return time.Unix(0, now.Load()) },
 	})
 	t.Cleanup(client.Close)
-	detail := cacheq.Query(
+	detail := soroi.Query(
 		client,
 		"user:42",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
 	)
 	t.Cleanup(detail.Close)
-	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
+	await(t, detail, func(s soroi.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 	now.Store(int64(30 * time.Second))
 	api.failNext(1)
 	if _, err := detail.Refetch(context.Background()); err == nil {
@@ -41,7 +41,7 @@ func TestHTTPMaxAgeAfterFailedRefresh(t *testing.T) {
 	if state := detail.Snapshot(); state.HasData || state.Data.Name != "" || state.Err == nil || state.Fetching {
 		t.Fatalf("over-age HTTP failure = %+v", state)
 	}
-	await(t, detail, func(s cacheq.Snapshot[user]) bool { return !s.HasData && s.Err != nil && !s.Fetching })
+	await(t, detail, func(s soroi.Snapshot[user]) bool { return !s.HasData && s.Err != nil && !s.Fetching })
 	if api.count("/users/42") != 2 {
 		t.Fatal("age expiration started an unsolicited HTTP request")
 	}
@@ -75,30 +75,30 @@ func TestHTTPMaxAgeDuringRefresh(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	client := cacheq.NewClient(cacheq.Options{
+	client := soroi.NewClient(soroi.Options{
 		MaxEntries: 1,
 		MaxAge:     time.Minute,
 		Clock:      func() time.Time { return time.Unix(0, now.Load()) },
 	})
 	t.Cleanup(client.Close)
-	if err := cacheq.Set(client, "user", user{Name: "Alice"}); err != nil {
+	if err := soroi.Set(client, "user", user{Name: "Alice"}); err != nil {
 		t.Fatal(err)
 	}
-	detail := cacheq.Query(client, "user", readJSON[user](server.Client(), server.URL))
+	detail := soroi.Query(client, "user", readJSON[user](server.Client(), server.URL))
 	t.Cleanup(detail.Close)
 	<-started
 	now.Store(int64(time.Minute))
 	state := detail.Snapshot()
-	if state.HasData || state.Data.Name != "" || !state.Fetching || state.Status != cacheq.Pending {
+	if state.HasData || state.Data.Name != "" || !state.Fetching || state.Status != soroi.Pending {
 		t.Fatalf("over-age HTTP refresh = %+v", state)
 	}
-	await(t, detail, func(s cacheq.Snapshot[user]) bool { return !s.HasData && s.Fetching })
-	if err := cacheq.Set(client, "settings", settings{Theme: "dark"}); err != nil {
+	await(t, detail, func(s soroi.Snapshot[user]) bool { return !s.HasData && s.Fetching })
+	if err := soroi.Set(client, "settings", settings{Theme: "dark"}); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
-	state = await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
-	if state.Err != nil || calls.Load() != 1 || cacheq.Get[settings](client, "settings").HasData {
+	state = await(t, detail, func(s soroi.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
+	if state.Err != nil || calls.Load() != 1 || soroi.Get[settings](client, "settings").HasData {
 		t.Fatalf("HTTP completion did not preserve work and enforce capacity = %+v", state)
 	}
 }

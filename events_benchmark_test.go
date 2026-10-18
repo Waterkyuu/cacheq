@@ -1,4 +1,4 @@
-package cacheq_test
+package soroi_test
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // BenchmarkEventFiltering measures cache hits with increasing numbers of unrelated exact-key subscriptions.
@@ -14,14 +14,14 @@ import (
 func BenchmarkEventFiltering(b *testing.B) {
 	for _, count := range []int{0, 1, 100, 1000} {
 		b.Run(strconv.Itoa(count), func(b *testing.B) {
-			client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+			client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 			defer client.Close()
-			if err := cacheq.Set(client, "hot", 1); err != nil {
+			if err := soroi.Set(client, "hot", 1); err != nil {
 				b.Fatal(err)
 			}
-			subscriptions := make([]*cacheq.EventSubscription, 0, count)
+			subscriptions := make([]*soroi.EventSubscription, 0, count)
 			for key := range count {
-				subscription, err := client.SubscribeEvents(cacheq.EventOptions{Key: key, Buffer: 1})
+				subscription, err := client.SubscribeEvents(soroi.EventOptions{Key: key, Buffer: 1})
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -31,7 +31,7 @@ func BenchmarkEventFiltering(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if value, err := cacheq.Fetch[int](
+				if value, err := soroi.Fetch[int](
 					ctx,
 					client,
 					"hot",

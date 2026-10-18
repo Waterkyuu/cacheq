@@ -1,4 +1,4 @@
-package cacheq_test
+package soroi_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 const (
@@ -33,7 +33,7 @@ func BenchmarkCacheBenefit(b *testing.B) {
 	want := sha256.Sum256(payload)
 	for _, mode := range []string{"NoCache", "FirstLoad", "CacheHit"} {
 		b.Run(mode, func(b *testing.B) {
-			client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+			client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 			defer client.Close()
 			var calls atomic.Uint64
 			load := func(ctx context.Context) ([sha256.Size]byte, error) {
@@ -47,7 +47,7 @@ func BenchmarkCacheBenefit(b *testing.B) {
 			read := load
 			if mode != "NoCache" {
 				read = func(ctx context.Context) ([sha256.Size]byte, error) {
-					return cacheq.Fetch(ctx, client, "benefit", load)
+					return soroi.Fetch(ctx, client, "benefit", load)
 				}
 			}
 			if mode == "CacheHit" {
@@ -115,12 +115,12 @@ func benchmarkConcurrentFetch(b *testing.B, sameKey bool, mode string) {
 	if sameKey {
 		keyCount = 1
 	}
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Hour})
 	defer client.Close()
 	var calls atomic.Uint64
 	keys := make([]any, keyCount)
 	want := make([][sha256.Size]byte, keyCount)
-	loaders := make([]cacheq.Fetcher[[sha256.Size]byte], keyCount)
+	loaders := make([]soroi.Fetcher[[sha256.Size]byte], keyCount)
 	for keyIndex := range keys {
 		keys[keyIndex] = fmt.Sprintf("product:%d", keyIndex+1)
 		// Distinct keys represent distinct data, so an accidental cross-key reuse cannot pass.
@@ -140,7 +140,7 @@ func benchmarkConcurrentFetch(b *testing.B, sameKey bool, mode string) {
 	ctx := context.Background()
 	if mode == "CacheHit" {
 		for keyIndex, key := range keys {
-			value, err := cacheq.Fetch(ctx, client, key, loaders[keyIndex])
+			value, err := soroi.Fetch(ctx, client, key, loaders[keyIndex])
 			if err != nil || value != want[keyIndex] {
 				b.Fatalf("warm-up for %v failed: %v", key, err)
 			}
@@ -177,7 +177,7 @@ func benchmarkConcurrentFetch(b *testing.B, sameKey bool, mode string) {
 					if mode == "NoCache" {
 						results[request], failures[request] = loaders[keyIndex](ctx)
 					} else {
-						results[request], failures[request] = cacheq.Fetch(
+						results[request], failures[request] = soroi.Fetch(
 							ctx,
 							client,
 							keys[keyIndex],

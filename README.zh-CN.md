@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="./assets/cacheq.png" alt="cacheq" width="144" />
+  <img src="./assets/soroi.png" alt="soroi" width="144" />
 
-  <h1>cacheq</h1>
+  <h1>soroi</h1>
 
   <p><a href="./README.md">English</a> | <strong>简体中文</strong></p>
 
@@ -16,13 +16,13 @@
   <p><a href="#功能">功能</a> · <a href="#安装">安装</a></p>
 </div>
 
-## 什么时候使用 cacheq
+## 什么时候使用 soroi
 
-当 Go 应用需要协调数据加载与同步时，可以使用 cacheq：复用缓存结果、合并并发请求、批量读取，或在写入后刷新关联查询。
+当 Go 应用需要协调数据加载与同步时，可以使用 soroi：复用缓存结果、合并并发请求、批量读取，或在写入后刷新关联查询。
 
-它适用于后端服务、CLI/TUI 应用和后台任务。HTTP 请求、数据库操作或其他加载逻辑由应用提供；cacheq 管理这些操作的执行，以及结果如何传递给消费者。
+它适用于后端服务、CLI/TUI 应用和后台任务。HTTP 请求、数据库操作或其他加载逻辑由应用提供；soroi 管理这些操作的执行，以及结果如何传递给消费者。
 
-| 应用场景 | cacheq 提供的能力 |
+| 应用场景 | soroi 提供的能力 |
 | --- | --- |
 | 多个处理函数或组件读取同一个用户、配置或资源 | 复用新鲜缓存，合并相同 key 的执行中请求 |
 | 列表或聚合查询需要从支持批量接口的后端读取多个对象 | 将不同 key 的加载合并为批次，或通过 `LoadMany` 提交已知的一组 key |
@@ -31,7 +31,7 @@
 | 界面或持续运行的任务需要响应加载、结果、错误和刷新 | 订阅类型安全的查询更新，通过诊断事件追踪执行过程 |
 | 读取和写入共用一个容量有限的数据库或服务 | 通过共享 `Executor` 限制活动回调与排队工作 |
 
-cacheq 在单个进程中维护查询状态和本地结果。需要跨进程复用序列化结果的查询，可以启用可选[共享结果缓存](docs/shared-cache.zh-CN.md)，包括独立的 Redis 适配器。少量本地值只需过期处理时，TTL 缓存可能已经足够。
+soroi 在单个进程中维护查询状态和本地结果。需要跨进程复用序列化结果的查询，可以启用可选[共享结果缓存](docs/shared-cache.zh-CN.md)，包括独立的 Redis 适配器。少量本地值只需过期处理时，TTL 缓存可能已经足够。
 
 ## 功能
 
@@ -46,14 +46,16 @@ cacheq 在单个进程中维护查询状态和本地结果。需要跨进程复�
 ## 安装
 
 ```sh
-go get github.com/Waterkyuu/cacheq
+go get github.com/Waterkyuu/soroi
 ```
 
-导入路径为 `github.com/Waterkyuu/cacheq`，包名为 `cacheq`。需要 Go 1.22 或更新版本，没有外部依赖。
+导入路径为 `github.com/Waterkyuu/soroi`，包名为 `soroi`。需要 Go 1.22 或更新版本，没有外部依赖。
+
+原 `cacheq` 用户升级前请阅读 [v0.3.1 迁移说明](docs/versioning.zh-CN.md#从-cacheq-迁移到-soroi)：模块路径和 Redis 默认前缀均有变化。
 
 ## 快速开始
 
-把这个完整程序保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。无需服务器或凭据。
+把这个完整程序保存为已导入 soroi 的 Go 模块中的 `main.go`，运行 `go run .`。无需服务器或凭据。
 
 ```go
 package main
@@ -64,12 +66,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main gives two components the same query without loading the data twice.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 
 	var calls atomic.Int32
@@ -77,9 +79,9 @@ func main() {
 		calls.Add(1)
 		return "hello", nil
 	}
-	queries := []*cacheq.QueryHandle[string]{
-		cacheq.Query(client, "greeting", load),
-		cacheq.Query(client, "greeting", load),
+	queries := []*soroi.QueryHandle[string]{
+		soroi.Query(client, "greeting", load),
+		soroi.Query(client, "greeting", load),
 	}
 	for _, query := range queries {
 		defer query.Close()
@@ -158,7 +160,7 @@ go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 
 ## 功能文档
 
-在线阅读[中英文文档站](https://waterkyuu.github.io/cacheq/)。
+在线阅读[中英文文档站](https://waterkyuu.github.io/soroi/)。
 
 | 文档 | 说明 |
 | --- | --- |
@@ -182,7 +184,7 @@ go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
 
 ## 版本与升级规则
 
-cacheq 遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。在 `v0` 阶段，补丁版本保持兼容；次版本可能包含破坏性变更，并提供迁移说明。从 `v1` 起，公开 API 的破坏性变更必须升级主版本。核心库目前支持 Go 1.22 及以上版本，示例模块可能要求更高的 Go 版本。
+soroi 遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。在 `v0` 阶段，补丁版本保持兼容；次版本可能包含破坏性变更，并提供迁移说明。从 `v1` 起，公开 API 的破坏性变更必须升级主版本。核心库目前支持 Go 1.22 及以上版本，示例模块可能要求更高的 Go 版本。
 
 公开 API 边界、弃用策略、Go 版本支持和升级方式见[版本与升级规则](docs/versioning.zh-CN.md)。已发布的版本 tag 不会移动或复用。
 
@@ -192,4 +194,4 @@ cacheq 遵循[语义化版本](https://semver.org/spec/v2.0.0.html)。在 `v0` �
 
 ## 许可证
 
-cacheq 使用 [MIT 许可证](LICENSE)。
+soroi 使用 [MIT 许可证](LICENSE)。

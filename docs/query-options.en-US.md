@@ -8,7 +8,7 @@
 
 ## Quick start: reuse one configuration
 
-This complete example gives all three entry points the same one-hour freshness policy. The disabled subscription receives data loaded explicitly by `Prefetch`, and `Fetch` reuses that fresh data. Client defaults remain unchanged. Save the program as `main.go` in a module importing cacheq and run `go run .`.
+This complete example gives all three entry points the same one-hour freshness policy. The disabled subscription receives data loaded explicitly by `Prefetch`, and `Fetch` reuses that fresh data. Client defaults remain unchanged. Save the program as `main.go` in a module importing soroi and run `go run .`.
 
 ```go
 package main
@@ -18,23 +18,23 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main reuses one loading policy across subscription, prefetch, and explicit reads.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 	ctx := context.Background()
 	load := func(context.Context) (string, error) { return "hello", nil }
 	hour := time.Hour
-	options := cacheq.QueryOptions{Disable: true, StaleTime: &hour}
-	query := cacheq.Query(client, "greeting", load, options)
+	options := soroi.QueryOptions{Disable: true, StaleTime: &hour}
+	query := soroi.Query(client, "greeting", load, options)
 	defer query.Close()
-	if err := cacheq.Prefetch(ctx, client, "greeting", load, options); err != nil {
+	if err := soroi.Prefetch(ctx, client, "greeting", load, options); err != nil {
 		panic(err)
 	}
-	value, err := cacheq.Fetch(ctx, client, "greeting", load, options)
+	value, err := soroi.Fetch(ctx, client, "greeting", load, options)
 	if err != nil {
 		panic(err)
 	}
@@ -91,20 +91,20 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // main reuses a typed definition without creating a second cache or automatic loading.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{})
+	client := soroi.NewClient(soroi.Options{})
 	defer client.Close()
 	ctx := context.Background()
 	hour := time.Hour
 	calls := 0
-	definition, err := cacheq.QueryDefinition("greeting", func(context.Context) (string, error) {
+	definition, err := soroi.QueryDefinition("greeting", func(context.Context) (string, error) {
 		calls++
 		return "hello", nil
-	}, cacheq.QueryOptions{Disable: true, StaleTime: &hour})
+	}, soroi.QueryOptions{Disable: true, StaleTime: &hour})
 	if err != nil {
 		panic(err)
 	}
@@ -143,7 +143,7 @@ refreshed calls: 2
 | `definition.Query(client)` | `*QueryHandle[V]` with the same contract as `Query` |
 | `definition.Prefetch(ctx, client)` | Loading error with the same contract as `Prefetch` |
 
-The former `QueryDefinition` struct has been replaced by the function. Create definitions with function calls and handle the returned error; use `Definition[V]` in explicit variable, parameter, and return type declarations. Typed loaders infer `V`, including typed nil loaders. A bare nil loader has no result type to infer; specify a type argument, such as `cacheq.QueryDefinition[string]("greeting", nil)`, when needed. A nil loader follows the existing operation contracts; it cannot load missing or stale data.
+The former `QueryDefinition` struct has been replaced by the function. Create definitions with function calls and handle the returned error; use `Definition[V]` in explicit variable, parameter, and return type declarations. Typed loaders infer `V`, including typed nil loaders. A bare nil loader has no result type to infer; specify a type argument, such as `soroi.QueryDefinition[string]("greeting", nil)`, when needed. A nil loader follows the existing operation contracts; it cannot load missing or stale data.
 
 The methods use the definition's key, fetcher, and options directly. To customize one consumer, copy the definition and change the copy's options before calling a method. Changes to Key, Fetcher, or Options apply to subsequent operations without reconfiguring existing handles. Tags declared by subsequent operations are merged into the shared query state. Each method reads option pointer values when its operation starts. Applications must synchronize shared definitions, pointer values, and mutable state captured by loaders.
 
@@ -174,7 +174,7 @@ Cancellation, deadline errors, `ErrQueueFull`, `ErrBatcherClosed`, and `ErrExecu
 Use `Executor` to select a different backend budget for one query, or `DisableExecutor: true` when its Batcher already budgets the actual bulk callback. A nil Executor inherits the Client budget unless disabling is explicit. Disabling outer acquisition does not disable the Batcher's own budget.
 
 ```go
-options := cacheq.QueryOptions{
+options := soroi.QueryOptions{
 	DisableExecutor: true,
 }
 ```

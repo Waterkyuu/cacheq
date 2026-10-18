@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // TestHTTPTooManyOptions rejects extra configurations without issuing an HTTP request.
@@ -18,25 +18,25 @@ func TestHTTPTooManyOptions(t *testing.T) {
 	for _, api := range []string{"fetch", "prefetch", "query", "definition"} {
 		t.Run(api, func(t *testing.T) {
 			backend := newUserAPI(t)
-			client := cacheq.NewClient(cacheq.Options{})
+			client := soroi.NewClient(soroi.Options{})
 			t.Cleanup(client.Close)
 			load := readJSON[user](backend.server.Client(), backend.server.URL+"/users/42")
-			options := []cacheq.QueryOptions{{}, {}}
+			options := []soroi.QueryOptions{{}, {}}
 			ctx := context.Background()
 			var err error
 			switch api {
 			case "fetch":
-				_, err = cacheq.Fetch(ctx, client, "user", load, options...)
+				_, err = soroi.Fetch(ctx, client, "user", load, options...)
 			case "prefetch":
-				err = cacheq.Prefetch(ctx, client, "user", load, options...)
+				err = soroi.Prefetch(ctx, client, "user", load, options...)
 			case "query":
-				query := cacheq.Query(client, "user", load, options...)
+				query := soroi.Query(client, "user", load, options...)
 				t.Cleanup(query.Close)
 				err = query.Snapshot().Err
 			case "definition":
-				_, err = cacheq.QueryDefinition("user", load, options...)
+				_, err = soroi.QueryDefinition("user", load, options...)
 			}
-			if !errors.Is(err, cacheq.ErrTooManyOptions) || backend.count("/users/42") != 0 {
+			if !errors.Is(err, soroi.ErrTooManyOptions) || backend.count("/users/42") != 0 {
 				t.Fatalf("rejected HTTP read = %v, requests=%d", err, backend.count("/users/42"))
 			}
 		})
@@ -49,15 +49,15 @@ func TestHTTPSharedQueryOptions(t *testing.T) {
 		for _, fail := range []bool{false, true} {
 			t.Run(entry+"/"+map[bool]string{false: "retry success", true: "retry failure"}[fail], func(t *testing.T) {
 				api := newUserAPI(t)
-				client := cacheq.NewClient(cacheq.Options{})
+				client := soroi.NewClient(soroi.Options{})
 				t.Cleanup(client.Close)
 				hour, retries := time.Hour, 1
-				options := cacheq.QueryOptions{
+				options := soroi.QueryOptions{
 					Disable: true, StaleTime: &hour, Retry: &retries,
 					RetryDelay: func(int) time.Duration { return 0 },
 				}
 				load := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
-				query := cacheq.Query(client, "user", load, options)
+				query := soroi.Query(client, "user", load, options)
 				t.Cleanup(query.Close)
 				if err := client.Invalidate("user"); err != nil {
 					t.Fatal(err)
@@ -75,9 +75,9 @@ func TestHTTPSharedQueryOptions(t *testing.T) {
 				var err error
 				switch entry {
 				case "fetch":
-					_, err = cacheq.Fetch(ctx, client, "user", load, options)
+					_, err = soroi.Fetch(ctx, client, "user", load, options)
 				case "prefetch":
-					err = cacheq.Prefetch(ctx, client, "user", load, options)
+					err = soroi.Prefetch(ctx, client, "user", load, options)
 				case "refetch":
 					_, err = query.Refetch(ctx)
 				}
@@ -94,10 +94,10 @@ func TestHTTPSharedQueryOptions(t *testing.T) {
 				if !state.HasData || state.Data.Name != "Alice" || state.Stale || state.Fetching {
 					t.Fatalf("shared HTTP result = %+v", state)
 				}
-				if err := cacheq.Prefetch(ctx, client, "user", load, options); err != nil {
+				if err := soroi.Prefetch(ctx, client, "user", load, options); err != nil {
 					t.Fatal(err)
 				}
-				value, err := cacheq.Fetch(ctx, client, "user", load, options)
+				value, err := soroi.Fetch(ctx, client, "user", load, options)
 				if err != nil || value.Name != "Alice" || api.count("/users/42") != 2 {
 					t.Fatalf("shared HTTP cache = %+v, %v, requests=%d", value, err, api.count("/users/42"))
 				}
@@ -109,11 +109,11 @@ func TestHTTPSharedQueryOptions(t *testing.T) {
 // TestHTTPQueryDefinition shares a named HTTP query across prefetching, reading, and automatic refresh.
 func TestHTTPQueryDefinition(t *testing.T) {
 	api := newUserAPI(t)
-	client := cacheq.NewClient(cacheq.Options{})
+	client := soroi.NewClient(soroi.Options{})
 	t.Cleanup(client.Close)
 	hour, retries := time.Hour, 1
-	definition, err := cacheq.QueryDefinition("user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-		cacheq.QueryOptions{
+	definition, err := soroi.QueryDefinition("user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+		soroi.QueryOptions{
 			Disable: true, StaleTime: &hour, Retry: &retries,
 			RetryDelay: func(int) time.Duration { return 0 },
 		})
@@ -150,7 +150,7 @@ func TestHTTPQueryDefinition(t *testing.T) {
 	if err := client.Invalidate(definition.Key); err != nil {
 		t.Fatal(err)
 	}
-	await(t, active, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Carol" && !s.Fetching })
+	await(t, active, func(s soroi.Snapshot[user]) bool { return s.Data.Name == "Carol" && !s.Fetching })
 	if query.Snapshot().Data.Name != "Carol" || api.count("/users/42") != 4 {
 		t.Fatal("definition subscriptions did not share the automatic refresh")
 	}
@@ -167,12 +167,12 @@ func TestHTTPDefinitionCancellation(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
-			client := cacheq.NewClient(cacheq.Options{})
+			client := soroi.NewClient(soroi.Options{})
 			t.Cleanup(client.Close)
-			definition, err := cacheq.QueryDefinition(
+			definition, err := soroi.QueryDefinition(
 				"user",
 				readJSON[user](server.Client(), server.URL),
-				cacheq.QueryOptions{Disable: true},
+				soroi.QueryOptions{Disable: true},
 			)
 			if err != nil {
 				t.Fatal(err)

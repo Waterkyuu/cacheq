@@ -8,20 +8,20 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // TestSubscriptionCommands routes notifications independently and releases every wait on closure.
 func TestSubscriptionCommands(t *testing.T) {
-	client := cacheq.NewClient(cacheq.Options{})
+	client := soroi.NewClient(soroi.Options{})
 	t.Cleanup(client.Close)
 	initial := model{client: client}
 	for view := range initial.queries {
-		initial.queries[view] = cacheq.Query(
+		initial.queries[view] = soroi.Query(
 			client,
 			"tasks",
 			func(context.Context) ([]task, error) { return nil, nil },
-			cacheq.QueryOptions{Disable: true},
+			soroi.QueryOptions{Disable: true},
 		)
 	}
 	t.Cleanup(initial.closeQueries)
@@ -36,7 +36,7 @@ func TestSubscriptionCommands(t *testing.T) {
 		}
 	}
 	data := []task{{id: 1, title: "installed"}}
-	if err := cacheq.Set(client, "tasks", data); err != nil {
+	if err := soroi.Set(client, "tasks", data); err != nil {
 		t.Fatal(err)
 	}
 	for view, command := range next {
@@ -67,25 +67,25 @@ func TestSubscriptionCommands(t *testing.T) {
 
 // TestViewKeepsData shows the same retained task and load phase in all three consumers.
 func TestViewKeepsData(t *testing.T) {
-	client := cacheq.NewClient(cacheq.Options{})
+	client := soroi.NewClient(soroi.Options{})
 	t.Cleanup(client.Close)
 	previous := []task{{id: 1, title: "previous", done: true}}
 	for _, tc := range []struct {
 		// name identifies the user-visible query phase.
 		name string
 		// state supplies retained data and request activity to each view.
-		state cacheq.Snapshot[[]task]
+		state soroi.Snapshot[[]task]
 		// want lists text required to explain the current phase.
 		want []string
 	}{
 		{name: "idle", want: []string{"No data yet", "[Idle]"}},
-		{name: "initial load", state: cacheq.Snapshot[[]task]{Fetching: true},
+		{name: "initial load", state: soroi.Snapshot[[]task]{Fetching: true},
 			want: []string{"No data yet", "[Loading]"}},
-		{name: "ready", state: cacheq.Snapshot[[]task]{HasData: true, Data: previous},
+		{name: "ready", state: soroi.Snapshot[[]task]{HasData: true, Data: previous},
 			want: []string{"[x] previous", "Completed: true", "1 / 1 completed", "[Ready]"}},
-		{name: "refresh", state: cacheq.Snapshot[[]task]{HasData: true, Data: previous, Fetching: true},
+		{name: "refresh", state: soroi.Snapshot[[]task]{HasData: true, Data: previous, Fetching: true},
 			want: []string{"previous", "Refreshing (keeping previous data)"}},
-		{name: "failed refresh", state: cacheq.Snapshot[[]task]{HasData: true, Data: previous, Err: errors.New("offline")},
+		{name: "failed refresh", state: soroi.Snapshot[[]task]{HasData: true, Data: previous, Err: errors.New("offline")},
 			want: []string{"previous", "[Load failed]", "Error: offline"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,7 +110,7 @@ func TestViewKeepsData(t *testing.T) {
 
 // TestSelectionBounds keeps keyboard navigation within the stable task list.
 func TestSelectionBounds(t *testing.T) {
-	client := cacheq.NewClient(cacheq.Options{})
+	client := soroi.NewClient(soroi.Options{})
 	t.Cleanup(client.Close)
 	m := model{client: client}
 	m.states[listView].Data = []task{{id: 1}, {id: 2}}

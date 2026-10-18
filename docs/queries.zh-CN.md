@@ -6,7 +6,7 @@
 
 ## 快速开始：多种结果类型
 
-在导入 cacheq 的 Go 模块中，将以下完整程序保存为 `main.go`，运行 `go run .`。加载函数用固定数据展示类型关系；实际 HTTP 请求写法在后面。
+在导入 soroi 的 Go 模块中，将以下完整程序保存为 `main.go`，运行 `go run .`。加载函数用固定数据展示类型关系；实际 HTTP 请求写法在后面。
 
 ```go
 package main
@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // User is a detail result and an element of a list result.
@@ -33,7 +33,7 @@ type Settings struct {
 
 // main shares one application-owned client across differently typed queries.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{
+	client := soroi.NewClient(soroi.Options{
 		StaleTime: time.Minute,
 		GCTime:    5 * time.Minute,
 	})
@@ -48,15 +48,15 @@ func main() {
 	getSettings := func(context.Context) (Settings, error) {
 		return Settings{Theme: "dark"}, nil
 	}
-	detail := cacheq.Query(client, "user:42", getUser)
-	users := cacheq.Query(client, "users", getUsers)
-	settings := cacheq.Query(client, "settings", getSettings)
+	detail := soroi.Query(client, "user:42", getUser)
+	users := soroi.Query(client, "users", getUsers)
+	settings := soroi.Query(client, "settings", getSettings)
 	defer detail.Close()
 	defer users.Close()
 	defer settings.Close()
 
 	// Fetch reuses fresh data or joins the active load started by Query.
-	user, err := cacheq.Fetch(
+	user, err := soroi.Fetch(
 		context.Background(),
 		client,
 		"user:42",
@@ -88,7 +88,7 @@ Alice
 ## `Query`：读取状态与后台加载
 
 ```go
-users := cacheq.Query(client, "users", getUsers)
+users := soroi.Query(client, "users", getUsers)
 defer users.Close()
 state := users.Snapshot()
 
@@ -118,11 +118,11 @@ for state := range users.Updates() {
 ## `SetEnabled`：自动加载控制
 
 ```go
-users := cacheq.Query(
+users := soroi.Query(
 	client,
 	"users",
 	getUsers,
-	cacheq.QueryOptions{
+	soroi.QueryOptions{
 		Disable: true,
 	},
 )
@@ -153,7 +153,7 @@ _ = updatedUsers
 ## `Fetch`：等待新鲜数据
 
 ```go
-users, err := cacheq.Fetch(
+users, err := soroi.Fetch(
 	ctx,
 	client,
 	"users",

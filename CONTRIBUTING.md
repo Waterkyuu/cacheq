@@ -1,4 +1,4 @@
-# Contributing to cacheq
+# Contributing to soroi
 
 Bug reports, tests, documentation, examples, and focused code improvements are
 welcome. Issues and pull request descriptions may be written in English or Chinese.

@@ -1,7 +1,7 @@
 # MCP resource caching example
 
 Run a local MCP server and three clients with the official Go SDK v1.8.0.
-Requires Go 1.25+. This independent module uses the repository's cacheq through
+Requires Go 1.25+. This independent module uses the repository's soroi through
 `replace`, keeping MCP dependencies out of the core library.
 
 ```sh
@@ -36,9 +36,9 @@ server cache, and notifies Alice's subscribed client to read again.
 - [main.go](main.go) owns the endpoint, clients, and shared cache.
 
 The endpoint uses the 2026-07-28 stateless Streamable HTTP protocol. The SDK
-already caches resource responses on each client; cacheq handles server-side
+already caches resource responses on each client; soroi handles server-side
 reuse across connections, concurrent request merging, capacity, age limits,
-and statistics. SDK-local hits do not increment server cacheq counters.
+and statistics. SDK-local hits do not increment server soroi counters.
 
 Responses advertise `cacheScope: "private"`. Separate SDK servers per accepted
 credential isolate notification subscriptions as well as resource values.

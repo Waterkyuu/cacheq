@@ -8,7 +8,7 @@
 
 ## 快速开始
 
-以下示例将缓存列表中用户 42 的姓名改为 Bob，并保留之前读取的列表。将代码保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
+以下示例将缓存列表中用户 42 的姓名改为 Bob，并保留之前读取的列表。将代码保存为已导入 soroi 的 Go 模块中的 `main.go`，运行 `go run .`。
 
 ```go
 package main
@@ -18,7 +18,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // User contains the fields displayed in a user list.
@@ -31,14 +31,14 @@ type User struct {
 
 // main updates one cached list item while preserving previously read data.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
-	if err := cacheq.Set(client, "users", []User{{ID: 42, Name: "Alice"}}); err != nil {
+	if err := soroi.Set(client, "users", []User{{ID: 42, Name: "Alice"}}); err != nil {
 		panic(err)
 	}
-	before := cacheq.Get[[]User](client, "users")
+	before := soroi.Get[[]User](client, "users")
 
-	err := cacheq.Update(client, "users", func(users []User) ([]User, error) {
+	err := soroi.Update(client, "users", func(users []User) ([]User, error) {
 		next := slices.Clone(users)
 		for i := range next {
 			if next[i].ID == 42 {
@@ -50,7 +50,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	after := cacheq.Get[[]User](client, "users")
+	after := soroi.Get[[]User](client, "users")
 	fmt.Println("before:", before.Data[0].Name)
 	fmt.Println("after:", after.Data[0].Name)
 }
@@ -98,7 +98,7 @@ after: Bob
 以下片段使用快速开始中的 `client` 和 `User`，放在返回 `error` 的函数中，并导入 `errors` 和 `slices`。它将列表同步作为可选操作：缓存不存在时跳过，发生冲突时使列表失效，让后续查询读取后端数据。
 
 ```go
-err := cacheq.Update(client, "users", func(users []User) ([]User, error) {
+err := soroi.Update(client, "users", func(users []User) ([]User, error) {
 	next := slices.Clone(users)
 	for i := range next {
 		if next[i].ID == 42 {
@@ -108,9 +108,9 @@ err := cacheq.Update(client, "users", func(users []User) ([]User, error) {
 	return next, nil
 })
 switch {
-case errors.Is(err, cacheq.ErrNoData):
+case errors.Is(err, soroi.ErrNoData):
 	return nil
-case errors.Is(err, cacheq.ErrUpdateConflict):
+case errors.Is(err, soroi.ErrUpdateConflict):
 	return client.Invalidate("users")
 default:
 	return err

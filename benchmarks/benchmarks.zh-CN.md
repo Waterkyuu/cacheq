@@ -1,8 +1,10 @@
 # 缓存收益 benchmark
 
+原始测量记录保留历史包名 `cacheq`；项目现已改名为 `soroi`。
+
 [English](benchmarks.en-US.md)
 
-主对照回答一个实际问题：应用重复读取同一份数据时，cacheq 能节省多少时间和实际加载？
+主对照回答一个实际问题：应用重复读取同一份数据时，soroi 能节省多少时间和实际加载？
 
 ## 主表：串行读取同一份数据 100 次
 
@@ -55,7 +57,7 @@ go test -race -run '^$' -bench '^BenchmarkCacheBenefit$' -benchtime=1x
 
 ### 如何理解结果
 
-在本表相同并发条件下比较不同缓存场景，衡量 cacheq 带来的收益和额外成本。同 key 首次加载只执行一次 loader，重叠的请求加入进行中的加载，后续读取复用缓存结果。样本中每批约有 3 个请求合并，因此这一行同时包含请求合并和后续缓存命中的收益。
+在本表相同并发条件下比较不同缓存场景，衡量 soroi 带来的收益和额外成本。同 key 首次加载只执行一次 loader，重叠的请求加入进行中的加载，后续读取复用缓存结果。样本中每批约有 3 个请求合并，因此这一行同时包含请求合并和后续缓存命中的收益。
 
 100 个不同 key 首次加载仍需要 100 次 loader。这一行没有省掉后端加载，用于衡量缓存查询、写入和同步增加的成本。同 key 和不同 key 的预热缓存都无需再次加载，其耗时衡量直接返回缓存结果的成本。
 
@@ -75,7 +77,7 @@ go test -run '^$' -bench '^BenchmarkConcurrentFetch$' -benchmem -benchtime=200ms
 | --- | --- |
 | `ns/op` | 一整批 100 次读取的总耗时，除以 1,000 得到微秒 |
 | `requests/batch` | 每批读取次数，固定为 100 |
-| `goroutines/batch` | 每批请求 goroutine 数，固定为 4，不含 cacheq 内部 goroutine |
+| `goroutines/batch` | 每批请求 goroutine 数，固定为 4，不含 soroi 内部 goroutine |
 | `loads/batch` | 测量阶段每批实际执行的 loader 次数 |
 | `merged/batch` | 每批加入进行中加载的平均请求数量 |
 | `B/op`、`allocs/op` | 整批内存分配，包含创建调用者 goroutine 的成本 |

@@ -1,8 +1,10 @@
 # Cache benefit benchmarks
 
+Raw measurement files retain the historical `cacheq` package name; the project is now named `soroi`.
+
 [简体中文](benchmarks.zh-CN.md)
 
-The main comparison answers a practical question: how much work does cacheq save
+The main comparison answers a practical question: how much work does soroi save
 when an application reads the same data repeatedly?
 
 ## Main comparison: 100 sequential reads of the same data
@@ -84,7 +86,7 @@ synchronization, and result checks.
 
 ### Interpreting the results
 
-Compare cache scenarios within this table to measure cacheq's benefit and
+Compare cache scenarios within this table to measure soroi's benefit and
 additional cost under identical concurrency conditions. Same-key first loads
 execute the loader once; overlapping requests join that load, and subsequent
 reads reuse its result. These samples report about three merged requests per
@@ -118,7 +120,7 @@ four callers (`Workers=4`) with GOMAXPROCS=4 (the `-4` suffix).
 | --- | --- |
 | `ns/op` | Total time for a complete batch of 100 reads; divide by 1,000 for microseconds |
 | `requests/batch` | Reads per batch, fixed at 100 |
-| `goroutines/batch` | Request goroutines per batch, fixed at 4; excludes cacheq's internal goroutines |
+| `goroutines/batch` | Request goroutines per batch, fixed at 4; excludes soroi's internal goroutines |
 | `loads/batch` | Actual loader calls in the measured batch |
 | `merged/batch` | Average requests that joined a load while it was active |
 | `B/op`, `allocs/op` | Allocations for the entire batch, including caller goroutine setup |

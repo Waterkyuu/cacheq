@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
-	redistore "github.com/Waterkyuu/cacheq/store/redis"
+	"github.com/Waterkyuu/soroi"
+	redistore "github.com/Waterkyuu/soroi/store/redis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -43,11 +43,11 @@ func run() error {
 	if err := remote.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("connect to example Redis: %w", err)
 	}
-	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-demo"})
+	store, err := redistore.New(remote, redistore.Options{Prefix: "soroi-demo"})
 	if err != nil {
 		return err
 	}
-	shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+	shared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 		Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
 		Timeout: 200 * time.Millisecond,
 	})
@@ -61,7 +61,7 @@ func run() error {
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
-	definition, err := cacheq.QueryDefinition("user:7", func(context.Context) (User, error) {
+	definition, err := soroi.QueryDefinition("user:7", func(context.Context) (User, error) {
 		calls.Add(1)
 		return source.Load().(User), nil
 	})
@@ -69,8 +69,8 @@ func run() error {
 		return err
 	}
 	definition.Shared = shared
-	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	a := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+	b := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer a.Close()
 	defer b.Close()
 	if err := printRead(ctx, "A first", a, definition, &calls); err != nil {
@@ -84,7 +84,7 @@ func run() error {
 	}
 	// A business write must succeed before invalidating its cached results.
 	source.Store(User{Name: "Bob"})
-	if err := definition.InvalidateShared(ctx, a, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone}); err != nil {
+	if err := definition.InvalidateShared(ctx, a, soroi.InvalidateOptions{Refetch: soroi.RefetchNone}); err != nil {
 		return err
 	}
 	if err := printRead(ctx, "A refreshed", a, definition, &calls); err != nil {
@@ -93,7 +93,7 @@ func run() error {
 	if err := printRead(ctx, "B local", b, definition, &calls); err != nil {
 		return err
 	}
-	if err := b.Invalidate(definition.Key, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone}); err != nil {
+	if err := b.Invalidate(definition.Key, soroi.InvalidateOptions{Refetch: soroi.RefetchNone}); err != nil {
 		return err
 	}
 	if err := printRead(ctx, "B refreshed", b, definition, &calls); err != nil {
@@ -105,7 +105,7 @@ func run() error {
 	if err := remote.Close(); err != nil {
 		return err
 	}
-	c := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	c := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer c.Close()
 	if err := printRead(ctx, "C fallback", c, definition, &calls); err != nil {
 		return err
@@ -118,8 +118,8 @@ func run() error {
 func printRead(
 	ctx context.Context,
 	label string,
-	client *cacheq.Client,
-	definition cacheq.Definition[User],
+	client *soroi.Client,
+	definition soroi.Definition[User],
 	calls *atomic.Int64,
 ) error {
 	value, err := definition.Fetch(ctx, client)

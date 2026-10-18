@@ -8,7 +8,7 @@ It changes only the current Client's cache and sends no backend request. Use [Mu
 
 ## Quick start
 
-This example changes user 42's cached name to Bob while preserving the previously read list. Save it as `main.go` in a module importing cacheq, then run `go run .`.
+This example changes user 42's cached name to Bob while preserving the previously read list. Save it as `main.go` in a module importing soroi, then run `go run .`.
 
 ```go
 package main
@@ -18,7 +18,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // User contains the fields displayed in a user list.
@@ -31,14 +31,14 @@ type User struct {
 
 // main updates one cached list item while preserving previously read data.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
-	if err := cacheq.Set(client, "users", []User{{ID: 42, Name: "Alice"}}); err != nil {
+	if err := soroi.Set(client, "users", []User{{ID: 42, Name: "Alice"}}); err != nil {
 		panic(err)
 	}
-	before := cacheq.Get[[]User](client, "users")
+	before := soroi.Get[[]User](client, "users")
 
-	err := cacheq.Update(client, "users", func(users []User) ([]User, error) {
+	err := soroi.Update(client, "users", func(users []User) ([]User, error) {
 		next := slices.Clone(users)
 		for i := range next {
 			if next[i].ID == 42 {
@@ -50,7 +50,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	after := cacheq.Get[[]User](client, "users")
+	after := soroi.Get[[]User](client, "users")
 	fmt.Println("before:", before.Data[0].Name)
 	fmt.Println("after:", after.Data[0].Name)
 }
@@ -98,7 +98,7 @@ Keep callbacks focused on computing a new value. Conflict detection can prevent 
 This snippet uses `client` and `User` from the quick start inside a function returning `error`. Import `errors` and `slices`. It treats list synchronization as optional: skip missing cached data, and invalidate a conflicting list so a later query can fetch backend data.
 
 ```go
-err := cacheq.Update(client, "users", func(users []User) ([]User, error) {
+err := soroi.Update(client, "users", func(users []User) ([]User, error) {
 	next := slices.Clone(users)
 	for i := range next {
 		if next[i].ID == 42 {
@@ -108,9 +108,9 @@ err := cacheq.Update(client, "users", func(users []User) ([]User, error) {
 	return next, nil
 })
 switch {
-case errors.Is(err, cacheq.ErrNoData):
+case errors.Is(err, soroi.ErrNoData):
 	return nil
-case errors.Is(err, cacheq.ErrUpdateConflict):
+case errors.Is(err, soroi.ErrUpdateConflict):
 	return client.Invalidate("users")
 default:
 	return err

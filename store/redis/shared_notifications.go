@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -35,7 +35,7 @@ type redisInvalidationSubscription struct {
 	// pubsub is dedicated to this subscription; the application-owned command client remains open.
 	pubsub *redis.PubSub
 	// events buffers a bounded number of notifications without silently dropping new messages.
-	events chan cacheq.SharedInvalidation
+	events chan soroi.SharedInvalidation
 	// cancel ends the reader's lifetime and its blocking channel sends.
 	cancel context.CancelFunc
 	// done closes after the reader and Pub/Sub connection have been released.
@@ -45,7 +45,7 @@ type redisInvalidationSubscription struct {
 }
 
 // marshalInvalidation encodes a committed operation without losing binary key or label identities.
-func marshalInvalidation(event cacheq.SharedInvalidation) ([]byte, error) {
+func marshalInvalidation(event soroi.SharedInvalidation) ([]byte, error) {
 	labels := make([][]byte, 0, len(event.Tags))
 	for _, tag := range event.Tags {
 		labels = append(labels, []byte(tag))
@@ -60,16 +60,16 @@ func marshalInvalidation(event cacheq.SharedInvalidation) ([]byte, error) {
 }
 
 // SubscribeInvalidations confirms subscription admission before returning a cancellation-bound reader.
-func (s *Store) SubscribeInvalidations(ctx context.Context) (cacheq.SharedInvalidationSubscription, error) {
+func (s *Store) SubscribeInvalidations(ctx context.Context) (soroi.SharedInvalidationSubscription, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if !s.enableNotifications {
-		return nil, cacheq.ErrSharedCapability
+		return nil, soroi.ErrSharedCapability
 	}
 	client, ok := s.client.(redisSubscriber)
 	if !ok {
-		return nil, cacheq.ErrSharedCapability
+		return nil, soroi.ErrSharedCapability
 	}
 	lifetime, cancel := context.WithCancel(ctx)
 	pubsub := client.Subscribe(lifetime, s.channel())
@@ -90,7 +90,7 @@ func (s *Store) SubscribeInvalidations(ctx context.Context) (cacheq.SharedInvali
 	}
 	stream := &redisInvalidationSubscription{
 		pubsub: pubsub,
-		events: make(chan cacheq.SharedInvalidation, 32),
+		events: make(chan soroi.SharedInvalidation, 32),
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
@@ -99,7 +99,7 @@ func (s *Store) SubscribeInvalidations(ctx context.Context) (cacheq.SharedInvali
 }
 
 // Events exposes the ordered event stream, including resets after transport or decoding gaps.
-func (s *redisInvalidationSubscription) Events() <-chan cacheq.SharedInvalidation { return s.events }
+func (s *redisInvalidationSubscription) Events() <-chan soroi.SharedInvalidation { return s.events }
 
 // Close cancels pending reads and waits for dedicated connection release; it never closes the command client.
 func (s *redisInvalidationSubscription) Close() error {
@@ -122,7 +122,7 @@ func (s *redisInvalidationSubscription) run(ctx context.Context, stop func() boo
 			return
 		}
 		if err != nil {
-			if !disconnected && !s.send(ctx, cacheq.SharedInvalidation{Reset: true, Err: err}) {
+			if !disconnected && !s.send(ctx, soroi.SharedInvalidation{Reset: true, Err: err}) {
 				return
 			}
 			disconnected = true
@@ -138,7 +138,7 @@ func (s *redisInvalidationSubscription) run(ctx context.Context, stop func() boo
 		switch message := message.(type) {
 		case *redis.Subscription:
 			disconnected = false
-			if !s.send(ctx, cacheq.SharedInvalidation{Reset: true}) {
+			if !s.send(ctx, soroi.SharedInvalidation{Reset: true}) {
 				return
 			}
 		case *redis.Message:
@@ -148,7 +148,7 @@ func (s *redisInvalidationSubscription) run(ctx context.Context, stop func() boo
 			validIdentity := wire.ID != "" && keyEvent != tagEvent
 			validRegistration := len(wire.RegisteredTags) == 0 || keyEvent
 			valid := err == nil && validIdentity && validRegistration
-			event := cacheq.SharedInvalidation{ID: wire.ID, Key: string(wire.Key), Tags: []string{}}
+			event := soroi.SharedInvalidation{ID: wire.ID, Key: string(wire.Key), Tags: []string{}}
 			for _, tag := range wire.Tags {
 				event.Tags = append(event.Tags, string(tag))
 			}
@@ -156,7 +156,7 @@ func (s *redisInvalidationSubscription) run(ctx context.Context, stop func() boo
 				event.RegisteredTags = append(event.RegisteredTags, string(tag))
 			}
 			if !valid {
-				event = cacheq.SharedInvalidation{Reset: true, Err: errors.New("invalid redis invalidation payload")}
+				event = soroi.SharedInvalidation{Reset: true, Err: errors.New("invalid redis invalidation payload")}
 			}
 			if !s.send(ctx, event) {
 				return
@@ -166,7 +166,7 @@ func (s *redisInvalidationSubscription) run(ctx context.Context, stop func() boo
 }
 
 // send applies backpressure instead of dropping invalidations, and cancellation always releases the producer.
-func (s *redisInvalidationSubscription) send(ctx context.Context, event cacheq.SharedInvalidation) bool {
+func (s *redisInvalidationSubscription) send(ctx context.Context, event soroi.SharedInvalidation) bool {
 	select {
 	case s.events <- event:
 		return true

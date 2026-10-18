@@ -9,7 +9,7 @@ keys, remaining TTL, mutation invalidation, and resource notifications.
 ## Requirements
 
 The independent example module pins the official MCP Go SDK to v1.8.0 and requires
-Go 1.25 or later. The core cacheq library supports Go 1.22 and has no external
+Go 1.25 or later. The core soroi library supports Go 1.22 and has no external
 dependencies. No external service or real credentials are needed.
 
 ## Run the example
@@ -40,7 +40,7 @@ backend reads=3 cache hits=1 cache misses=3 loads=3
 
 ## Server integration
 
-The SDK version used by this example supports client-side TTL caching. The example places cacheq in
+The SDK version used by this example supports client-side TTL caching. The example places soroi in
 the server's resource handler, where it shares backend results across connections
 and merges concurrent reads. A local SDK hit does not reach the server and does
 not increment server-side statistics.

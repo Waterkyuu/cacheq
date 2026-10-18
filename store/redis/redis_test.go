@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -21,7 +21,7 @@ func newTestRedis(t *testing.T) *redis.Client {
 	t.Helper()
 	binary, err := exec.LookPath("redis-server")
 	if err != nil {
-		if os.Getenv("CACHEQ_REQUIRE_REDIS") == "1" {
+		if os.Getenv("SOROI_REQUIRE_REDIS") == "1" || os.Getenv("CACHEQ_REQUIRE_REDIS") == "1" {
 			t.Fatal("redis-server is required")
 		}
 		t.Skip("redis-server is required for adapter integration tests")
@@ -70,7 +70,7 @@ func TestRedisVersionContract(t *testing.T) {
 	if err != nil || first.Version == "" || len(first.Data) != 0 {
 		t.Fatalf("miss = %+v, %v", first, err)
 	}
-	written, err := store.Write(ctx, "tenant:42:user:7", cacheq.SharedWrite{
+	written, err := store.Write(ctx, "tenant:42:user:7", soroi.SharedWrite{
 		Version: first.Version, Data: []byte("old"), TTL: time.Minute,
 	})
 	if err != nil || !written {
@@ -83,7 +83,7 @@ func TestRedisVersionContract(t *testing.T) {
 	if err := store.Invalidate(ctx, "tenant:42:user:7"); err != nil {
 		t.Fatal(err)
 	}
-	written, err = store.Write(ctx, "tenant:42:user:7", cacheq.SharedWrite{
+	written, err = store.Write(ctx, "tenant:42:user:7", soroi.SharedWrite{
 		Version: first.Version, Data: []byte("resurrected"), TTL: time.Minute,
 	})
 	if err != nil || written {
@@ -103,7 +103,7 @@ func TestRedisVersionContract(t *testing.T) {
 	if ttl := client.PTTL(ctx, keys[0]).Val(); ttl != -1 {
 		t.Fatalf("version lifetime = %v", ttl)
 	}
-	if ok, err := store.Write(ctx, "tenant:42:user:7", cacheq.SharedWrite{
+	if ok, err := store.Write(ctx, "tenant:42:user:7", soroi.SharedWrite{
 		Version: miss.Version, Data: []byte("new"), TTL: time.Minute,
 	}); err != nil || !ok {
 		t.Fatalf("new write = %v, %v", ok, err)
@@ -139,7 +139,7 @@ func TestRedisMetadataLoss(t *testing.T) {
 	if _, err := store.Write(
 		ctx,
 		"key",
-		cacheq.SharedWrite{Version: old.Version, Data: []byte("old"), TTL: time.Hour},
+		soroi.SharedWrite{Version: old.Version, Data: []byte("old"), TTL: time.Hour},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestRedisMetadataLoss(t *testing.T) {
 	if ok, err := store.Write(
 		ctx,
 		"key",
-		cacheq.SharedWrite{Version: old.Version, Data: []byte("late"), TTL: time.Hour},
+		soroi.SharedWrite{Version: old.Version, Data: []byte("late"), TTL: time.Hour},
 	); err != nil ||
 		ok {
 		t.Fatalf("missing version write = %v, %v", ok, err)
@@ -167,15 +167,15 @@ func TestRedisQueryIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	shared, err := cacheq.NewSharedCache[int](
+	shared, err := soroi.NewSharedCache[int](
 		store,
-		cacheq.SharedCacheOptions[int]{Key: "answer", Format: "int.v1", TTL: time.Minute},
+		soroi.SharedCacheOptions[int]{Key: "answer", Format: "int.v1", TTL: time.Minute},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	started, release := make(chan struct{}), make(chan struct{})
-	d, err := cacheq.QueryDefinition("answer", func(context.Context) (int, error) {
+	d, err := soroi.QueryDefinition("answer", func(context.Context) (int, error) {
 		close(started)
 		<-release
 		return 1, nil
@@ -184,8 +184,8 @@ func TestRedisQueryIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Shared = shared
-	c1 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	c2 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	c1 := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+	c2 := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	t.Cleanup(c1.Close)
 	t.Cleanup(c2.Close)
 	done := make(chan error, 1)
@@ -205,7 +205,7 @@ func TestRedisQueryIntegration(t *testing.T) {
 	if value, err := d.Fetch(context.Background(), c2); err != nil || value != 2 {
 		t.Fatalf("replacement = %d, %v", value, err)
 	}
-	c3 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	c3 := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	t.Cleanup(c3.Close)
 	d.Fetcher = func(context.Context) (int, error) { t.Fatal("shared hit reached source"); return 0, nil }
 	if value, err := d.Fetch(context.Background(), c3); err != nil || value != 2 {
@@ -232,7 +232,7 @@ func TestRedisValidationAndCancellation(t *testing.T) {
 	if _, err := store.Write(
 		context.Background(),
 		"key",
-		cacheq.SharedWrite{Version: "v", Data: []byte("x")},
+		soroi.SharedWrite{Version: "v", Data: []byte("x")},
 	); !errors.Is(
 		err,
 		ErrInvalidOptions,
@@ -246,6 +246,44 @@ func TestRedisValidationAndCancellation(t *testing.T) {
 	}
 	if err := store.Invalidate(ctx, "key"); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
+	}
+}
+
+// TestRedisDefaultPrefixMigration verifies the renamed default and explicit access to legacy records.
+func TestRedisDefaultPrefixMigration(t *testing.T) {
+	client := newTestRedis(t)
+	ctx := context.Background()
+	for _, prefix := range []string{"soroi", "cacheq"} {
+		store, err := New(client, Options{Prefix: prefix})
+		if err != nil {
+			t.Fatal(err)
+		}
+		record, err := store.Read(ctx, "user:7")
+		if err != nil {
+			t.Fatal(err)
+		}
+		written, err := store.Write(ctx, "user:7", soroi.SharedWrite{
+			Version: record.Version, Data: []byte(prefix), TTL: time.Minute,
+		})
+		if err != nil || !written {
+			t.Fatalf("write %s = %v, %v", prefix, written, err)
+		}
+	}
+	store, err := New(client, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Read(ctx, "user:7")
+	if err != nil || string(record.Data) != "soroi" {
+		t.Fatalf("default namespace = %q, %v", record.Data, err)
+	}
+	legacy, err := New(client, Options{Prefix: "cacheq"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = legacy.Read(ctx, "user:7")
+	if err != nil || string(record.Data) != "cacheq" {
+		t.Fatalf("legacy namespace = %q, %v", record.Data, err)
 	}
 }
 

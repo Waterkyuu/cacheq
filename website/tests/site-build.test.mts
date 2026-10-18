@@ -30,13 +30,10 @@ async function assertDestination(destination: string, currentFile: string) {
 		return;
 	const url = new URL(
 		destination,
-		"https://waterkyuu.github.io/cacheq/" + path.relative(build, currentFile),
+		"https://waterkyuu.github.io/soroi/" + path.relative(build, currentFile),
 	);
-	assert.ok(
-		url.pathname.startsWith("/cacheq/"),
-		`Link escaped the repository base: ${destination}`,
-	);
-	let relative = decodeURIComponent(url.pathname.slice("/cacheq/".length));
+	assert.ok(url.pathname.startsWith("/soroi/"), `Link escaped the repository base: ${destination}`);
+	let relative = decodeURIComponent(url.pathname.slice("/soroi/".length));
 	if (relative.endsWith("/") || !relative) relative += "index.html";
 	const content = await readFile(path.join(build, relative), "utf8");
 	if (url.hash) {
@@ -96,10 +93,7 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 		]) {
 			const html = await readFile(path.join(build, prefix, route, "index.html"), "utf8");
 			const title = html.match(/<title>([^<]+)<\/title>/)?.[1];
-			assert.ok(
-				title && title !== "cacheq | cacheq",
-				`Missing descriptive title: ${prefix}${route}`,
-			);
+			assert.ok(title && title !== "soroi | soroi", `Missing descriptive title: ${prefix}${route}`);
 			const metadata = [...html.matchAll(/<meta\b[^>]*>/g)].map((match) => match[0]);
 			const descriptionTags = metadata.filter((tag) => tag.includes('name="description"'));
 			assert.equal(descriptionTags.length, 1);
@@ -107,12 +101,12 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 			assert.ok(description, `Missing description: ${prefix}${route}`);
 			assert.ok(!descriptions.has(description), `Repeated description: ${prefix}${route}`);
 			descriptions.add(description);
-			assert.match(description, /cacheq/);
+			assert.match(description, /soroi/);
 			assert.equal(/[\u4e00-\u9fff]/u.test(description), locale === "zh-CN");
 			for (const attribute of ['property="og:image"', 'name="twitter:image"']) {
 				const images = metadata.filter((tag) => tag.includes(attribute));
 				assert.equal(images.length, 1);
-				assert.ok(images[0].includes('content="https://waterkyuu.github.io/cacheq/cacheq.png"'));
+				assert.ok(images[0].includes('content="https://waterkyuu.github.io/soroi/soroi.png"'));
 			}
 			const cards = metadata.filter((tag) => tag.includes('name="twitter:card"'));
 			assert.equal(cards.length, 1);
@@ -126,22 +120,22 @@ test("content pages publish distinct localized metadata and a usable sharing ima
 		}
 	}
 	assert.equal(descriptions.size, 38);
-	assert.ok((await readFile(path.join(build, "cacheq.png"))).length > 0);
+	assert.ok((await readFile(path.join(build, "soroi.png"))).length > 0);
 });
 
 test("Go search results resolve to published sections and public source declarations", async () => {
 	const index: SearchRecord[] = JSON.parse(
 		await readFile(path.join(build, "search-index.json"), "utf8"),
 	);
-	const documents = index.filter((record) => record.url.startsWith("/cacheq/"));
+	const documents = index.filter((record) => record.url.startsWith("/soroi/"));
 	assert.ok(
-		documents.some((record) => record.language === "en" && record.url.startsWith("/cacheq/docs/")),
+		documents.some((record) => record.language === "en" && record.url.startsWith("/soroi/docs/")),
 	);
 	assert.ok(
 		documents.some(
 			(record) =>
 				record.language === "zh-CN" &&
-				record.url.startsWith("/cacheq/zh-CN/docs/") &&
+				record.url.startsWith("/soroi/zh-CN/docs/") &&
 				record.url.includes("#"),
 		),
 	);
@@ -200,13 +194,13 @@ test("Go search results resolve to published sections and public source declarat
 				documents.some(
 					(record) =>
 						record.language === locale &&
-						record.url.startsWith(`/cacheq/${prefix}docs/${slug}/`) &&
+						record.url.startsWith(`/soroi/${prefix}docs/${slug}/`) &&
 						record.content.includes(declaration),
 				),
 				`Missing ${locale} ${slug} search coverage`,
 			);
 		}
-		const route = `/cacheq/${prefix}docs/events/`;
+		const route = `/soroi/${prefix}docs/events/`;
 		assert.ok(
 			documents.some(
 				(record) =>
@@ -220,7 +214,7 @@ test("Go search results resolve to published sections and public source declarat
 			documents.some(
 				(record) =>
 					record.language === locale &&
-					record.url.startsWith(`/cacheq/${prefix}docs/batching/`) &&
+					record.url.startsWith(`/soroi/${prefix}docs/batching/`) &&
 					record.content.includes("NewBatcher"),
 			),
 			`Batch loading is missing from ${locale} search results`,
@@ -229,7 +223,7 @@ test("Go search results resolve to published sections and public source declarat
 			documents.some(
 				(record) =>
 					record.language === locale &&
-					record.url.startsWith(`/cacheq/${prefix}docs/bubbletea/`) &&
+					record.url.startsWith(`/soroi/${prefix}docs/bubbletea/`) &&
 					record.content.includes("Bubble Tea"),
 			),
 			`Bubble Tea is missing from ${locale} search results`,
@@ -266,7 +260,7 @@ test("feature guides are discoverable in the sidebar and render the maintained A
 			["batching", ["NewBatcher", "LoadMany", "MaxBatchSize", "ErrBatchResultMissing"]],
 			["bubbletea", ["Bubble Tea", "examples/bubbletea", "QueryHandle"]],
 		] as const) {
-			const route = `/cacheq/${prefix}docs/${slug}/`;
+			const route = `/soroi/${prefix}docs/${slug}/`;
 			assert.ok(queries.includes(`href="${route}"`), `Missing ${locale} ${slug} sidebar link`);
 			const guide = await readFile(path.join(build, prefix, `docs/${slug}/index.html`), "utf8");
 			for (const declaration of declarations) assert.ok(guide.includes(declaration));
@@ -274,7 +268,7 @@ test("feature guides are discoverable in the sidebar and render the maintained A
 			if (slug === "bubbletea") {
 				assert.match(
 					guide,
-					/href="https:\/\/github.com\/Waterkyuu\/cacheq\/tree\/[^" ]+\/examples\/bubbletea\/"/,
+					/href="https:\/\/github.com\/Waterkyuu\/soroi\/tree\/[^" ]+\/examples\/bubbletea\/"/,
 				);
 			}
 		}

@@ -6,7 +6,7 @@
 
 ## Quick start
 
-Save this complete program as `main.go` in a module importing cacheq and run `go run .`. Two reads of the same fresh key execute one load.
+Save this complete program as `main.go` in a module importing soroi and run `go run .`. Two reads of the same fresh key execute one load.
 
 ```go
 package main
@@ -16,18 +16,18 @@ import (
 	"fmt"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // main demonstrates one load followed by a fresh cache hit.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 	load := func(context.Context) (string, error) {
 		return "hello", nil
 	}
 	for i := 0; i < 2; i++ {
-		if _, err := cacheq.Fetch(
+		if _, err := soroi.Fetch(
 			context.Background(),
 			client,
 			"greeting",

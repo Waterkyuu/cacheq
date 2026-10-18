@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
+	"github.com/Waterkyuu/soroi"
 )
 
 // httpSharedStore represents one external cache shared by independently owned HTTP query clients.
@@ -16,11 +16,11 @@ type httpSharedStore struct {
 	// mu protects the encoded value and invalidation generation.
 	mu sync.Mutex
 	// record holds one test resource's shared state.
-	record cacheq.SharedRecord
+	record soroi.SharedRecord
 }
 
 // Read returns a copied encoded result so clients do not share mutable decoded values.
-func (s *httpSharedStore) Read(_ context.Context, _ string) (cacheq.SharedRecord, error) {
+func (s *httpSharedStore) Read(_ context.Context, _ string) (soroi.SharedRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.record.Version == "" {
@@ -32,7 +32,7 @@ func (s *httpSharedStore) Read(_ context.Context, _ string) (cacheq.SharedRecord
 }
 
 // Write checks the generation before replacing the resource.
-func (s *httpSharedStore) Write(_ context.Context, _ string, w cacheq.SharedWrite) (bool, error) {
+func (s *httpSharedStore) Write(_ context.Context, _ string, w soroi.SharedWrite) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if w.Version != s.record.Version {
@@ -46,20 +46,20 @@ func (s *httpSharedStore) Write(_ context.Context, _ string, w cacheq.SharedWrit
 func (s *httpSharedStore) Invalidate(_ context.Context, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.record = cacheq.SharedRecord{Version: s.record.Version + "/next"}
+	s.record = soroi.SharedRecord{Version: s.record.Version + "/next"}
 	return nil
 }
 
 // TestHTTPSharedCache exercises prefetch, subscription hydration, and refresh across two clients.
 func TestHTTPSharedCache(t *testing.T) {
 	api := newUserAPI(t)
-	shared, err := cacheq.NewSharedCache[user](&httpSharedStore{}, cacheq.SharedCacheOptions[user]{
+	shared, err := soroi.NewSharedCache[user](&httpSharedStore{}, soroi.SharedCacheOptions[user]{
 		Key: "tenant:42:user:42", Format: "user.json.v1", TTL: time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := cacheq.QueryDefinition(
+	d, err := soroi.QueryDefinition(
 		"user:42",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
 	)
@@ -67,8 +67,8 @@ func TestHTTPSharedCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Shared = shared
-	c1 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	c2 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	c1 := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+	c2 := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	t.Cleanup(c1.Close)
 	t.Cleanup(c2.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -93,7 +93,7 @@ func TestHTTPSharedCache(t *testing.T) {
 	if api.count("/users/42") != 2 {
 		t.Fatal("refetch reused shared cache")
 	}
-	if err := d.InvalidateShared(ctx, c1, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone}); err != nil {
+	if err := d.InvalidateShared(ctx, c1, soroi.InvalidateOptions{Refetch: soroi.RefetchNone}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.Fetch(ctx, c1); err != nil {
@@ -107,34 +107,34 @@ func TestHTTPSharedCache(t *testing.T) {
 // unavailableHTTPSharedStore injects a cache read failure independently of the HTTP source.
 type unavailableHTTPSharedStore struct {
 	// SharedStore supplies the unchanged write and invalidation behavior.
-	cacheq.SharedStore
+	soroi.SharedStore
 	// err is the original dependency error retained by shared diagnostics.
 	err error
 }
 
 // Read returns the injected failure so the query must use its HTTP source.
-func (s unavailableHTTPSharedStore) Read(context.Context, string) (cacheq.SharedRecord, error) {
-	return cacheq.SharedRecord{}, s.err
+func (s unavailableHTTPSharedStore) Read(context.Context, string) (soroi.SharedRecord, error) {
+	return soroi.SharedRecord{}, s.err
 }
 
 // TestHTTPSharedCacheDiagnostics preserves source success and failure independently of cache diagnostics.
 func TestHTTPSharedCacheDiagnostics(t *testing.T) {
 	api := newUserAPI(t)
 	cause := errors.New("cache connection unavailable")
-	shared, err := cacheq.NewSharedCache(unavailableHTTPSharedStore{
+	shared, err := soroi.NewSharedCache(unavailableHTTPSharedStore{
 		SharedStore: &httpSharedStore{}, err: cause,
-	}, cacheq.SharedCacheOptions[user]{
+	}, soroi.SharedCacheOptions[user]{
 		Key: "tenant:42:user:42", Format: "user.json.v1", TTL: time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := cacheq.QueryDefinition("user:42", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
+	d, err := soroi.QueryDefinition("user:42", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	d.Shared = shared
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	t.Cleanup(client.Close)
 	if value, err := d.Fetch(context.Background(), client); err != nil || value.Name != "Alice" {
 		t.Fatalf("HTTP fallback = %+v, %v", value, err)
@@ -155,7 +155,7 @@ func TestHTTPSharedCacheDiagnostics(t *testing.T) {
 		t.Fatal("local hit erased diagnostic history")
 	}
 	api.failNext(1)
-	peer := cacheq.NewClient(cacheq.Options{})
+	peer := soroi.NewClient(soroi.Options{})
 	t.Cleanup(peer.Close)
 	if _, err := d.Fetch(
 		context.Background(),

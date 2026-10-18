@@ -31,7 +31,7 @@ go mod download
 
 ## 使用方式
 
-以下片段扩展应用中返回 `error` 的 `run()` 函数，不是独立程序。复用[创建 Redis 存储](shared-cache.zh-CN.md#创建-redis-存储)中配置的 `remote`（`*redis.Client`）及服务生命周期 context `ctx`。应用拥有该连接并负责配置超时。所需导入为 `context`、`fmt`、`time`、`github.com/Waterkyuu/cacheq` 和 `redistore "github.com/Waterkyuu/cacheq/store/redis"`。下方完整程序包含全部初始化和导入。
+以下片段扩展应用中返回 `error` 的 `run()` 函数，不是独立程序。复用[创建 Redis 存储](shared-cache.zh-CN.md#创建-redis-存储)中配置的 `remote`（`*redis.Client`）及服务生命周期 context `ctx`。应用拥有该连接并负责配置超时。所需导入为 `context`、`fmt`、`time`、`github.com/Waterkyuu/soroi` 和 `redistore "github.com/Waterkyuu/soroi/store/redis"`。下方完整程序包含全部初始化和导入。
 
 已有查询返回以下资料类型，在包级别声明：
 
@@ -45,11 +45,11 @@ type User struct {
 
 ### 为存储启用通知
 
-使用以下配置替换应用原有的 `redistore.New` 调用。`EnableNotifications` 默认为 false；设为 true 后，存储发布失效并允许订阅。生产环境应保留应用已有的 Prefix；`cacheq-notification-usage` 是示例命名空间。需要传播通知的写入方均须启用发布。在[共享缓存命令](shared-cache.zh-CN.md#安装)之外，Redis ACL 还需要 `PUBLISH` 和 `SUBSCRIBE` 权限。
+使用以下配置替换应用原有的 `redistore.New` 调用。`EnableNotifications` 默认为 false；设为 true 后，存储发布失效并允许订阅。生产环境应保留应用已有的 Prefix；`soroi-notification-usage` 是示例命名空间。需要传播通知的写入方均须启用发布。在[共享缓存命令](shared-cache.zh-CN.md#安装)之外，Redis ACL 还需要 `PUBLISH` 和 `SUBSCRIBE` 权限。
 
 ```go
 store, err := redistore.New(remote, redistore.Options{
-	Prefix: "cacheq-notification-usage", EnableNotifications: true,
+	Prefix: "soroi-notification-usage", EnableNotifications: true,
 })
 if err != nil {
 	return err
@@ -60,12 +60,12 @@ if err != nil {
 
 ### 将已有查询绑定到通知存储
 
-复用应用按照[定义查询](shared-cache.zh-CN.md#定义使用共享缓存的查询)创建的 `definition`，其类型为 `cacheq.Definition[User]`。其中的 Fetcher 从应用数据源读取已提交的用户资料。`User` 是上方声明的资料结果类型。
+复用应用按照[定义查询](shared-cache.zh-CN.md#定义使用共享缓存的查询)创建的 `definition`，其类型为 `soroi.Definition[User]`。其中的 Fetcher 从应用数据源读取已提交的用户资料。`User` 是上方声明的资料结果类型。
 
 `NewSharedCache` 从 `SharedCacheOptions[User]` 推断结果类型 `User`。共享键包含租户、记录身份和模式版本；`Format` 指定 JSON 模式，`TTL` 将共享新鲜期限制为五分钟。更新配置时应保留应用原有的共享键、格式和 TTL。通过 Client 使用定义之前，将返回的共享缓存赋给该定义。
 
 ```go
-shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+shared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 	Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
 })
 if err != nil {
@@ -78,11 +78,11 @@ definition.Shared = shared
 
 ### 为 Client 与存储建立一个 watcher
 
-复用应用中长期存在的 `client`，类型为 `*cacheq.Client`（完整示例中的 `a`）。在启动时，为这个 Client 与存储组合调用一次 `WatchShared`。该调用执行订阅 I/O，等待订阅确认，并返回 `*SharedWatcher`；建立失败时返回错误，不保留读取协程。已有的存储绑定查询会变为 stale，以修复订阅建立之前的区间。
+复用应用中长期存在的 `client`，类型为 `*soroi.Client`（完整示例中的 `a`）。在启动时，为这个 Client 与存储组合调用一次 `WatchShared`。该调用执行订阅 I/O，等待订阅确认，并返回 `*SharedWatcher`；建立失败时返回错误，不保留读取协程。已有的存储绑定查询会变为 stale，以修复订阅建立之前的区间。
 
 ```go
-watch, err := client.WatchShared(ctx, store, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+watch, err := client.WatchShared(ctx, store, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 })
 if err != nil {
 	return err
@@ -110,8 +110,8 @@ fmt.Printf("loaded user: %s\n", user.Name)
 
 ```go
 // The database or API write has already committed successfully.
-if err := definition.InvalidateShared(ctx, client, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+if err := definition.InvalidateShared(ctx, client, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 }); err != nil {
 	return fmt.Errorf("invalidate committed user change: %w", err)
 }
@@ -125,13 +125,13 @@ if err := definition.InvalidateShared(ctx, client, cacheq.InvalidateOptions{
 
 ```go
 tagStore, err := redistore.New(remote, redistore.Options{
-	Prefix: "cacheq-tag-usage", EnableNotifications: true, EnableTags: true,
+	Prefix: "soroi-tag-usage", EnableNotifications: true, EnableTags: true,
 })
 if err != nil {
 	return err
 }
-tagWatch, err := client.WatchShared(ctx, tagStore, cacheq.InvalidateOptions{
-	Refetch: cacheq.RefetchNone,
+tagWatch, err := client.WatchShared(ctx, tagStore, soroi.InvalidateOptions{
+	Refetch: soroi.RefetchNone,
 })
 if err != nil {
 	return err
@@ -148,7 +148,7 @@ defer tagWatch.Close()
 以下代码复制已有定义并保留其数据源 Fetcher，使用新的本地键，防止新鲜本地结果跳过首次共享读取。标签包含租户身份，将详情记录与声明同一标签的列表记录关联。`NewSharedCache` 仅验证配置，不执行 I/O；`tagged.Fetch` 执行共享读取并登记关系，即使命中 Redis 缓存也会登记。
 
 ```go
-tagShared, err := cacheq.NewSharedCache(tagStore, cacheq.SharedCacheOptions[User]{
+tagShared, err := soroi.NewSharedCache(tagStore, soroi.SharedCacheOptions[User]{
 	Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
 	ShareTags: true,
 })
@@ -178,7 +178,7 @@ if err := client.InvalidateSharedTags(
 	operation,
 	tagStore,
 	[]string{"tenant:42:users"},
-	cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+	soroi.InvalidateOptions{Refetch: soroi.RefetchNone},
 ); err != nil {
 	return fmt.Errorf("invalidate committed users change: %w", err)
 }
@@ -209,7 +209,7 @@ watch.Close()
 
 下方程序结合远端标签和两个 Client，在提交数据源变更后使用户详情及列表失效。程序维护于 [examples/redis/shared_invalidation/main.go](../examples/redis/shared_invalidation/main.go)。如需运行修改后的副本，在已配置的 `examples/redis` 模块中新建 `invalidation-guide` 目录，将程序保存为其中的 `main.go`，然后从该模块执行 `REDIS_ADDR=127.0.0.1:16379 go run ./invalidation-guide`。
 
-示例只重置保留命名空间 `cacheq-invalidation-demo` 中的示例标签，因此重复运行输出一致。元数据保留到临时 Redis 停止。`RefetchNone` 和禁用的查询对象确保回源次数确定；生产应用可以采用默认的已观察查询刷新策略。
+示例只重置保留命名空间 `soroi-invalidation-demo` 中的示例标签，因此重复运行输出一致。元数据保留到临时 Redis 停止。`RefetchNone` 和禁用的查询对象确保回源次数确定；生产应用可以采用默认的已观察查询刷新策略。
 
 ```go
 // Command shared_invalidation demonstrates typed remote tag invalidation and local notification delivery.
@@ -222,8 +222,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Waterkyuu/cacheq"
-	redistore "github.com/Waterkyuu/cacheq/store/redis"
+	"github.com/Waterkyuu/soroi"
+	redistore "github.com/Waterkyuu/soroi/store/redis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -259,18 +259,18 @@ func run() error {
 	}
 	store, err := redistore.New(
 		remote,
-		redistore.Options{Prefix: "cacheq-invalidation-demo", EnableTags: true, EnableNotifications: true},
+		redistore.Options{Prefix: "soroi-invalidation-demo", EnableTags: true, EnableNotifications: true},
 	)
 	if err != nil {
 		return err
 	}
-	detailShared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+	detailShared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[User]{
 		Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute, ShareTags: true,
 	})
 	if err != nil {
 		return err
 	}
-	listShared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[[]User]{
+	listShared, err := soroi.NewSharedCache(store, soroi.SharedCacheOptions[[]User]{
 		Key: "tenant:42:users:v1", Format: "users.json.v1", TTL: 5 * time.Minute, ShareTags: true,
 	})
 	if err != nil {
@@ -284,36 +284,36 @@ func run() error {
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
-	detail, err := cacheq.QueryDefinition(
+	detail, err := soroi.QueryDefinition(
 		"detail",
 		func(context.Context) (User, error) { calls.Add(1); return source.Load().(User), nil },
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		return err
 	}
 	detail.Tags = tags
 	detail.Shared = detailShared
-	list, err := cacheq.QueryDefinition(
+	list, err := soroi.QueryDefinition(
 		"list",
 		func(context.Context) ([]User, error) { calls.Add(1); return []User{source.Load().(User)}, nil },
-		cacheq.QueryOptions{Disable: true},
+		soroi.QueryOptions{Disable: true},
 	)
 	if err != nil {
 		return err
 	}
 	list.Tags = tags
 	list.Shared = listShared
-	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	a := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
+	b := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer a.Close()
 	defer b.Close()
-	watchA, err := a.WatchShared(ctx, store, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	watchA, err := a.WatchShared(ctx, store, soroi.InvalidateOptions{Refetch: soroi.RefetchNone})
 	if err != nil {
 		return err
 	}
 	defer watchA.Close()
-	watchB, err := b.WatchShared(ctx, store, cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone})
+	watchB, err := b.WatchShared(ctx, store, soroi.InvalidateOptions{Refetch: soroi.RefetchNone})
 	if err != nil {
 		return err
 	}
@@ -342,7 +342,7 @@ func run() error {
 		ctx,
 		store,
 		tags,
-		cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+		soroi.InvalidateOptions{Refetch: soroi.RefetchNone},
 	); err != nil {
 		return err
 	}
@@ -370,7 +370,7 @@ func run() error {
 }
 
 // waitStale waits for notification publication without sleeps, polling, or assumptions about delivery latency.
-func waitStale[V any](ctx context.Context, query *cacheq.QueryHandle[V]) error {
+func waitStale[V any](ctx context.Context, query *soroi.QueryHandle[V]) error {
 	for {
 		select {
 		case state := <-query.Updates():

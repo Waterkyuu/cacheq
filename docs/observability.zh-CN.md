@@ -6,7 +6,7 @@
 
 ## 快速开始
 
-在导入 cacheq 的 Go 模块中，将以下完整程序保存为 `main.go`，运行 `go run .`。两次读取同一个新鲜键只执行一次加载。
+在导入 soroi 的 Go 模块中，将以下完整程序保存为 `main.go`，运行 `go run .`。两次读取同一个新鲜键只执行一次加载。
 
 ```go
 package main
@@ -16,18 +16,18 @@ import (
 	"fmt"
 	"time"
 
-	cacheq "github.com/Waterkyuu/cacheq"
+	soroi "github.com/Waterkyuu/soroi"
 )
 
 // main demonstrates one load followed by a fresh cache hit.
 func main() {
-	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	client := soroi.NewClient(soroi.Options{StaleTime: time.Minute})
 	defer client.Close()
 	load := func(context.Context) (string, error) {
 		return "hello", nil
 	}
 	for i := 0; i < 2; i++ {
-		if _, err := cacheq.Fetch(
+		if _, err := soroi.Fetch(
 			context.Background(),
 			client,
 			"greeting",
