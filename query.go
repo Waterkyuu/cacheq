@@ -36,13 +36,14 @@ type QueryHandle[V any] struct {
 }
 
 // Query creates a typed handle and loads missing or stale data in the background.
-// Automatic loading defaults to enabled; pass QueryOptions{} to use Client defaults.
+// Automatic loading defaults to enabled; omitted options use Client defaults.
 // Nil policy fields inherit Client defaults; each handle evaluates its own ordinary freshness.
 // Concurrent loads share the initiator's policy; automatic invalidation uses the oldest enabled handle.
 // Invalid keys, incompatible result types, and nil fetchers are reported through Snapshot and Updates.
+// Extra configurations produce ErrTooManyOptions through the same failed-handle contract.
 // Disabled handles still receive shared updates and may explicitly Refetch. Close releases the subscription.
-func Query[V any](client *Client, key any, fetch Fetcher[V], options QueryOptions) *QueryHandle[V] {
-	definition := QueryDefinition(key, fetch, options)
+func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOptions) *QueryHandle[V] {
+	definition := QueryDefinition(key, fetch, options...)
 	return query(client, definition)
 }
 
@@ -50,12 +51,18 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options QueryOption
 func query[V any](client *Client, definition Definition[V]) *QueryHandle[V] {
 	key := definition.Key
 	enabled := !definition.Options.Disable
-	request := definition.request(client.options, TriggerQuery)
+	var request queryRequest
+	if definition.err == nil {
+		request = definition.request(client.options, TriggerQuery)
+	}
 	policy := request.options
 	handle := &QueryHandle[V]{client: client, key: key, updates: make(chan Snapshot[V], 1)}
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	handle.err = client.checkLocked(key, reflect.TypeFor[V]())
+	handle.err = definition.err
+	if handle.err == nil {
+		handle.err = client.checkLocked(key, reflect.TypeFor[V]())
+	}
 	if handle.err == nil && definition.Fetcher == nil {
 		handle.err = ErrNoFetcher
 	}
@@ -181,7 +188,7 @@ func (h *QueryHandle[V]) activeLocked() error {
 
 // Fetch waits for fresh data without owning a long-lived subscription.
 // The result type is inferred from fetch, allowing one client to serve unrelated data types.
-// The single per-call configuration is copied; empty QueryOptions inherit Client defaults.
+// An omitted configuration uses Client defaults; extra values return ErrTooManyOptions without loading.
 // Disable controls automatic subscriptions only and does not suppress this explicit read.
 // Ordinary freshness is evaluated independently; explicit loader deadlines stay authoritative.
 // Joining in-flight work preserves its initiator's loader, retries, and timeout.
@@ -191,9 +198,9 @@ func Fetch[V any](
 	client *Client,
 	key any,
 	fetch Fetcher[V],
-	options QueryOptions,
+	options ...QueryOptions,
 ) (V, error) {
-	definition := QueryDefinition(key, fetch, options)
+	definition := QueryDefinition(key, fetch, options...)
 	return definition.Fetch(ctx, client)
 }
 
@@ -220,14 +227,15 @@ func FetchWithExpiry[V any](ctx context.Context, client *Client, key any, load L
 
 // Prefetch warms a typed key without returning its data; unlike browser prefetch APIs it returns errors.
 // It uses the supplied loading policy like Fetch and ignores Disable.
+// Omitted options use Client defaults; extra values return ErrTooManyOptions without loading.
 func Prefetch[V any](
 	ctx context.Context,
 	client *Client,
 	key any,
 	fetch Fetcher[V],
-	options QueryOptions,
+	options ...QueryOptions,
 ) error {
-	definition := QueryDefinition(key, fetch, options)
+	definition := QueryDefinition(key, fetch, options...)
 	return definition.Prefetch(ctx, client)
 }
 

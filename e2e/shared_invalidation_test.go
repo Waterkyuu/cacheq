@@ -86,7 +86,7 @@ func TestHTTPSharedTagInvalidation(t *testing.T) {
 	h := d.Query(b)
 	t.Cleanup(h.Close)
 	api.update(t, user{Name: "Bob"})
-	if err := a.InvalidateSharedTags(ctx, store, d.Tags, cacheq.InvalidateOptions{}); err != nil {
+	if err := a.InvalidateSharedTags(ctx, store, d.Tags); err != nil {
 		t.Fatal(err)
 	}
 	for {

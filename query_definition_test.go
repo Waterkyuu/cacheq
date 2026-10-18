@@ -45,7 +45,7 @@ func TestQueryDefinitionOptions(t *testing.T) {
 func TestQueryDefinitionNilFetcher(t *testing.T) {
 	c, _ := newAgeClient(t, Options{StaleTime: time.Hour})
 	var load Fetcher[int]
-	definition := QueryDefinition("answer", load, QueryOptions{})
+	definition := QueryDefinition("answer", load)
 	if _, err := definition.Fetch(context.Background(), c); !errors.Is(err, ErrNoFetcher) {
 		t.Fatal(err)
 	}
@@ -58,7 +58,6 @@ func TestQueryDefinitionNilFetcher(t *testing.T) {
 	if _, err := QueryDefinition[int](
 		"missing",
 		nil,
-		QueryOptions{},
 	).Fetch(context.Background(), c); !errors.Is(
 		err,
 		ErrNoFetcher,
@@ -100,7 +99,7 @@ func TestQueryDefinition(t *testing.T) {
 	}
 	// Creating a handle copies policy; modifying the definition does not change its subscription.
 	definition.Options.Disable = false
-	if err := c.Invalidate(definition.Key, InvalidateOptions{}); err != nil || calls != 2 || h.Snapshot().Fetching {
+	if err := c.Invalidate(definition.Key); err != nil || calls != 2 || h.Snapshot().Fetching {
 		t.Fatalf("existing definition handle changed permission: %v, calls=%d", err, calls)
 	}
 	other, _ := newAgeClient(t, Options{})

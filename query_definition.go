@@ -24,19 +24,26 @@ type Definition[V any] struct {
 	// Options supplies the shared loading policy; Disable only affects Query's automatic loading.
 	// Pointer values are read when an operation starts, not when the definition is constructed.
 	Options QueryOptions
+	// err retains invalid constructor configuration so operations cannot admit or execute this definition.
+	err error
 }
 
 // QueryDefinition creates a reusable typed query, inferring its result type from fetch.
-// Construction performs no loading or validation; operations validate using their Client.
-// Exactly one configuration is required; nil fields inherit Client defaults at execution.
+// Construction performs no loading; extra configurations are recorded as ErrTooManyOptions for all operations.
+// Omitted options use Client defaults; nil fields inherit their corresponding defaults at execution.
 // Set Shared and Tags on the returned definition before use to configure shared caching and grouping.
-func QueryDefinition[V any](key any, fetch Fetcher[V], options QueryOptions) Definition[V] {
-	return Definition[V]{Key: key, Fetcher: fetch, Options: options}
+func QueryDefinition[V any](key any, fetch Fetcher[V], options ...QueryOptions) Definition[V] {
+	option, err := singleOptions(options)
+	return Definition[V]{Key: key, Fetcher: fetch, Options: option, err: err}
 }
 
 // Fetch waits for this definition's result using the supplied Client and caller context.
 // Disable does not suppress this explicit read; validation and errors follow Fetch's contract.
 func (d Definition[V]) Fetch(ctx context.Context, client *Client) (V, error) {
+	if d.err != nil {
+		var zero V
+		return zero, d.err
+	}
 	value, err := client.fetch(
 		ctx,
 		d.Key,
@@ -57,6 +64,9 @@ func (d Definition[V]) Query(client *Client) *QueryHandle[V] {
 // Prefetch warms this definition's cached data and returns any loading error.
 // Disable does not suppress this explicit read; it creates no persistent subscription.
 func (d Definition[V]) Prefetch(ctx context.Context, client *Client) error {
+	if d.err != nil {
+		return d.err
+	}
 	_, err := client.fetch(
 		ctx,
 		d.Key,
@@ -83,12 +93,20 @@ func (d Definition[V]) request(defaults Options, trigger EventTrigger) queryRequ
 // A remote failure is returned without changing local state; remote success is not rolled back on local failure.
 // Other clients receive notifications only through WatchShared; duplicate operation receipts are suppressed.
 // Local refresh and same-key in-flight rules match Client.Invalidate.
+// Omitted options use zero values; extras return ErrTooManyOptions without remote or local changes.
 // Applications must commit their business write before calling this method.
 func (d Definition[V]) InvalidateShared(
 	ctx context.Context,
 	client *Client,
-	options InvalidateOptions,
+	options ...InvalidateOptions,
 ) error {
+	if d.err != nil {
+		return d.err
+	}
+	option, err := singleOptions(options)
+	if err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -96,7 +114,7 @@ func (d Definition[V]) InvalidateShared(
 		return ErrInvalidSharedCache
 	}
 	client.mu.Lock()
-	err := client.checkLocked(d.Key, reflect.TypeFor[V]())
+	err = client.checkLocked(d.Key, reflect.TypeFor[V]())
 	client.mu.Unlock()
 	if err != nil {
 		return err
@@ -105,5 +123,5 @@ func (d Definition[V]) InvalidateShared(
 	if err != nil {
 		return err
 	}
-	return client.applySharedKey(d.Key, event, options)
+	return client.applySharedKey(d.Key, event, option)
 }

@@ -164,12 +164,17 @@ func NewClient(options Options) *Client {
 // Completed data is retained while selected queries become stale.
 // The zero-value configuration refreshes enabled observed queries only when no load is active.
 // RefetchAfterLoad optionally coalesces in-flight invalidations into one bounded follow-up.
+// Omitted options use zero values; extras return ErrTooManyOptions before selecting or changing targets.
 // Batches are validated before changes; predicates run outside the lock against existing keys.
 // Filter and predicate selection use existing keys only, exclude additions, and skip removed keys.
 // Nil targets or direct predicates are invalid; a nil QueryFilter.Predicate imposes no restriction.
 // Empty batches succeed; closed clients return ErrClosed without evaluating predicates.
-func (c *Client) Invalidate(target any, options InvalidateOptions) error {
-	_, err := c.invalidate(target, options, nil)
+func (c *Client) Invalidate(target any, options ...InvalidateOptions) error {
+	option, err := singleOptions(options)
+	if err != nil {
+		return err
+	}
+	_, err = c.invalidate(target, option, nil)
 	return err
 }
 

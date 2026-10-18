@@ -1,61 +1,182 @@
-package cacheq_test
+package cacheq
 
 import (
 	"context"
-
-	"github.com/Waterkyuu/cacheq"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
 )
 
-// These assignments require exactly one configuration argument at compile time.
-// A variadic signature would permit silently discarded options and cannot satisfy these types.
-var _ func(*cacheq.Client, any, cacheq.Fetcher[int], cacheq.QueryOptions) *cacheq.QueryHandle[int] = cacheq.Query[int]
+// TestQueryOptionCounts accepts optional configuration and rejects extras before cache use or loading.
+func TestQueryOptionCounts(t *testing.T) {
+	for _, api := range []string{"fetch", "prefetch", "query", "definition fetch", "definition prefetch", "definition query"} {
+		for count := range 3 {
+			t.Run(fmt.Sprintf("%s/%d", api, count), func(t *testing.T) {
+				c, _ := newAgeClient(t, Options{StaleTime: time.Hour})
+				if err := Set(c, "key", 7); err != nil {
+					t.Fatal(err)
+				}
+				load := func(context.Context) (int, error) {
+					t.Error("configuration validation or inherited freshness started a load")
+					return 0, nil
+				}
+				options := make([]QueryOptions, count)
+				definition := QueryDefinition("key", load, options...)
+				definition.Tags = []string{"definition"}
+				ctx := context.Background()
+				var err error
+				var query *QueryHandle[int]
+				switch api {
+				case "fetch":
+					_, err = Fetch(ctx, c, "key", load, options...)
+				case "prefetch":
+					err = Prefetch(ctx, c, "key", load, options...)
+				case "query":
+					query = Query(c, "key", load, options...)
+				case "definition fetch":
+					_, err = definition.Fetch(ctx, c)
+				case "definition prefetch":
+					err = definition.Prefetch(ctx, c)
+				case "definition query":
+					query = definition.Query(c)
+				}
+				if query != nil {
+					t.Cleanup(query.Close)
+					err = query.Snapshot().Err
+					initial := <-query.Updates()
+					if count > 1 {
+						if !errors.Is(initial.Err, ErrTooManyOptions) {
+							t.Fatalf("initial error = %+v", initial)
+						}
+						if _, open := <-query.Updates(); open {
+							t.Fatal("invalid query kept its updates channel open")
+						}
+						if _, err := query.Refetch(ctx); !errors.Is(err, ErrTooManyOptions) {
+							t.Fatal(err)
+						}
+					} else if !initial.HasData || initial.Data != 7 {
+						t.Fatalf("optional query = %+v", initial)
+					}
+				}
+				if count > 1 {
+					if !errors.Is(err, ErrTooManyOptions) {
+						t.Fatalf("configuration error = %v", err)
+					}
+					if err := definition.InvalidateShared(ctx, c); !errors.Is(err, ErrTooManyOptions) {
+						t.Fatal(err)
+					}
+					if len(selectedTagKeys(t, c, QueryFilter{Tags: []string{"definition"}})) != 0 {
+						t.Fatal("invalid definition registered tags")
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				if state := Get[int](c, "key"); state.Data != 7 || state.Stale {
+					t.Fatalf("cache changed = %+v", state)
+				}
+			})
+		}
+	}
+}
 
-var _ func(any, cacheq.Fetcher[int], cacheq.QueryOptions) cacheq.Definition[int] = cacheq.QueryDefinition[int]
+// TestMutationOptionCounts preserves budget inheritance and rejects extras before writing or synchronizing.
+func TestMutationOptionCounts(t *testing.T) {
+	for count := range 3 {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			budget, err := NewExecutor(ExecutionOptions{MaxConcurrent: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := NewClient(Options{Executor: budget})
+			t.Cleanup(c.Close)
+			writes, callbacks := 0, 0
+			h := Mutation(c, func(context.Context, string) (int, error) {
+				writes++
+				if budget.Stats().Active != 1 {
+					t.Error("lost inherited write budget")
+				}
+				return 7, nil
+			}, func(context.Context, int, string) error {
+				callbacks++
+				if budget.Stats().Active != 0 {
+					t.Error("synchronization retained write capacity")
+				}
+				return nil
+			}, make([]MutationOptions, count)...)
+			t.Cleanup(h.Close)
+			result, err := h.Mutate(context.Background(), "input")
+			if count > 1 {
+				if !errors.Is(err, ErrTooManyOptions) || writes != 0 || callbacks != 0 {
+					t.Fatalf("rejected mutation = %+v, %v, writes=%d callbacks=%d", result, err, writes, callbacks)
+				}
+				if state := <-h.Updates(); !errors.Is(state.Err, ErrTooManyOptions) {
+					t.Fatalf("initial error = %+v", state)
+				}
+				if _, open := <-h.Updates(); open {
+					t.Fatal("invalid mutation kept its updates channel open")
+				}
+				return
+			}
+			if err != nil || result.SyncErr != nil || result.Data != 7 || writes != 1 || callbacks != 1 {
+				t.Fatalf("optional mutation = %+v, %v, writes=%d callbacks=%d", result, err, writes, callbacks)
+			}
+		})
+	}
+}
 
-var _ func(
-	context.Context,
-	*cacheq.Client,
-	any,
-	cacheq.Fetcher[int],
-	cacheq.QueryOptions,
-) (int, error) = cacheq.Fetch[int]
-
-var _ func(context.Context, *cacheq.Client, any, cacheq.Fetcher[int], cacheq.QueryOptions) error = cacheq.Prefetch[int]
-
-var _ func(
-	*cacheq.Client,
-	cacheq.Mutator[int, string],
-	func(context.Context, string, int) error,
-	cacheq.MutationOptions,
-) *cacheq.MutationHandle[int, string] = cacheq.Mutation[int, string]
-
-var _ func(*cacheq.Client, any, cacheq.InvalidateOptions) error = (*cacheq.Client).Invalidate
-
-var _ func(
-	*cacheq.Client,
-	context.Context,
-	any,
-	cacheq.InvalidateOptions,
-) ([]cacheq.RefreshResult, error) = (*cacheq.Client).InvalidateAndWait
-
-var _ func(
-	cacheq.Definition[int],
-	context.Context,
-	*cacheq.Client,
-	cacheq.InvalidateOptions,
-) error = cacheq.Definition[int].InvalidateShared
-
-var _ func(
-	*cacheq.Client,
-	context.Context,
-	cacheq.SharedInvalidationStore,
-	cacheq.InvalidateOptions,
-) (*cacheq.SharedWatcher, error) = (*cacheq.Client).WatchShared
-
-var _ func(
-	*cacheq.Client,
-	context.Context,
-	cacheq.SharedTagStore,
-	[]string,
-	cacheq.InvalidateOptions,
-) error = (*cacheq.Client).InvalidateSharedTags
+// TestInvalidationOptionCounts rejects extras before local invalidation, remote writes, or subscriptions.
+func TestInvalidationOptionCounts(t *testing.T) {
+	for _, api := range []string{"invalidate", "wait", "shared", "watch", "tags"} {
+		for count := range 3 {
+			t.Run(fmt.Sprintf("%s/%d", api, count), func(t *testing.T) {
+				backend := newSharedTestStore()
+				store := &sharedNotificationStore{SharedStore: backend, enableTags: true}
+				definition := newSharedDefinition(t, store, func(context.Context) (int, error) { return 7, nil })
+				definition.Tags = []string{"users"}
+				c, _ := newAgeClient(t, Options{StaleTime: time.Hour})
+				ctx := context.Background()
+				if _, err := definition.Fetch(ctx, c); err != nil {
+					t.Fatal(err)
+				}
+				before, err := backend.Read(ctx, definition.Shared.options.Key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				options := make([]InvalidateOptions, count)
+				switch api {
+				case "invalidate":
+					err = c.Invalidate(definition.Key, options...)
+				case "wait":
+					_, err = c.InvalidateAndWait(ctx, definition.Key, options...)
+				case "shared":
+					err = definition.InvalidateShared(ctx, c, options...)
+				case "watch":
+					var watcher *SharedWatcher
+					watcher, err = c.WatchShared(ctx, store, options...)
+					if watcher != nil {
+						watcher.Close()
+					}
+				case "tags":
+					err = c.InvalidateSharedTags(ctx, store, []string{"users"}, options...)
+				}
+				if count < 2 {
+					if err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				if !errors.Is(err, ErrTooManyOptions) {
+					t.Fatalf("configuration error = %v", err)
+				}
+				if state := Get[int](c, definition.Key); state.Stale || state.Data != 7 {
+					t.Fatalf("cache changed = %+v", state)
+				}
+				after, readErr := backend.Read(ctx, definition.Shared.options.Key)
+				if readErr != nil || before.Version != after.Version || len(store.streams) != 0 || store.sequence != 0 {
+					t.Fatalf("rejected operation accessed remote state: %v", readErr)
+				}
+			})
+		}
+	}
+}

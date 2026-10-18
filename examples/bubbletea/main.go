@@ -25,7 +25,7 @@ func run(client *cacheq.Client, store *taskStore, fetch cacheq.Fetcher[[]task], 
 	defer client.Close()
 	initial := model{client: client, store: store}
 	for view := range initial.queries {
-		initial.queries[view] = cacheq.Query(client, "tasks", fetch, cacheq.QueryOptions{})
+		initial.queries[view] = cacheq.Query(client, "tasks", fetch)
 		initial.states[view] = initial.queries[view].Snapshot()
 	}
 	defer initial.closeQueries()

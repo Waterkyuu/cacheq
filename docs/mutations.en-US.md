@@ -42,9 +42,9 @@ func main() {
 	getUsers := func(context.Context) ([]User, error) {
 		return []User{backend.Load().(User)}, nil
 	}
-	users := cacheq.Query(client, "users", getUsers, cacheq.QueryOptions{})
+	users := cacheq.Query(client, "users", getUsers)
 	defer users.Close()
-	before, err := cacheq.Fetch(ctx, client, "users", getUsers, cacheq.QueryOptions{})
+	before, err := cacheq.Fetch(ctx, client, "users", getUsers)
 	if err != nil {
 		panic(err)
 	}
@@ -59,9 +59,9 @@ func main() {
 		return user, nil
 	}, func(ctx context.Context, user User, _ string) error {
 		updateErr := cacheq.Set(client, "user:42", user)
-		_, refreshErr := client.InvalidateAndWait(ctx, "users", cacheq.InvalidateOptions{})
+		_, refreshErr := client.InvalidateAndWait(ctx, "users")
 		return errors.Join(updateErr, refreshErr)
-	}, cacheq.MutationOptions{})
+	})
 	defer rename.Close()
 	result, err := rename.Mutate(ctx, "Bob")
 	if err != nil {
@@ -85,7 +85,7 @@ detail: Bob
 list: Bob
 ```
 
-`rename.Mutate(ctx, "Bob")` first changes backend data. After success, `onSuccess` stores the returned `User` under `"user:42"` and calls `client.InvalidateAndWait(ctx, "users", cacheq.InvalidateOptions{})`. The list has an enabled `Query`, so it refreshes before the callback returns.
+`rename.Mutate(ctx, "Bob")` first changes backend data. After success, `onSuccess` stores the returned `User` under `"user:42"` and calls `client.InvalidateAndWait(ctx, "users")`. The list has an enabled `Query`, so it refreshes before the callback returns.
 
 `Mutate` waits for the write and `onSuccess` to finish. The callback chooses whether to refresh in the background through `Client.Invalidate` or wait through `Client.InvalidateAndWait`. This example waits, so the list snapshot contains Bob when `Mutate` returns without a synchronization error.
 
@@ -95,7 +95,7 @@ The following partial snippets use `client`, `rename`, `User`, and a non-nil `ct
 
 ## `Mutation` and `Mutate`: creation and execution
 
-`Mutation(client, write, onSuccess, options)` returns `MutationHandle[I, V]`, inferring input and result types from the supplied functions. Pass nil as the third argument when no synchronization is needed. Exactly one non-generic `MutationOptions` value is required and configures execution only; pass `MutationOptions{}` to inherit the Client budget. `I` is the input type and `V` the write result type; the example uses `string` and `User`. The business callback, `Mutator[I, V]`, has the signature `func(context.Context, I) (V, error)`.
+`Mutation(client, write, onSuccess, options...)` returns `MutationHandle[I, V]`, inferring input and result types from the supplied functions. Pass nil as the third argument when no synchronization is needed. Zero or one non-generic `MutationOptions` value configures execution only; omitted or empty options inherit the Client budget. `I` is the input type and `V` the write result type; the example uses `string` and `User`. The business callback, `Mutator[I, V]`, has the signature `func(context.Context, I) (V, error)`.
 
 `Mutate(ctx, input)` executes the business callback once, waits for cache synchronization after success, and returns `MutationResult[V]` and an error. Database operations must return success only after the transaction commits. cacheq does not retry or deduplicate writes. Repeating the same input after completion executes another write.
 
@@ -144,7 +144,7 @@ Call `Client.InvalidateAndWait` inside `onSuccess` to wait for associated refres
 
 ```go
 onSuccess := func(ctx context.Context, _ User, _ string) error {
-	_, err := client.InvalidateAndWait(ctx, "users", InvalidateOptions{})
+	_, err := client.InvalidateAndWait(ctx, "users")
 	return err
 }
 
@@ -199,7 +199,7 @@ Successful zero-valued data is valid. A snapshot is a value and does not update 
 
 The former `MutationOptions[I, V].OnSuccess` field is replaced by the third `Mutation` argument. Remove type arguments from `MutationOptions` and pass the success callback separately. The compiler rejects callbacks whose result or input types do not match the write function.
 
-Exactly one `MutationOptions` value is required; additional configuration arguments are rejected at compile time. Options are copied, but captured application data still needs synchronization. Cache keys and invalidation predicates should include tenant and user scope that affects results.
+Execution options are optional and limited to one value. Extra values produce a failed handle with `ErrTooManyOptions` in `Snapshot().Err`, the initial `Updates()` state, and subsequent `Mutate` calls; neither callback runs. Options are copied, but captured application data still needs synchronization. Cache keys and invalidation predicates should include tenant and user scope that affects results.
 
 An [execution budget](execution.en-US.md) holds capacity only during the business write, releasing it before cache synchronization. Client query retry and timeout settings do not apply to Mutation. Set write deadlines through the context passed to `Mutate`.
 

@@ -36,7 +36,8 @@ type MutationHandle[I, V any] struct {
 	err error
 }
 
-// Mutation constructs an idle handle without executing a write, using one execution configuration.
+// Mutation constructs an idle handle without executing a write, with zero or one execution configuration.
+// Extra configurations are reported as ErrTooManyOptions through the handle without writing or synchronizing.
 // Input and result types are inferred from write and onSuccess and checked together at compile time.
 // onSuccess receives the committed result and original input once outside internal locks; nil skips it.
 // Mutate stays Pending through synchronization and reports callback errors through SyncErr.
@@ -48,20 +49,23 @@ func Mutation[I, V any](
 	client *Client,
 	write Mutator[I, V],
 	onSuccess func(context.Context, V, I) error,
-	options MutationOptions,
+	options ...MutationOptions,
 ) *MutationHandle[I, V] {
+	option, optionErr := singleOptions(options)
 	ctx, cancel := context.WithCancel(client.ctx) // #nosec G118 -- Close owns this handle's lifetime.
 	h := &MutationHandle[I, V]{
-		client: client, ctx: ctx, cancel: cancel, write: write, onSuccess: onSuccess, options: options,
+		client: client, ctx: ctx, cancel: cancel, write: write, onSuccess: onSuccess, options: option, err: optionErr,
 		updates: make(chan MutationSnapshot[V], 1),
 	}
 	if h.options.Executor == nil {
 		h.options.Executor = client.options.Executor
 	}
-	if client.ctx.Err() != nil {
-		h.err = ErrClosed
-	} else if write == nil {
-		h.err = ErrNoMutator
+	if h.err == nil {
+		if client.ctx.Err() != nil {
+			h.err = ErrClosed
+		} else if write == nil {
+			h.err = ErrNoMutator
+		}
 	}
 	if h.err != nil {
 		h.state = MutationSnapshot[V]{Status: Error, Err: h.err}

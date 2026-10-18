@@ -103,13 +103,18 @@ type SharedWatcher struct {
 
 // WatchShared subscribes one Client to the supplied store and repairs any pre-subscription local gap.
 // The zero-value policy refreshes enabled observers; RefetchAfterLoad opts into one bounded follow-up.
-// Exactly one policy is required. Disabled observers receive stale snapshots without loading.
+// An omitted policy uses zero values; extra policies return ErrTooManyOptions before subscribing.
+// Disabled observers receive stale snapshots without loading.
 // Caller cancellation, Client.Close, or watcher.Close releases the subscription; the borrowed store stays open.
 func (c *Client) WatchShared(
 	ctx context.Context,
 	store SharedInvalidationStore,
-	options InvalidateOptions,
+	options ...InvalidateOptions,
 ) (*SharedWatcher, error) {
+	option, err := singleOptions(options)
+	if err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -142,7 +147,7 @@ func (c *Client) WatchShared(
 		return nil, ErrSharedCapability
 	}
 	watch := &SharedWatcher{cancel: cancel, done: make(chan struct{})}
-	_, err = c.applySharedInvalidation(store.InvalidationScope(), SharedInvalidation{Reset: true}, options)
+	_, err = c.applySharedInvalidation(store.InvalidationScope(), SharedInvalidation{Reset: true}, option)
 	if err != nil {
 		stop()
 		cancel()
@@ -150,7 +155,7 @@ func (c *Client) WatchShared(
 		return nil, err
 	}
 	watch.stats.Resyncs = 1
-	go watch.run(lifetime, stop, c, store.InvalidationScope(), stream, options)
+	go watch.run(lifetime, stop, c, store.InvalidationScope(), stream, option)
 	return watch, nil
 }
 
@@ -287,12 +292,17 @@ func (c *Client) applySharedKey(key any, event SharedInvalidation, policy Invali
 // InvalidateSharedTags invalidates remote tags and then the matching queries bound to this store in one Client.
 // Tag matching uses OR and exact strings. Remote failure leaves local state unchanged.
 // Other Clients receive notifications only when watching the same remote namespace.
+// Omitted options use zero values; extras return ErrTooManyOptions without remote or local changes.
 func (c *Client) InvalidateSharedTags(
 	ctx context.Context,
 	store SharedTagStore,
 	tags []string,
-	options InvalidateOptions,
+	options ...InvalidateOptions,
 ) error {
+	option, err := singleOptions(options)
+	if err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -312,6 +322,6 @@ func (c *Client) InvalidateSharedTags(
 	if err != nil {
 		return err
 	}
-	_, err = c.applySharedInvalidation(store.InvalidationScope(), event, options)
+	_, err = c.applySharedInvalidation(store.InvalidationScope(), event, option)
 	return err
 }

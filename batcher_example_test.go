@@ -34,9 +34,9 @@ func ExampleBatcher_Fetcher() {
 	}
 	defer products.Close()
 
-	first := cacheq.Query(client, "product:42", products.Fetcher(42), cacheq.QueryOptions{})
+	first := cacheq.Query(client, "product:42", products.Fetcher(42))
 	defer first.Close()
-	second := cacheq.Query(client, "product:43", products.Fetcher(43), cacheq.QueryOptions{})
+	second := cacheq.Query(client, "product:43", products.Fetcher(43))
 	defer second.Close()
 	for _, handle := range []*cacheq.QueryHandle[string]{first, second} {
 		for state := range handle.Updates() {
@@ -49,7 +49,7 @@ func ExampleBatcher_Fetcher() {
 			}
 		}
 	}
-	value, err := cacheq.Fetch(context.Background(), client, "product:42", products.Fetcher(42), cacheq.QueryOptions{})
+	value, err := cacheq.Fetch(context.Background(), client, "product:42", products.Fetcher(42))
 	if err != nil {
 		panic(err)
 	}

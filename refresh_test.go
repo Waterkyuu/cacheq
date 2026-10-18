@@ -72,7 +72,7 @@ func TestInvalidateAndWaitResults(t *testing.T) {
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		}
-	}, QueryOptions{})
+	})
 	failed := Query(c, "failure", func(ctx context.Context) (string, error) {
 		started <- "failure"
 		select {
@@ -81,7 +81,7 @@ func TestInvalidateAndWaitResults(t *testing.T) {
 		case <-ctx.Done():
 			return "", ctx.Err()
 		}
-	}, QueryOptions{})
+	})
 	t.Cleanup(success.Close)
 	t.Cleanup(failed.Close)
 	done := startRefreshWait(
@@ -121,7 +121,7 @@ func TestInvalidateAndWaitValidation(t *testing.T) {
 	c := newInvalidationClient(t)
 	Set(c, "key", 1)
 	for _, target := range []any{nil, []int{1}, []any{"key", []int{1}}, (func(any) bool)(nil)} {
-		results, err := c.InvalidateAndWait(context.Background(), target, InvalidateOptions{})
+		results, err := c.InvalidateAndWait(context.Background(), target)
 		if results != nil || !errors.Is(err, ErrInvalidKey) || Get[int](c, "key").Stale {
 			t.Fatalf("invalid target %T: results=%+v err=%v", target, results, err)
 		}
@@ -131,17 +131,16 @@ func TestInvalidateAndWaitValidation(t *testing.T) {
 	if _, err := c.InvalidateAndWait(
 		ctx,
 		"key",
-		InvalidateOptions{},
 	); !errors.Is(err, context.Canceled) ||
 		Get[int](c, "key").Stale {
 		t.Fatalf("pre-canceled invalidation = %v", err)
 	}
-	results, err := c.InvalidateAndWait(context.Background(), []any{}, InvalidateOptions{})
+	results, err := c.InvalidateAndWait(context.Background(), []any{})
 	if err != nil || len(results) != 0 {
 		t.Fatalf("empty batch = %+v, %v", results, err)
 	}
 	c.Close()
-	if _, err := c.InvalidateAndWait(context.Background(), []any{}, InvalidateOptions{}); !errors.Is(err, ErrClosed) {
+	if _, err := c.InvalidateAndWait(context.Background(), []any{}); !errors.Is(err, ErrClosed) {
 		t.Fatal(err)
 	}
 }
@@ -165,7 +164,7 @@ func TestInvalidateFollowupPolicy(t *testing.T) {
 					}
 				}
 				return value, nil
-			}, QueryOptions{})
+			})
 			t.Cleanup(q.Close)
 			<-started
 			backend.Store(2)
@@ -214,7 +213,7 @@ func TestInvalidateAndWaitDuringLoad(t *testing.T) {
 					return 0, errors.New("old request failed")
 				}
 				return call, nil
-			}, QueryOptions{})
+			})
 			t.Cleanup(q.Close)
 			<-started
 			first := startRefreshWait(c, context.Background(), "key", InvalidateOptions{})
@@ -262,7 +261,7 @@ func TestInvalidateFollowupBound(t *testing.T) {
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		}
-	}, QueryOptions{})
+	})
 	t.Cleanup(q.Close)
 	<-started
 	first := startRefreshWait(c, context.Background(), "key", InvalidateOptions{})
@@ -296,7 +295,7 @@ func TestInvalidateWaitCancellation(t *testing.T) {
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		}
-	}, QueryOptions{})
+	})
 	t.Cleanup(q.Close)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -326,7 +325,7 @@ func TestInvalidateRefreshDetachment(t *testing.T) {
 				close(started)
 				<-release
 				return 1, nil
-			}, QueryOptions{})
+			})
 			t.Cleanup(q.Close)
 			defer close(release)
 			<-started
@@ -371,7 +370,7 @@ func TestInvalidateFollowupObserverLoss(t *testing.T) {
 				case <-ctx.Done():
 					return 0, ctx.Err()
 				}
-			}, QueryOptions{})
+			})
 			t.Cleanup(q.Close)
 			<-started
 			done := startRefreshWait(c, context.Background(), "key", InvalidateOptions{})
@@ -399,7 +398,6 @@ func TestInvalidateAndWaitPredicate(t *testing.T) {
 		c,
 		"selected",
 		func(context.Context) (int, error) { t.Fatal("unexpected load"); return 0, nil },
-		QueryOptions{},
 	)
 	t.Cleanup(q.Close)
 	results, err := c.InvalidateAndWait(context.Background(), func(key any) bool {
@@ -429,7 +427,7 @@ func TestInvalidateFollowupOwnerCancellation(t *testing.T) {
 			return 0, ctx.Err()
 		}
 		return call, nil
-	}, QueryOptions{})
+	})
 	t.Cleanup(q.Close)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -461,7 +459,7 @@ func TestInvalidateRefreshBudget(t *testing.T) {
 		close(started)
 		<-ctx.Done()
 		return 0, ctx.Err()
-	}, QueryOptions{})
+	})
 	t.Cleanup(busy.Close)
 	<-started
 	Set(c, "key", 1)
@@ -469,10 +467,9 @@ func TestInvalidateRefreshBudget(t *testing.T) {
 		c,
 		"key",
 		func(context.Context) (int, error) { t.Error("rejected loader ran"); return 2, nil },
-		QueryOptions{},
 	)
 	t.Cleanup(q.Close)
-	results, err := c.InvalidateAndWait(context.Background(), "key", InvalidateOptions{})
+	results, err := c.InvalidateAndWait(context.Background(), "key")
 	if !errors.Is(err, ErrQueueFull) || len(results) != 1 || !errors.Is(results[0].Err, ErrQueueFull) {
 		t.Fatalf("overload = %+v, %v", results, err)
 	}
@@ -494,7 +491,7 @@ func TestInvalidateFollowupSelectsCurrentObserver(t *testing.T) {
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		}
-	}, QueryOptions{})
+	})
 	t.Cleanup(first.Close)
 	<-started
 	var attempts atomic.Int32
@@ -530,16 +527,15 @@ func TestInvalidateWaitExecutionReentry(t *testing.T) {
 		c,
 		"key",
 		func(context.Context) (int, error) { t.Error("recursive refresh ran"); return 2, nil },
-		QueryOptions{},
 	)
 	t.Cleanup(q.Close)
 	_, err = Fetch(context.Background(), c, "outer", func(ctx context.Context) (int, error) {
-		results, err := c.InvalidateAndWait(ctx, "key", InvalidateOptions{})
+		results, err := c.InvalidateAndWait(ctx, "key")
 		if len(results) != 1 || !errors.Is(results[0].Err, ErrExecutionReentry) {
 			t.Errorf("recursive results = %+v, %v", results, err)
 		}
 		return 0, err
-	}, QueryOptions{})
+	})
 	if !errors.Is(err, ErrExecutionReentry) {
 		t.Fatalf("recursive wait = %v", err)
 	}

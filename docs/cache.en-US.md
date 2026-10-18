@@ -132,7 +132,6 @@ if err := cacheq.Prefetch(
 	client,
 	"greeting",
 	getGreeting,
-	cacheq.QueryOptions{},
 ); err != nil {
 	return err
 }

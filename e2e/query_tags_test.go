@@ -18,13 +18,11 @@ func TestHTTPQueryTags(t *testing.T) {
 	detailDefinition := cacheq.QueryDefinition(
 		"tenant:42:profile",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-		cacheq.QueryOptions{},
 	)
 	detailDefinition.Tags = []string{"tenant:42:users"}
 	listDefinition := cacheq.QueryDefinition(
 		"tenant:42:list",
 		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
-		cacheq.QueryOptions{},
 	)
 	listDefinition.Tags = []string{"tenant:42:users", "lists"}
 	otherDefinition := detailDefinition
@@ -38,7 +36,7 @@ func TestHTTPQueryTags(t *testing.T) {
 	await(t, other, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 	filter := cacheq.QueryFilter{Tags: []string{"tenant:42:users", "tenant:42:users"}}
 	api.update(t, user{Name: "Bob"})
-	results, err := c.InvalidateAndWait(context.Background(), filter, cacheq.InvalidateOptions{})
+	results, err := c.InvalidateAndWait(context.Background(), filter)
 	if err != nil || len(results) != 2 {
 		t.Fatalf("tagged refresh = %+v, %v", results, err)
 	}
@@ -56,7 +54,7 @@ func TestHTTPQueryTags(t *testing.T) {
 	api.failNext(1)
 	results, err = c.InvalidateAndWait(context.Background(), cacheq.QueryFilter{
 		Keys: []any{detailDefinition.Key}, Tags: filter.Tags,
-	}, cacheq.InvalidateOptions{})
+	})
 	if err == nil || !strings.Contains(err.Error(), "HTTP status 503") || len(results) != 1 {
 		t.Fatalf("tagged refresh failure = %+v, %v", results, err)
 	}

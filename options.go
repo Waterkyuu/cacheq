@@ -21,6 +21,9 @@ var ErrInvalidKey = errors.New("query key must be non-nil and comparable")
 // ErrNoFetcher indicates an operation requiring data has no loader to execute.
 var ErrNoFetcher = errors.New("query has no fetcher")
 
+// ErrTooManyOptions indicates that an operation received more than one configuration value.
+var ErrTooManyOptions = errors.New("at most one configuration value is allowed")
+
 // Status describes the most recent result independently of background fetching.
 type Status uint8
 
@@ -69,7 +72,7 @@ type Options struct {
 
 // QueryOptions overrides loading policy for Query, Fetch, and Prefetch.
 // Disable only controls Query's automatic loading; explicit reads and Refetch still execute.
-// Nil policy fields inherit Client defaults; each operation accepts exactly one options value.
+// Nil policy fields inherit Client defaults; operations accept zero or one options value.
 // Duration and retry values are copied when applied; execution budgets are shared.
 // Callbacks run outside the Client lock and must synchronize captured mutable state.
 type QueryOptions struct {
@@ -93,6 +96,18 @@ type QueryOptions struct {
 	// DisableExecutor skips the outer loader budget, taking precedence over Executor.
 	// Use it with a budgeted Batcher so only the actual bulk callback acquires capacity.
 	DisableExecutor bool
+}
+
+// singleOptions resolves an omitted configuration to zero and rejects extras before operation side effects.
+func singleOptions[T any](options []T) (T, error) {
+	var option T
+	if len(options) > 1 {
+		return option, ErrTooManyOptions
+	}
+	if len(options) == 1 {
+		option = options[0]
+	}
+	return option, nil
 }
 
 // resolvePolicy copies scalar overrides while sharing callbacks and the selected execution budget.

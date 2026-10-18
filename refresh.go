@@ -51,7 +51,8 @@ func (r *refreshCompletion) finish(refreshed bool, err error) {
 
 // InvalidateAndWait invalidates targets and waits for their post-invalidation refresh outcomes.
 // It accepts the same exact keys, batches, predicates, and QueryFilter as Invalidate.
-// It enables RefetchAfterLoad and accepts exactly one configuration.
+// It enables RefetchAfterLoad and accepts zero or one configuration.
+// Extra configurations return ErrTooManyOptions before selecting or changing targets.
 // Only enabled observed queries refresh; RefetchNone and unobserved targets return skipped results.
 // All selected refreshes are scheduled before waiting. Results retain explicit key order and exclude duplicates.
 // Selection without explicit keys has unspecified order. Per-key errors are wrapped and joined in the returned error.
@@ -60,12 +61,16 @@ func (r *refreshCompletion) finish(refreshed bool, err error) {
 func (c *Client) InvalidateAndWait(
 	ctx context.Context,
 	target any,
-	options InvalidateOptions,
+	options ...InvalidateOptions,
 ) ([]RefreshResult, error) {
+	option, err := singleOptions(options)
+	if err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return c.invalidateAndWait(ctx, target, options)
+	return c.invalidateAndWait(ctx, target, option)
 }
 
 // invalidateAndWait schedules selected refreshes before collecting their completion results.

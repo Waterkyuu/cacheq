@@ -103,7 +103,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.actionErr == nil {
 				// Mutate the backend first; one invalidation refreshes all three subscribers.
-				m.actionErr = m.client.Invalidate("tasks", cacheq.InvalidateOptions{})
+				m.actionErr = m.client.Invalidate("tasks")
 			}
 		}
 	}

@@ -115,7 +115,7 @@ func newSharedDefinition(t *testing.T, store SharedStore, load Fetcher[int]) Def
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition := QueryDefinition("local-answer", load, QueryOptions{})
+	definition := QueryDefinition("local-answer", load)
 	definition.Shared = shared
 	return definition
 }
@@ -174,7 +174,7 @@ func TestSharedCacheRefresh(t *testing.T) {
 			if operation == "refetch" {
 				value, err = h.Refetch(ctx)
 			} else {
-				if err := c.Invalidate(d.Key, InvalidateOptions{}); err != nil {
+				if err := c.Invalidate(d.Key); err != nil {
 					t.Fatal(err)
 				}
 				value, err = d.Fetch(ctx, c)
@@ -245,7 +245,7 @@ func TestSharedCacheFailures(t *testing.T) {
 			}
 			if operation == "invalidate" {
 				s.invalidateErr = failure
-				if err := d.InvalidateShared(context.Background(), c, InvalidateOptions{}); !errors.Is(err, failure) {
+				if err := d.InvalidateShared(context.Background(), c); !errors.Is(err, failure) {
 					t.Fatal(err)
 				}
 				if Get[int](c, d.Key).Stale {
@@ -293,7 +293,7 @@ func TestSharedCacheCancellation(t *testing.T) {
 	if _, err := d.Fetch(ctx, c); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if err := d.InvalidateShared(ctx, c, InvalidateOptions{}); !errors.Is(err, context.Canceled) {
+	if err := d.InvalidateShared(ctx, c); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	if stats := d.Shared.Stats(); stats != (SharedStats{}) {
@@ -378,7 +378,6 @@ func TestSharedCacheRecordBoundaries(t *testing.T) {
 				definition := QueryDefinition(
 					"nil",
 					func(context.Context) (*int, error) { return nil, nil },
-					QueryOptions{},
 				)
 				definition.Shared = shared
 				if _, err := definition.Fetch(context.Background(), c1); err != nil {
@@ -422,7 +421,7 @@ func TestSharedCacheTimeoutFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := QueryDefinition("key", func(ctx context.Context) (int, error) { return 7, ctx.Err() }, QueryOptions{})
+	d := QueryDefinition("key", func(ctx context.Context) (int, error) { return 7, ctx.Err() })
 	d.Shared = shared
 	c := NewClient(Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)
@@ -511,7 +510,7 @@ func TestSharedCacheSourceFailureAndMaxAge(t *testing.T) {
 	}
 	failure := errors.New("source failed")
 	d.Fetcher = func(context.Context) (int, error) { return 0, failure }
-	if err := c2.Invalidate(d.Key, InvalidateOptions{}); err != nil {
+	if err := c2.Invalidate(d.Key); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.Fetch(context.Background(), c2); !errors.Is(err, failure) {
@@ -549,7 +548,7 @@ func TestSharedCacheFailedRefreshDoesNotResurrect(t *testing.T) {
 	}
 	failure := errors.New("source unavailable")
 	d.Fetcher = func(context.Context) (int, error) { return 0, failure }
-	if err := c.Invalidate(d.Key, InvalidateOptions{}); err != nil {
+	if err := c.Invalidate(d.Key); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

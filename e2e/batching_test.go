@@ -91,8 +91,8 @@ func TestHTTPBatchLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(batcher.Close)
-	first := cacheq.Query(client, "user:42", batcher.Fetcher(42), cacheq.QueryOptions{})
-	second := cacheq.Query(client, "user:43", batcher.Fetcher(43), cacheq.QueryOptions{})
+	first := cacheq.Query(client, "user:42", batcher.Fetcher(42))
+	second := cacheq.Query(client, "user:43", batcher.Fetcher(43))
 	t.Cleanup(first.Close)
 	t.Cleanup(second.Close)
 	for index, handle := range []*cacheq.QueryHandle[user]{first, second} {
@@ -104,14 +104,13 @@ func TestHTTPBatchLifecycle(t *testing.T) {
 	if calls := api.count("/bulk"); calls != 1 {
 		t.Fatalf("initial bulk HTTP calls = %d, want 1", calls)
 	}
-	duplicate := cacheq.Query(client, "user:42", batcher.Fetcher(42), cacheq.QueryOptions{})
+	duplicate := cacheq.Query(client, "user:42", batcher.Fetcher(42))
 	t.Cleanup(duplicate.Close)
 	value, err := cacheq.Fetch(
 		context.Background(),
 		client,
 		"user:43",
 		batcher.Fetcher(43),
-		cacheq.QueryOptions{},
 	)
 	if err != nil || value.Name != "Alice:43" {
 		t.Fatalf("cached fetch = %+v, %v", value, err)
@@ -124,7 +123,7 @@ func TestHTTPBatchLifecycle(t *testing.T) {
 	if first.Snapshot().Data.Name != "Alice:42" {
 		t.Fatal("HTTP mutation changed cache before invalidation")
 	}
-	if err := client.Invalidate([]any{"user:42", "user:43"}, cacheq.InvalidateOptions{}); err != nil {
+	if err := client.Invalidate([]any{"user:42", "user:43"}); err != nil {
 		t.Fatal(err)
 	}
 	for index, handle := range []*cacheq.QueryHandle[user]{first, second} {
@@ -156,8 +155,8 @@ func TestHTTPBatchMissingResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(batcher.Close)
-	valid := cacheq.Query(client, "user:42", batcher.Fetcher(42), cacheq.QueryOptions{})
-	missing := cacheq.Query(client, "user:44", batcher.Fetcher(44), cacheq.QueryOptions{})
+	valid := cacheq.Query(client, "user:42", batcher.Fetcher(42))
+	missing := cacheq.Query(client, "user:44", batcher.Fetcher(44))
 	t.Cleanup(valid.Close)
 	t.Cleanup(missing.Close)
 	state := await(t, valid, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
@@ -173,7 +172,6 @@ func TestHTTPBatchMissingResult(t *testing.T) {
 		client,
 		"user:42",
 		batcher.Fetcher(42),
-		cacheq.QueryOptions{},
 	)
 	if err != nil || value.Name != "Alice:42" {
 		t.Fatalf("successful cached key = %+v, %v", value, err)
@@ -215,8 +213,8 @@ func TestHTTPBatchCancellation(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(batcher.Close)
-			first := cacheq.Query(client, "user:42", batcher.Fetcher(42), cacheq.QueryOptions{})
-			second := cacheq.Query(client, "user:43", batcher.Fetcher(43), cacheq.QueryOptions{})
+			first := cacheq.Query(client, "user:42", batcher.Fetcher(42))
+			second := cacheq.Query(client, "user:43", batcher.Fetcher(43))
 			t.Cleanup(first.Close)
 			t.Cleanup(second.Close)
 			awaitBatchSignal(t, entered)

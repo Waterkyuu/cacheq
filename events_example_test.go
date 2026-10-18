@@ -19,7 +19,7 @@ func ExampleClient_SubscribeEvents() {
 	defer events.Close()
 	load := func(context.Context) (string, error) { return "product 42", nil }
 	for range 2 {
-		if _, err := cacheq.Fetch(context.Background(), client, "product:42", load, cacheq.QueryOptions{}); err != nil {
+		if _, err := cacheq.Fetch(context.Background(), client, "product:42", load); err != nil {
 			panic(err)
 		}
 	}

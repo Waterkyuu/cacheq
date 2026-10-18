@@ -187,19 +187,16 @@ func TestSharedClientMutation(t *testing.T) {
 		client,
 		"user:42",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-		cacheq.QueryOptions{},
 	)
 	list := cacheq.Query(
 		client,
 		"users",
 		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
-		cacheq.QueryOptions{},
 	)
 	config := cacheq.Query(
 		client,
 		"settings",
 		readJSON[settings](api.server.Client(), api.server.URL+"/settings"),
-		cacheq.QueryOptions{},
 	)
 	t.Cleanup(detail.Close)
 	t.Cleanup(list.Close)
@@ -211,7 +208,7 @@ func TestSharedClientMutation(t *testing.T) {
 	if detail.Snapshot().Data.Name != "Alice" {
 		t.Fatal("mutation changed cache without invalidation")
 	}
-	if err := client.Invalidate([]any{"user:42", "users", "users"}, cacheq.InvalidateOptions{}); err != nil {
+	if err := client.Invalidate([]any{"user:42", "users", "users"}); err != nil {
 		t.Fatal(err)
 	}
 	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })
@@ -234,8 +231,8 @@ func TestDeferredPredicateInvalidation(t *testing.T) {
 	t.Cleanup(client.Close)
 	detailFetch := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
 	listFetch := readJSON[[]user](api.server.Client(), api.server.URL+"/users")
-	detail := cacheq.Query(client, "user:42", detailFetch, cacheq.QueryOptions{})
-	list := cacheq.Query(client, "users", listFetch, cacheq.QueryOptions{})
+	detail := cacheq.Query(client, "user:42", detailFetch)
+	list := cacheq.Query(client, "users", listFetch)
 	t.Cleanup(detail.Close)
 	t.Cleanup(list.Close)
 	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
@@ -260,12 +257,11 @@ func TestDeferredPredicateInvalidation(t *testing.T) {
 		client,
 		"user:42",
 		detailFetch,
-		cacheq.QueryOptions{},
 	)
 	if err != nil || updated.Name != "Bob" {
 		t.Fatalf("next fetch = %+v, %v", updated, err)
 	}
-	reopened := cacheq.Query(client, "users", listFetch, cacheq.QueryOptions{})
+	reopened := cacheq.Query(client, "users", listFetch)
 	t.Cleanup(reopened.Close)
 	await(
 		t,
@@ -293,12 +289,12 @@ func TestConditionalConsumers(t *testing.T) {
 	if disabled.Snapshot().Fetching || disabled.Snapshot().HasData || api.count("/users/42") != 0 {
 		t.Fatal("disabled query issued HTTP work")
 	}
-	active := cacheq.Query(client, "user:42", fetch, cacheq.QueryOptions{})
+	active := cacheq.Query(client, "user:42", fetch)
 	await(t, disabled, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 	await(t, active, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 	active.Close()
 	api.update(t, user{Name: "Bob"})
-	client.Invalidate("user:42", cacheq.InvalidateOptions{})
+	client.Invalidate("user:42")
 	if disabled.Snapshot().Fetching || api.count("/users/42") != 1 {
 		t.Fatal("disabled consumer refreshed after invalidation")
 	}
@@ -328,7 +324,7 @@ func TestHTTPRetriesAndRetainedData(t *testing.T) {
 	t.Cleanup(client.Close)
 	api.failNext(2)
 	fetch := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
-	handle := cacheq.Query(client, "user:42", fetch, cacheq.QueryOptions{})
+	handle := cacheq.Query(client, "user:42", fetch)
 	t.Cleanup(handle.Close)
 	state := await(t, handle, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 	if state.Err != nil || api.count("/users/42") != 3 {
@@ -366,10 +362,10 @@ func TestHTTPSharedBackgroundLoad(t *testing.T) {
 	cacheq.Set(client, "user", user{Name: "old"})
 	now = now.Add(time.Hour)
 	fetch := readJSON[user](server.Client(), server.URL)
-	first := cacheq.Query(client, "user", fetch, cacheq.QueryOptions{})
+	first := cacheq.Query(client, "user", fetch)
 	t.Cleanup(first.Close)
 	<-started
-	second := cacheq.Query(client, "user", fetch, cacheq.QueryOptions{})
+	second := cacheq.Query(client, "user", fetch)
 	t.Cleanup(second.Close)
 	if state := second.Snapshot(); state.Data.Name != "old" || !state.Stale || !state.Fetching {
 		t.Fatalf("stale HTTP state = %+v", state)
@@ -403,7 +399,6 @@ func TestHTTPCancellation(t *testing.T) {
 					client,
 					"user",
 					readJSON[user](server.Client(), server.URL),
-					cacheq.QueryOptions{},
 				)
 				finished <- err
 			}()
@@ -457,7 +452,6 @@ func TestPublicCacheOperations(t *testing.T) {
 		func(context.Context) ([]user, error) {
 			return []user{{Name: "Alice"}}, nil
 		},
-		cacheq.QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +460,6 @@ func TestPublicCacheOperations(t *testing.T) {
 		client,
 		"users",
 		nil,
-		cacheq.QueryOptions{},
 	)
 	if err != nil || value[0].Name != "Alice" {
 		t.Fatalf("prefetch cache = %+v, %v", value, err)

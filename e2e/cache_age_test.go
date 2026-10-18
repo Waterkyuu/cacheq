@@ -26,7 +26,6 @@ func TestHTTPMaxAgeAfterFailedRefresh(t *testing.T) {
 		client,
 		"user:42",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-		cacheq.QueryOptions{},
 	)
 	t.Cleanup(detail.Close)
 	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
@@ -85,7 +84,7 @@ func TestHTTPMaxAgeDuringRefresh(t *testing.T) {
 	if err := cacheq.Set(client, "user", user{Name: "Alice"}); err != nil {
 		t.Fatal(err)
 	}
-	detail := cacheq.Query(client, "user", readJSON[user](server.Client(), server.URL), cacheq.QueryOptions{})
+	detail := cacheq.Query(client, "user", readJSON[user](server.Client(), server.URL))
 	t.Cleanup(detail.Close)
 	<-started
 	now.Store(int64(time.Minute))

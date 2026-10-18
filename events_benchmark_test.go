@@ -36,7 +36,6 @@ func BenchmarkEventFiltering(b *testing.B) {
 					client,
 					"hot",
 					nil,
-					cacheq.QueryOptions{},
 				); err != nil ||
 					value != 1 {
 					b.Fatalf("cache hit = %d, %v", value, err)

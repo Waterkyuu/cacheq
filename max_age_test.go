@@ -29,7 +29,7 @@ func TestMaxAgeBoundary(t *testing.T) {
 			case "get":
 				Get[string](c, "a")
 			case "fetch":
-				if _, err := Fetch[string](context.Background(), c, "a", nil, QueryOptions{}); err != nil {
+				if _, err := Fetch[string](context.Background(), c, "a", nil); err != nil {
 					t.Fatal(err)
 				}
 			case "invalidate":
@@ -48,7 +48,6 @@ func TestMaxAgeBoundary(t *testing.T) {
 				c,
 				"a",
 				nil,
-				QueryOptions{},
 			); !errors.Is(
 				err,
 				ErrNoFetcher,
@@ -114,14 +113,14 @@ func TestMaxAgeFailedRefresh(t *testing.T) {
 	now.Store(int64(30 * time.Second))
 	failure := errors.New("offline")
 	fetch := func(context.Context) (string, error) { return "", failure }
-	if _, err := Fetch(context.Background(), c, "a", fetch, QueryOptions{}); !errors.Is(err, failure) {
+	if _, err := Fetch(context.Background(), c, "a", fetch); !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
 	if state := Get[string](c, "a"); !state.HasData || state.Data != "old" || !errors.Is(state.Err, failure) {
 		t.Fatalf("failed refresh before deadline = %+v", state)
 	}
 	now.Store(int64(time.Minute))
-	if _, err := Fetch(context.Background(), c, "a", fetch, QueryOptions{}); !errors.Is(err, failure) {
+	if _, err := Fetch(context.Background(), c, "a", fetch); !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
 	if state := Get[string](c, "a"); state.HasData || state.Data != "" || !errors.Is(state.Err, failure) {
@@ -150,7 +149,7 @@ func TestMaxAgeRefreshCompletion(t *testing.T) {
 						}
 						return "new", nil
 					}
-				}, QueryOptions{})
+				})
 				finished <- err
 			}()
 			<-started
@@ -194,7 +193,7 @@ func TestMaxAgeRenewal(t *testing.T) {
 				Set(c, "a", "new")
 			} else if _, err := Fetch(context.Background(), c, "a", func(context.Context) (string, error) {
 				return "new", nil
-			}, QueryOptions{}); err != nil {
+			}); err != nil {
 				t.Fatal(err)
 			}
 			now.Store(int64(time.Minute))

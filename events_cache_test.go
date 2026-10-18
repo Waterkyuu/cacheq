@@ -22,7 +22,7 @@ func TestEventsEmptyRemoval(t *testing.T) {
 				case "data":
 					Set(c, "a", 0)
 				case "error":
-					Fetch(context.Background(), c, "a", load, QueryOptions{})
+					Fetch(context.Background(), c, "a", load)
 				}
 				s := subscribeTestEvents(t, c, EventOptions{})
 				remove := func() {
@@ -106,7 +106,7 @@ func TestEventsBatchInvalidation(t *testing.T) {
 			t.Fatalf("batch invalidation = %+v", event)
 		}
 	}
-	if err := c.Invalidate(func(key any) bool { return key != "b" }, InvalidateOptions{}); err != nil {
+	if err := c.Invalidate(func(key any) bool { return key != "b" }); err != nil {
 		t.Fatal(err)
 	}
 	seen := make(map[any]bool)
@@ -138,10 +138,10 @@ func TestEventsInflightInvalidation(t *testing.T) {
 		case <-release:
 			return 7, nil
 		}
-	}, QueryOptions{})
+	})
 	t.Cleanup(h.Close)
 	start := receiveTestEvent(t, s.Events())
-	if err := c.Invalidate("a", InvalidateOptions{}); err != nil {
+	if err := c.Invalidate("a"); err != nil {
 		t.Fatal(err)
 	}
 	invalidated := receiveTestEvent(t, s.Events())
@@ -193,7 +193,6 @@ func TestEventsRemovalCauses(t *testing.T) {
 				c,
 				"a",
 				func(context.Context) (int, error) { return 9, nil },
-				QueryOptions{},
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -226,7 +225,7 @@ func TestEventsMaxAge(t *testing.T) {
 		t.Fatalf("age removal = %+v", removed)
 	}
 	Get[int](c, "a")
-	_, err := Fetch(context.Background(), c, "a", func(context.Context) (int, error) { return 9, nil }, QueryOptions{})
+	_, err := Fetch(context.Background(), c, "a", func(context.Context) (int, error) { return 9, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +250,7 @@ func TestEventsCloseWithActiveLoad(t *testing.T) {
 		entered <- nil
 		<-release
 		return 7, nil
-	}, QueryOptions{})
+	})
 	t.Cleanup(h.Close)
 	receiveTestEvent(t, s.Events())
 	if err := waitEventCall(t, entered); err != nil {

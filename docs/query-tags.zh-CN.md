@@ -43,15 +43,15 @@ func main() {
 
 	detailDefinition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 		return backend.Load().(User), nil
-	}, cacheq.QueryOptions{})
+	})
 	detailDefinition.Tags = tags
 	listDefinition := cacheq.QueryDefinition("tenant:42:users", func(context.Context) ([]User, error) {
 		return []User{backend.Load().(User)}, nil
-	}, cacheq.QueryOptions{})
+	})
 	listDefinition.Tags = tags
 	otherDefinition := cacheq.QueryDefinition("tenant:99:user:7", func(context.Context) (User, error) {
 		return User{Name: "Carol"}, nil
-	}, cacheq.QueryOptions{})
+	})
 	otherDefinition.Tags = []string{"tenant:99:users"}
 	if err := detailDefinition.Prefetch(ctx, client); err != nil {
 		panic(err)
@@ -69,7 +69,7 @@ func main() {
 
 	backend.Store(User{Name: "Bob"})
 	filter := cacheq.QueryFilter{Tags: []string{"tenant:42:users"}}
-	results, err := client.InvalidateAndWait(ctx, filter, cacheq.InvalidateOptions{})
+	results, err := client.InvalidateAndWait(ctx, filter)
 	if err != nil {
 		panic(err)
 	}
@@ -136,8 +136,8 @@ filter := cacheq.QueryFilter{
 
 | 操作 | 行为 |
 | --- | --- |
-| `client.Invalidate(filter, options)` | 保留数据并标记为过期，按配置安排刷新，不等待完成 |
-| `client.InvalidateAndWait(ctx, filter, options)` | 等待选中查询的失效后刷新结果 |
+| `client.Invalidate(filter, options...)` | 保留数据并标记为过期，按配置安排刷新，不等待完成 |
+| `client.InvalidateAndWait(ctx, filter, options...)` | 等待选中查询的失效后刷新结果 |
 | `client.Cancel(filter)` | 取消选中的共享加载，保留已完成的数据和订阅 |
 | `client.Remove(filter)` | 取消选中的共享加载并删除缓存数据，保留订阅 |
 

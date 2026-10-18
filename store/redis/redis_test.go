@@ -179,7 +179,7 @@ func TestRedisQueryIntegration(t *testing.T) {
 		close(started)
 		<-release
 		return 1, nil
-	}, cacheq.QueryOptions{})
+	})
 	d.Shared = shared
 	c1 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	c2 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
@@ -188,7 +188,7 @@ func TestRedisQueryIntegration(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := d.Fetch(context.Background(), c1); done <- err }()
 	<-started
-	if err := d.InvalidateShared(context.Background(), c1, cacheq.InvalidateOptions{}); err != nil {
+	if err := d.InvalidateShared(context.Background(), c1); err != nil {
 		t.Fatal(err)
 	}
 	close(release)

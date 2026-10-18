@@ -71,7 +71,7 @@ after: Bob
 | --- | --- |
 | 已拿到该键完整的新数据，或需要初始化缓存 | `Set(client, key, value)` |
 | 需要基于该键当前数据计算新值 | `Update(client, key, update)` |
-| 只知道数据已经变化，需要重新查询 | `client.Invalidate(key, cacheq.InvalidateOptions{})` |
+| 只知道数据已经变化，需要重新查询 | `client.Invalidate(key)` |
 
 分别调用 `Get` 和 `Set` 时，两次调用之间可能发生其他写入，最后的 `Set` 会覆盖它。`Update` 会检查计算期间的数据是否变化，避免基于旧值覆盖新结果。
 
@@ -111,7 +111,7 @@ switch {
 case errors.Is(err, cacheq.ErrNoData):
 	return nil
 case errors.Is(err, cacheq.ErrUpdateConflict):
-	return client.Invalidate("users", cacheq.InvalidateOptions{})
+	return client.Invalidate("users")
 default:
 	return err
 }

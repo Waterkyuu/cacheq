@@ -168,7 +168,7 @@ func TestRedisTaggedQueryPropagation(t *testing.T) {
 	d, l := detail.Query(b), list.Query(b)
 	t.Cleanup(d.Close)
 	t.Cleanup(l.Close)
-	if err := a.InvalidateSharedTags(ctx, store, []string{"tenant:42:users"}, cacheq.InvalidateOptions{}); err != nil {
+	if err := a.InvalidateSharedTags(ctx, store, []string{"tenant:42:users"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, updates := range []<-chan bool{staleSignal(ctx, d.Updates()), staleSignal(ctx, l.Updates())} {

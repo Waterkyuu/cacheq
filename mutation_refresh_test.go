@@ -45,9 +45,9 @@ func TestMutationAwaitedSuccess(t *testing.T) {
 		backend.Store(int32(value))
 		return value, nil
 	}, func(ctx context.Context, _, _ int) error {
-		_, err := c.InvalidateAndWait(ctx, "key", InvalidateOptions{})
+		_, err := c.InvalidateAndWait(ctx, "key")
 		return err
-	}, MutationOptions{})
+	})
 	t.Cleanup(h.Close)
 	done := make(chan mutationRefreshResult, 1)
 	go func() {
@@ -84,17 +84,16 @@ func TestMutationRefreshFailure(t *testing.T) {
 	Set(c, "key", 1)
 	failure := errors.New("refresh failed")
 	updateFailure := errors.New("local update failed")
-	q := Query(c, "key", func(context.Context) (int, error) { return 0, failure }, QueryOptions{})
+	q := Query(c, "key", func(context.Context) (int, error) { return 0, failure })
 	t.Cleanup(q.Close)
 	writes := 0
 	h := Mutation(
 		c,
 		func(context.Context, int) (int, error) { writes++; return 2, nil },
 		func(ctx context.Context, _, _ int) error {
-			_, err := c.InvalidateAndWait(ctx, "key", InvalidateOptions{})
+			_, err := c.InvalidateAndWait(ctx, "key")
 			return errors.Join(updateFailure, err)
 		},
-		MutationOptions{},
 	)
 	t.Cleanup(h.Close)
 	result, err := h.Mutate(context.Background(), 2)
@@ -125,16 +124,15 @@ func TestMutationRefreshCancellation(t *testing.T) {
 				case <-ctx.Done():
 					return 0, ctx.Err()
 				}
-			}, QueryOptions{})
+			})
 			t.Cleanup(q.Close)
 			h := Mutation(
 				c,
 				func(context.Context, int) (int, error) { return 2, nil },
 				func(ctx context.Context, _, _ int) error {
-					_, err := c.InvalidateAndWait(ctx, "key", InvalidateOptions{})
+					_, err := c.InvalidateAndWait(ctx, "key")
 					return err
 				},
-				MutationOptions{},
 			)
 			t.Cleanup(h.Close)
 			ctx, cancel := context.WithCancel(context.Background())
@@ -188,7 +186,7 @@ func TestMutationRefreshLateSuccess(t *testing.T) {
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		}
-	}, QueryOptions{})
+	})
 	t.Cleanup(q.Close)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -201,7 +199,7 @@ func TestMutationRefreshLateSuccess(t *testing.T) {
 			return err
 		}
 		return ctx.Err()
-	}, MutationOptions{})
+	})
 	t.Cleanup(h.Close)
 	result, err := h.Mutate(ctx, 2)
 	if err != nil || result.Data != 2 || !errors.Is(result.SyncErr, context.Canceled) {

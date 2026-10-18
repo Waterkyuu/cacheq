@@ -13,6 +13,37 @@ import (
 	cacheq "github.com/Waterkyuu/cacheq"
 )
 
+// TestHTTPTooManyOptions rejects extra configurations without issuing an HTTP request.
+func TestHTTPTooManyOptions(t *testing.T) {
+	for _, api := range []string{"fetch", "prefetch", "query", "definition"} {
+		t.Run(api, func(t *testing.T) {
+			backend := newUserAPI(t)
+			client := cacheq.NewClient(cacheq.Options{})
+			t.Cleanup(client.Close)
+			load := readJSON[user](backend.server.Client(), backend.server.URL+"/users/42")
+			options := []cacheq.QueryOptions{{}, {}}
+			ctx := context.Background()
+			var err error
+			switch api {
+			case "fetch":
+				_, err = cacheq.Fetch(ctx, client, "user", load, options...)
+			case "prefetch":
+				err = cacheq.Prefetch(ctx, client, "user", load, options...)
+			case "query":
+				query := cacheq.Query(client, "user", load, options...)
+				t.Cleanup(query.Close)
+				err = query.Snapshot().Err
+			case "definition":
+				definition := cacheq.QueryDefinition("user", load, options...)
+				_, err = definition.Fetch(ctx, client)
+			}
+			if !errors.Is(err, cacheq.ErrTooManyOptions) || backend.count("/users/42") != 0 {
+				t.Fatalf("rejected HTTP read = %v, requests=%d", err, backend.count("/users/42"))
+			}
+		})
+	}
+}
+
 // TestHTTPSharedQueryOptions applies one disabled configuration to subscriptions and explicit HTTP reads.
 func TestHTTPSharedQueryOptions(t *testing.T) {
 	for _, entry := range []string{"fetch", "prefetch", "refetch"} {
@@ -29,7 +60,7 @@ func TestHTTPSharedQueryOptions(t *testing.T) {
 				load := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
 				query := cacheq.Query(client, "user", load, options)
 				t.Cleanup(query.Close)
-				if err := client.Invalidate("user", cacheq.InvalidateOptions{}); err != nil {
+				if err := client.Invalidate("user"); err != nil {
 					t.Fatal(err)
 				}
 				if api.count("/users/42") != 0 || query.Snapshot().Fetching {
@@ -100,7 +131,7 @@ func TestHTTPQueryDefinition(t *testing.T) {
 		t.Fatalf("definition HTTP cache = %+v, %v, state=%+v", value, err, query.Snapshot())
 	}
 	api.update(t, user{Name: "Bob"})
-	if err := client.Invalidate(definition.Key, cacheq.InvalidateOptions{}); err != nil {
+	if err := client.Invalidate(definition.Key); err != nil {
 		t.Fatal(err)
 	}
 	if query.Snapshot().Fetching || api.count("/users/42") != 2 {
@@ -114,7 +145,7 @@ func TestHTTPQueryDefinition(t *testing.T) {
 	active := definition.Query(client)
 	t.Cleanup(active.Close)
 	api.update(t, user{Name: "Carol"})
-	if err := client.Invalidate(definition.Key, cacheq.InvalidateOptions{}); err != nil {
+	if err := client.Invalidate(definition.Key); err != nil {
 		t.Fatal(err)
 	}
 	await(t, active, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Carol" && !s.Fetching })

@@ -55,7 +55,7 @@ func TestBatcherFetcherClosedStopsRetries(t *testing.T) {
 							return value, fmt.Errorf("load batch: %w", err)
 						}
 						return value, nil
-					}, QueryOptions{})
+					})
 					result <- err
 				}()
 				if active {
@@ -130,7 +130,7 @@ func TestBatcherFetcherReplacement(t *testing.T) {
 				}
 				return b.Load(&batchWaitContext{Context: ctx, ready: admitted}, 1)
 			}
-			handle := Query(client, "product:1", fetch, QueryOptions{})
+			handle := Query(client, "product:1", fetch)
 			t.Cleanup(handle.Close)
 			receiveBatchValue(t, started)
 			switch action {
@@ -181,12 +181,12 @@ func TestBatcherFetcherIntegration(t *testing.T) {
 	if calls.Load() != 0 {
 		t.Fatal("binding a fetcher started a callback")
 	}
-	first := Query(client, batchProductKey{ID: 1}, firstFetcher, QueryOptions{})
+	first := Query(client, batchProductKey{ID: 1}, firstFetcher)
 	t.Cleanup(first.Close)
 	receiveBatchValue(t, timers)
 	second := make(chan BatchResult[int], 1)
 	go func() {
-		value, err := Fetch(context.Background(), client, batchProductKey{ID: 2}, b.Fetcher(2), QueryOptions{})
+		value, err := Fetch(context.Background(), client, batchProductKey{ID: 2}, b.Fetcher(2))
 		second <- BatchResult[int]{Data: value, Err: err}
 	}()
 	if ids := receiveBatchValue(t, keys); !reflect.DeepEqual(ids, []int{1, 2}) {
@@ -207,18 +207,17 @@ func TestBatcherFetcherIntegration(t *testing.T) {
 			client,
 			batchProductKey{ID: id},
 			b.Fetcher(id),
-			QueryOptions{},
 		); value != id*11 ||
 			err != nil {
 			t.Fatalf("cached product %d = %d, %v", id, value, err)
 		}
 	}
-	fresh := Query(client, batchProductKey{ID: 1}, b.Fetcher(1), QueryOptions{})
+	fresh := Query(client, batchProductKey{ID: 1}, b.Fetcher(1))
 	t.Cleanup(fresh.Close)
 	if state := fresh.Snapshot(); state.Data != 11 || state.Err != nil || state.Fetching || calls.Load() != 1 {
 		t.Fatalf("fresh query = %+v; callbacks = %d", state, calls.Load())
 	}
-	if err := Prefetch(context.Background(), client, batchProductKey{ID: 1}, b.Fetcher(1), QueryOptions{}); err != nil {
+	if err := Prefetch(context.Background(), client, batchProductKey{ID: 1}, b.Fetcher(1)); err != nil {
 		t.Fatalf("cached prefetch = %v", err)
 	}
 	if _, err := Fetch(
@@ -226,7 +225,6 @@ func TestBatcherFetcherIntegration(t *testing.T) {
 		client,
 		batchProductKey{ID: 3},
 		b.Fetcher(3),
-		QueryOptions{},
 	); !errors.Is(
 		err,
 		ErrBatcherClosed,
@@ -253,10 +251,10 @@ func TestBatcherFetcherInvalidation(t *testing.T) {
 		},
 		BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
-	first := Query(client, batchProductKey{ID: 1}, b.Fetcher(1), QueryOptions{})
+	first := Query(client, batchProductKey{ID: 1}, b.Fetcher(1))
 	t.Cleanup(first.Close)
 	receiveBatchValue(t, timers)
-	second := Query(client, batchProductKey{ID: 2}, b.Fetcher(2), QueryOptions{})
+	second := Query(client, batchProductKey{ID: 2}, b.Fetcher(2))
 	t.Cleanup(second.Close)
 	for i, handle := range []*QueryHandle[int]{first, second} {
 		state := awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.HasData && !s.Fetching })
@@ -266,7 +264,6 @@ func TestBatcherFetcherInvalidation(t *testing.T) {
 	}
 	if err := client.Invalidate(
 		[]any{batchProductKey{ID: 1}, batchProductKey{ID: 2}},
-		InvalidateOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -302,10 +299,10 @@ func TestBatcherFetcherRetries(t *testing.T) {
 		},
 		BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
-	first := Query(client, batchProductKey{ID: 1}, b.Fetcher(1), QueryOptions{})
+	first := Query(client, batchProductKey{ID: 1}, b.Fetcher(1))
 	t.Cleanup(first.Close)
 	receiveBatchValue(t, timers)
-	second := Query(client, batchProductKey{ID: 2}, b.Fetcher(2), QueryOptions{})
+	second := Query(client, batchProductKey{ID: 2}, b.Fetcher(2))
 	t.Cleanup(second.Close)
 	if ids := receiveBatchValue(t, keys); !reflect.DeepEqual(ids, []int{1, 2}) {
 		t.Fatalf("initial keys = %v", ids)
@@ -348,11 +345,11 @@ func TestBatcherFetcherCancellation(t *testing.T) {
 	defer cancel()
 	first := make(chan error, 1)
 	go func() {
-		_, err := Fetch(ctx, client, batchProductKey{ID: 1}, b.Fetcher(1), QueryOptions{})
+		_, err := Fetch(ctx, client, batchProductKey{ID: 1}, b.Fetcher(1))
 		first <- err
 	}()
 	receiveBatchValue(t, timers)
-	second := Query(client, batchProductKey{ID: 2}, b.Fetcher(2), QueryOptions{})
+	second := Query(client, batchProductKey{ID: 2}, b.Fetcher(2))
 	t.Cleanup(second.Close)
 	batchCtx := receiveBatchValue(t, started)
 	cancel()
@@ -389,10 +386,10 @@ func TestBatcherFetcherLocalWrite(t *testing.T) {
 		},
 		BatchOptions{Wait: time.Hour, MaxBatchSize: 2},
 	)
-	first := Query(client, batchProductKey{ID: 1}, b.Fetcher(1), QueryOptions{})
+	first := Query(client, batchProductKey{ID: 1}, b.Fetcher(1))
 	t.Cleanup(first.Close)
 	receiveBatchValue(t, timers)
-	second := Query(client, batchProductKey{ID: 2}, b.Fetcher(2), QueryOptions{})
+	second := Query(client, batchProductKey{ID: 2}, b.Fetcher(2))
 	t.Cleanup(second.Close)
 	batchCtx := receiveBatchValue(t, started)
 	if err := Set(client, batchProductKey{ID: 1}, 99); err != nil {
@@ -425,7 +422,7 @@ func TestBatcherFetcherConsumerOptions(t *testing.T) {
 	fetch := b.Fetcher(1)
 	key := batchProductKey{ID: 1}
 	for range 2 {
-		if value, err := Fetch(context.Background(), client, key, fetch, QueryOptions{}); value != 1 || err != nil {
+		if value, err := Fetch(context.Background(), client, key, fetch); value != 1 || err != nil {
 			t.Fatalf("default cache decision = %d, %v", value, err)
 		}
 	}
@@ -467,7 +464,6 @@ func TestBatcherFetcherScopedKeys(t *testing.T) {
 			client,
 			tenantProductKey{Tenant: tenant, ID: 42},
 			b.Fetcher(42),
-			QueryOptions{},
 		)
 		if value != tenant || err != nil {
 			t.Fatalf("tenant %s = %q, %v", tenant, value, err)

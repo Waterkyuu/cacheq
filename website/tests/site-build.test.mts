@@ -167,6 +167,7 @@ test("Go search results resolve to published sections and public source declarat
 		"SharedCache",
 		"SharedStore",
 		"NewSharedCache",
+		"ErrTooManyOptions",
 		"QueryDefinition",
 		"Definition",
 		"Definition.Fetch",
@@ -244,7 +245,10 @@ test("new feature guides are discoverable and render the maintained API document
 		const homepage = await readFile(path.join(build, prefix, "index.html"), "utf8");
 		const queries = await readFile(path.join(build, prefix, "docs/queries/index.html"), "utf8");
 		for (const [slug, declarations] of [
-			["query-options", ["QueryOptions", "QueryDefinition", "Disable", "Prefetch"]],
+			[
+				"query-options",
+				["QueryOptions", "QueryDefinition", "Disable", "Prefetch", "ErrTooManyOptions"],
+			],
 			["shared-cache", ["SharedCacheOptions", "SharedStore", "InvalidateShared", "WriteConflicts"]],
 			[
 				"shared-invalidation",

@@ -32,7 +32,6 @@ func main() {
 			client,
 			"greeting",
 			load,
-			cacheq.QueryOptions{},
 		); err != nil {
 			panic(err)
 		}

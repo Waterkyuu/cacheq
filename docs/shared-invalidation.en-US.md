@@ -218,13 +218,13 @@ func waitStale[V any](ctx context.Context, query *cacheq.QueryHandle[V]) error {
 
 | API | Contract |
 | --- | --- |
-| `client.WatchShared(ctx, store, options)` | Confirm subscription admission, mark existing bound queries stale, and return a `*SharedWatcher` with one explicit refresh policy |
+| `client.WatchShared(ctx, store, options...)` | Confirm subscription admission, mark existing bound queries stale, and return a `*SharedWatcher` with zero or one refresh policy |
 | `watch.Close()` | Cancel processing and wait for watcher-owned subscription release; idempotent and safe under concurrent closure |
 | `watch.Done()` | Close after processing stops and resources are released |
 | `watch.Stats()` | Return cumulative delivery and recovery statistics |
-| `definition.InvalidateShared(ctx, client, options)` | Commit remote key invalidation before applying the exact local-key invalidation; publish one operation receipt |
+| `definition.InvalidateShared(ctx, client, options...)` | Commit remote key invalidation before applying the exact local-key invalidation; publish one operation receipt |
 | `shared.Invalidate(ctx)` | Perform remote key invalidation only; active watchers can still invalidate their local queries asynchronously |
-| `client.InvalidateSharedTags(ctx, store, tags, options)` | Commit remote OR-matching tag invalidation, then apply it to this Client's bound queries; no remote rollback on local failure |
+| `client.InvalidateSharedTags(ctx, store, tags, options...)` | Commit remote OR-matching tag invalidation, then apply it to this Client's bound queries; no remote rollback on local failure |
 | `store.InvalidateTags(ctx, tags)` | Return the committed tag receipt without directly operating on a Client |
 
 Use the same `Store` object for a Client's query configurations and its watcher. `InvalidationScope()` is a process-local routing identity, not a cross-process cache key. Different processes may create different Store objects with the same Redis address, Prefix, and EnableTags configuration; their notifications use the same remote channel. Different local Store objects intentionally have separate routing identities, even when their remote configurations happen to match.
@@ -237,7 +237,7 @@ Watch setup uses the caller context and Client lifetime. The Redis adapter bound
 
 ## Notification policy and local lifecycle
 
-`WatchShared` requires one `InvalidateOptions` value. Its zero value uses `RefetchObserved` with `RefetchAfterLoad: false`: matching retained results become stale and enabled observers refresh when no load is active. Set `RefetchAfterLoad: true` to coalesce an active load into at most one follow-up. When migrating a formerly omitted watch configuration, pass `InvalidateOptions{RefetchAfterLoad: true}` to retain that behavior. `RefetchNone` publishes stale state without starting new work.
+`WatchShared` accepts zero or one `InvalidateOptions` value. Omitted options and the zero value use `RefetchObserved` with `RefetchAfterLoad: false`: matching retained results become stale and enabled observers refresh when no load is active. Set `RefetchAfterLoad: true` to coalesce an active load into at most one follow-up. Extra configurations return `ErrTooManyOptions` before opening a subscription or marking local queries stale. `RefetchNone` publishes stale state without starting new work.
 
 Notifications preserve HasData and existing values. They do not enable disabled handles or create subscriptions for unobserved queries. A subsequent explicit Fetch can load a replacement. Query handles still own their own Close, independently of watcher lifetime.
 

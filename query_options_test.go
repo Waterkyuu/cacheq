@@ -37,7 +37,7 @@ func TestSharedQueryOptions(t *testing.T) {
 			}
 			h := Query(c, "user", load, options)
 			t.Cleanup(h.Close)
-			if err := c.Invalidate("user", InvalidateOptions{}); err != nil {
+			if err := c.Invalidate("user"); err != nil {
 				t.Fatal(err)
 			}
 			if calls != 0 || h.Snapshot().Fetching {
@@ -138,7 +138,7 @@ func TestQueryOptionsDefaultEnabled(t *testing.T) {
 			} else if state := handle.Snapshot(); state.Fetching || state.HasData || calls.Load() != 0 {
 				t.Fatalf("disabled initial state = %+v; calls=%d", state, calls.Load())
 			}
-			if err := c.Invalidate("users", InvalidateOptions{}); err != nil {
+			if err := c.Invalidate("users"); err != nil {
 				t.Fatal(err)
 			}
 			if tc.automatic {
@@ -160,7 +160,7 @@ func TestQueryOptionsDisableCopied(t *testing.T) {
 	}, options)
 	t.Cleanup(handle.Close)
 	options.Disable = false
-	if err := c.Invalidate("users", InvalidateOptions{}); err != nil {
+	if err := c.Invalidate("users"); err != nil {
 		t.Fatal(err)
 	}
 	if handle.Snapshot().Fetching || calls.Load() != 0 {
@@ -171,7 +171,7 @@ func TestQueryOptionsDisableCopied(t *testing.T) {
 	}
 	awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
 	options.Disable = true
-	if err := c.Invalidate("users", InvalidateOptions{}); err != nil {
+	if err := c.Invalidate("users"); err != nil {
 		t.Fatal(err)
 	}
 	awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching })
@@ -297,7 +297,7 @@ func TestImperativeOptionsFreshness(t *testing.T) {
 		return calls, nil
 	}
 	hour, zero := time.Hour, time.Duration(0)
-	if err := Prefetch(context.Background(), c, "users", fetch, QueryOptions{}); err != nil {
+	if err := Prefetch(context.Background(), c, "users", fetch); err != nil {
 		t.Fatal(err)
 	}
 	now.Store(int64(time.Minute))
@@ -305,7 +305,7 @@ func TestImperativeOptionsFreshness(t *testing.T) {
 	if err != nil || value != 1 || calls != 1 {
 		t.Fatalf("longer policy = %d, %v; calls=%d", value, err, calls)
 	}
-	value, err = Fetch(context.Background(), c, "users", fetch, QueryOptions{})
+	value, err = Fetch(context.Background(), c, "users", fetch)
 	if err != nil || value != 2 || calls != 2 {
 		t.Fatalf("default policy = %d, %v; calls=%d", value, err, calls)
 	}
@@ -650,9 +650,9 @@ func TestQueryOptionsAutomaticRefresh(t *testing.T) {
 	}, QueryOptions{Retry: &retries, RetryDelay: func(int) time.Duration { return 0 }})
 	t.Cleanup(first.Close)
 	awaitState(t, first.Updates(), func(s Snapshot[int]) bool { return s.HasData && !s.Fetching })
-	second := Query(c, "users", func(context.Context) (int, error) { return 99, nil }, QueryOptions{})
+	second := Query(c, "users", func(context.Context) (int, error) { return 99, nil })
 	t.Cleanup(second.Close)
-	if err := c.Invalidate("users", InvalidateOptions{}); err != nil {
+	if err := c.Invalidate("users"); err != nil {
 		t.Fatal(err)
 	}
 	awaitStats(t, c, func(s Stats) bool { return s.LoadSuccesses == 2 })
@@ -662,7 +662,7 @@ func TestQueryOptionsAutomaticRefresh(t *testing.T) {
 	if err := first.SetEnabled(false); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Invalidate("users", InvalidateOptions{}); err != nil {
+	if err := c.Invalidate("users"); err != nil {
 		t.Fatal(err)
 	}
 	awaitState(t, second.Updates(), func(s Snapshot[int]) bool { return s.Data == 99 && !s.Fetching })

@@ -89,7 +89,7 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 		return event
 	}
 	load := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
-	first := cacheq.Query(client, "user:42", load, cacheq.QueryOptions{})
+	first := cacheq.Query(client, "user:42", load)
 	t.Cleanup(first.Close)
 	start := read(cacheq.EventLoadStarted, cacheq.TriggerQuery, cacheq.ReasonMissing)
 	select {
@@ -97,7 +97,7 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("initial diagnostic HTTP request did not start")
 	}
-	second := cacheq.Query(client, "user:42", load, cacheq.QueryOptions{})
+	second := cacheq.Query(client, "user:42", load)
 	t.Cleanup(second.Close)
 	join := read(cacheq.EventLoadJoined, cacheq.TriggerQuery, cacheq.ReasonMissing)
 	unblock()
@@ -132,7 +132,6 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 		client,
 		"user:42",
 		load,
-		cacheq.QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +146,6 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 		client,
 		"settings",
 		readJSON[settings](api.server.Client(), api.server.URL+"/settings"),
-		cacheq.QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +158,7 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 	}
 
 	api.update(t, user{Name: "Bob"})
-	if err := client.Invalidate("user:42", cacheq.InvalidateOptions{}); err != nil {
+	if err := client.Invalidate("user:42"); err != nil {
 		t.Fatal(err)
 	}
 	read(cacheq.EventInvalidated, cacheq.TriggerInvalidate, cacheq.ReasonInvalidated)
@@ -178,7 +176,6 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 		client,
 		"user:42",
 		load,
-		cacheq.QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +196,6 @@ func TestHTTPDiagnosticLifecycle(t *testing.T) {
 		client,
 		"user:42",
 		load,
-		cacheq.QueryOptions{},
 	); err != nil || value.Name != "Bob" {
 		t.Fatalf("HTTP load after removal = %+v, %v", value, err)
 	}
@@ -235,7 +231,7 @@ func TestHTTPDiagnosticDiscard(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(events.Close)
-	handle := cacheq.Query(client, "user", readJSON[user](server.Client(), server.URL), cacheq.QueryOptions{})
+	handle := cacheq.Query(client, "user", readJSON[user](server.Client(), server.URL))
 	t.Cleanup(handle.Close)
 	start := expectDiagnosticEvent(t, events, cacheq.Event{
 		Key: "user", Kind: cacheq.EventLoadStarted, Trigger: cacheq.TriggerQuery, Reason: cacheq.ReasonMissing,
@@ -288,7 +284,6 @@ func TestHTTPDiagnosticBackpressure(t *testing.T) {
 			client,
 			"user",
 			readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-			cacheq.QueryOptions{},
 		)
 		if err != nil || value.Name != "Alice" {
 			t.Fatalf("HTTP load with full diagnostic buffer = %+v, %v", value, err)

@@ -16,7 +16,7 @@ func TestHTTPCapacityEviction(t *testing.T) {
 	t.Cleanup(client.Close)
 	detailFetch := readJSON[user](api.server.Client(), api.server.URL+"/users/42")
 	listFetch := readJSON[[]user](api.server.Client(), api.server.URL+"/users")
-	detail := cacheq.Query(client, "user:42", detailFetch, cacheq.QueryOptions{})
+	detail := cacheq.Query(client, "user:42", detailFetch)
 	t.Cleanup(detail.Close)
 	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.HasData && !s.Fetching })
 	if _, err := cacheq.Fetch(
@@ -24,7 +24,6 @@ func TestHTTPCapacityEviction(t *testing.T) {
 		client,
 		"users",
 		listFetch,
-		cacheq.QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +36,6 @@ func TestHTTPCapacityEviction(t *testing.T) {
 		client,
 		"settings",
 		readJSON[settings](api.server.Client(), api.server.URL+"/settings"),
-		cacheq.QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +47,6 @@ func TestHTTPCapacityEviction(t *testing.T) {
 		client,
 		"user:42",
 		detailFetch,
-		cacheq.QueryOptions{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +58,6 @@ func TestHTTPCapacityEviction(t *testing.T) {
 		client,
 		"users",
 		listFetch,
-		cacheq.QueryOptions{},
 	); err != nil || len(users) != 1 {
 		t.Fatalf("reload evicted list = %+v, %v", users, err)
 	}
