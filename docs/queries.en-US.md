@@ -79,7 +79,7 @@ Expected output:
 Alice
 ```
 
-Each key has one static result type: `"user:42"` stores `User`; `"users"` stores `[]User`. Include all parameters, tenants, and identities affecting a result in its key. Strings, integers, and comparable structs are supported. Nil keys, slices, and maps are rejected. Sharing is in-process; this is not automatic cross-service synchronization.
+Each key has one static result type: `"user:42"` stores `User`; `"users"` stores `[]User`. Include all parameters, tenants, and identities affecting a result in its key. Strings, integers, and comparable structs are supported. Keys must equal themselves under Go equality. Nil keys, slices, maps, and NaN values (including structs, arrays, or complex values containing NaN) return `ErrInvalidKey`. Invalid keys cannot create cache entries, loads, or subscriptions; target lists are validated before any changes. Sharing is in-process; this is not automatic cross-service synchronization.
 
 ## API snippet prerequisites
 

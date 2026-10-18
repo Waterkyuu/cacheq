@@ -539,6 +539,10 @@ func (c *Client) checkLocked(key any, typ reflect.Type) error {
 	if key == nil || !reflect.ValueOf(key).Comparable() {
 		return fmt.Errorf("%w: %T", ErrInvalidKey, key)
 	}
+	// NaN-containing keys are comparable but cannot retrieve their own map entries.
+	if key != key { //nolint:gocritic // Reject non-reflexive keys before any map access.
+		return fmt.Errorf("%w: %T", ErrInvalidKey, key)
+	}
 	cached := c.entries[key]
 	typeMismatch := typ != nil && cached.typ != nil && cached.typ != typ
 	if typeMismatch {
