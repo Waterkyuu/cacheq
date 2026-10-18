@@ -142,7 +142,7 @@ jobs:
           redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no &
           redis_pid=$!
           trap 'kill "$redis_pid"; wait "$redis_pid" || true' EXIT
-          for attempt in {1..50}; do
+          for _ in {1..50}; do
             if redis-cli -h 127.0.0.1 -p 16379 ping >/dev/null 2>&1; then
               break
             fi
