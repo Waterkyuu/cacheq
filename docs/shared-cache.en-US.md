@@ -103,7 +103,7 @@ For user 8, create a configuration with a different key such as `tenant:42:user:
 
 ### Define a query using the shared cache
 
-Call `cacheq.QueryDefinition(key, fetcher)` to define the local query identity and source read. The loader returns `User`, so the function infers `User` and returns `cacheq.Definition[User]`. Assign the shared object from the previous step to the returned definition's `Shared` field; it must have type `*cacheq.SharedCache[User]`.
+Call `cacheq.QueryDefinition(key, fetcher)` to define the local query identity and source read. The loader returns `User`, so the function infers `User` and returns `(cacheq.Definition[User], error)`. Handle the construction error, then assign the shared object from the previous step to the returned definition's `Shared` field; it must have type `*cacheq.SharedCache[User]`.
 
 Here source is a concurrency-safe database substitute and calls counts source reads. This code only defines the Fetcher callback; constructing a query definition does not execute it. In application code, replace it with a database or API read that uses its supplied context.
 
@@ -113,10 +113,13 @@ var source atomic.Value
 source.Store(User{Name: "Alice"})
 var calls atomic.Int64
 // Definition connects the shared rules to a local query identity and source.
-definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+definition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 	calls.Add(1)
 	return source.Load().(User), nil
 })
+if err != nil {
+	panic(err)
+}
 definition.Shared = shared
 
 ```
@@ -369,10 +372,13 @@ func main() {
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
 	// Definition connects the shared rules to a local query identity and source.
-	definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+	definition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 		calls.Add(1)
 		return source.Load().(User), nil
 	})
+	if err != nil {
+		panic(err)
+	}
 	definition.Shared = shared
 
 	// Both Clients use the same shared configuration and keep separate local results.

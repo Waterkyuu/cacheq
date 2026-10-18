@@ -115,7 +115,10 @@ func newSharedDefinition(t *testing.T, store SharedStore, load Fetcher[int]) Def
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition := QueryDefinition("local-answer", load)
+	definition, err := QueryDefinition("local-answer", load)
+	if err != nil {
+		t.Fatal(err)
+	}
 	definition.Shared = shared
 	return definition
 }
@@ -375,10 +378,13 @@ func TestSharedCacheRecordBoundaries(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				definition := QueryDefinition(
+				definition, err := QueryDefinition(
 					"nil",
 					func(context.Context) (*int, error) { return nil, nil },
 				)
+				if err != nil {
+					t.Fatal(err)
+				}
 				definition.Shared = shared
 				if _, err := definition.Fetch(context.Background(), c1); err != nil {
 					t.Fatal(err)
@@ -421,7 +427,10 @@ func TestSharedCacheTimeoutFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := QueryDefinition("key", func(ctx context.Context) (int, error) { return 7, ctx.Err() })
+	d, err := QueryDefinition("key", func(ctx context.Context) (int, error) { return 7, ctx.Err() })
+	if err != nil {
+		t.Fatal(err)
+	}
 	d.Shared = shared
 	c := NewClient(Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)

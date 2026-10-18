@@ -145,18 +145,24 @@ func TestRedisTaggedQueryPropagation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(watch.Close)
-	detail := cacheq.QueryDefinition(
+	detail, err := cacheq.QueryDefinition(
 		"detail",
 		func(context.Context) (int, error) { return 7, nil },
 		cacheq.QueryOptions{Disable: true},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	detail.Shared = intShared
 	detail.Tags = []string{"tenant:42:users"}
-	list := cacheq.QueryDefinition(
+	list, err := cacheq.QueryDefinition(
 		"list",
 		func(context.Context) ([]int, error) { return []int{7}, nil },
 		cacheq.QueryOptions{Disable: true},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	list.Shared = listShared
 	list.Tags = []string{"tenant:42:users"}
 	if _, err := detail.Fetch(ctx, b); err != nil {
@@ -447,11 +453,14 @@ func TestRedisRemoteMembershipPropagation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(watch.Close)
-	d := cacheq.QueryDefinition(
+	d, err := cacheq.QueryDefinition(
 		"local",
 		func(context.Context) (int, error) { return 7, nil },
 		cacheq.QueryOptions{Disable: true},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	d.Tags = []string{"original"}
 	d.Shared = shared
 	if _, err := d.Fetch(ctx, client); err != nil {

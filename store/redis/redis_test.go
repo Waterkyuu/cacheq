@@ -175,11 +175,14 @@ func TestRedisQueryIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	started, release := make(chan struct{}), make(chan struct{})
-	d := cacheq.QueryDefinition("answer", func(context.Context) (int, error) {
+	d, err := cacheq.QueryDefinition("answer", func(context.Context) (int, error) {
 		close(started)
 		<-release
 		return 1, nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	d.Shared = shared
 	c1 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	c2 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})

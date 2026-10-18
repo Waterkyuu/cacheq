@@ -4,7 +4,7 @@
 
 `QueryOptions` is the shared configuration accepted by `Query`, `Fetch`, and `Prefetch`. It overrides Client defaults for freshness, retries, timeouts, and execution budgets. `Disable` controls only Query's automatic loading; explicit `Fetch`, `Prefetch`, and handle `Refetch` still execute.
 
-`QueryDefinition(key, fetcher, options...)` creates a reusable `Definition[V]`, inferring the result type `V` from the loader. Constructing a definition performs no loading and creates no cache or subscription.
+`QueryDefinition(key, fetcher, options...)` returns `(Definition[V], error)`, inferring the result type `V` from the loader. Handle the construction error before using the reusable definition. Construction performs no loading and creates no cache or subscription.
 
 ## Quick start: reuse one configuration
 
@@ -67,7 +67,7 @@ Omitting options, passing `QueryOptions{}`, or leaving `Disable` false permits a
 
 ## `QueryDefinition`: define a typed query once
 
-`QueryDefinition` accepts a query key, a typed loader, and zero or one `QueryOptions` value. It returns a `Definition[V]` by value without executing the loader or validating the key. Validation occurs when an operation uses a Client. Omitting options or passing `QueryOptions{}` uses Client defaults; nil fields inherit their corresponding defaults. Extra configurations are retained as `ErrTooManyOptions`, which the definition reports when used. Configure `Shared` and `Tags` on the returned definition before use.
+`QueryDefinition` accepts a query key, a typed loader, and zero or one `QueryOptions` value. It returns `(Definition[V], error)` without executing the loader or validating the key. Key and result-type validation occurs when an operation uses a Client. Omitting options or passing `QueryOptions{}` uses Client defaults; nil fields inherit their corresponding defaults. Extra configurations immediately return a zero `Definition[V]` and `ErrTooManyOptions`; no error state is retained inside a definition. Configure `Shared` and `Tags` on the returned definition before use.
 
 The returned definition has five exported fields:
 
@@ -101,10 +101,13 @@ func main() {
 	ctx := context.Background()
 	hour := time.Hour
 	calls := 0
-	definition := cacheq.QueryDefinition("greeting", func(context.Context) (string, error) {
+	definition, err := cacheq.QueryDefinition("greeting", func(context.Context) (string, error) {
 		calls++
 		return "hello", nil
 	}, cacheq.QueryOptions{Disable: true, StaleTime: &hour})
+	if err != nil {
+		panic(err)
+	}
 	query := definition.Query(client)
 	defer query.Close()
 	fmt.Println("initial calls:", calls)
@@ -140,7 +143,7 @@ refreshed calls: 2
 | `definition.Query(client)` | `*QueryHandle[V]` with the same contract as `Query` |
 | `definition.Prefetch(ctx, client)` | Loading error with the same contract as `Prefetch` |
 
-The former `QueryDefinition` struct has been replaced by the function. Create definitions with function calls; use `Definition[V]` in explicit variable, parameter, and return type declarations. Typed loaders infer `V`, including typed nil loaders. A bare nil loader has no result type to infer; specify a type argument, such as `cacheq.QueryDefinition[string]("greeting", nil)`, when needed. A nil loader follows the existing operation contracts; it cannot load missing or stale data.
+The former `QueryDefinition` struct has been replaced by the function. Create definitions with function calls and handle the returned error; use `Definition[V]` in explicit variable, parameter, and return type declarations. Typed loaders infer `V`, including typed nil loaders. A bare nil loader has no result type to infer; specify a type argument, such as `cacheq.QueryDefinition[string]("greeting", nil)`, when needed. A nil loader follows the existing operation contracts; it cannot load missing or stale data.
 
 The methods use the definition's key, fetcher, and options directly. To customize one consumer, copy the definition and change the copy's options before calling a method. Changes to Key, Fetcher, or Options apply to subsequent operations without reconfiguring existing handles. Tags declared by subsequent operations are merged into the shared query state. Each method reads option pointer values when its operation starts. Applications must synchronize shared definitions, pointer values, and mutable state captured by loaders.
 
@@ -196,9 +199,9 @@ More than one configuration is reported as `ErrTooManyOptions`, which supports `
 | `Fetch`, `Prefetch`, and invalidation methods | Returned error |
 | `Query` | Failed handle: `Snapshot().Err`, initial `Updates()` state, and `Refetch` |
 | `Mutation` | Failed handle: `Snapshot().Err`, initial `Updates()` state, and `Mutate` |
-| `QueryDefinition` | Records the constructor error; `Fetch`, `Prefetch`, `Query`, and `InvalidateShared` report it when used |
+| `QueryDefinition` | Immediately returns a zero `Definition[V]` and `ErrTooManyOptions` from the constructor |
 
-Invalid query and mutation handles publish one error state and close their update channels. A definition constructed with too many configurations remains invalid when copied or when its exported fields are changed; construct a new definition to correct the call.
+Invalid query and mutation handles publish one error state and close their update channels. `QueryDefinition` reports configuration errors directly at construction. Check its returned error before setting fields or calling methods; definitions have no retained constructor error.
 
 ## Configuration for shared requests
 

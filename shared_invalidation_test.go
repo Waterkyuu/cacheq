@@ -264,7 +264,10 @@ func TestSharedUnknownTagNotificationConfirmsSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := QueryDefinition("detail", func(context.Context) (int, error) { return 7, nil })
+	d, err := QueryDefinition("detail", func(context.Context) (int, error) { return 7, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
 	d.Shared = shared
 	d.Tags = []string{"declared"}
 	bootstrap := NewClient(Options{StaleTime: time.Hour})
@@ -292,7 +295,10 @@ func TestSharedUnknownTagNotificationConfirmsSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sentinel := QueryDefinition("sentinel", func(context.Context) (int, error) { return 1, nil })
+	sentinel, err := QueryDefinition("sentinel", func(context.Context) (int, error) { return 1, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
 	sentinel.Shared = sentinelShared
 	sentinel.Tags = []string{"remote-only"}
 	if _, err := sentinel.Fetch(context.Background(), c); err != nil {
@@ -357,7 +363,10 @@ func TestSharedTagsLocalSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := QueryDefinition("detail", func(context.Context) (int, error) { return 7, nil })
+	d, err := QueryDefinition("detail", func(context.Context) (int, error) { return 7, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
 	d.Shared = shared
 	d.Tags = []string{"tenant:42:users"}
 	c := NewClient(Options{StaleTime: time.Hour})

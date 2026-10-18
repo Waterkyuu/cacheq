@@ -103,7 +103,7 @@ if err != nil {
 
 ### 定义使用共享缓存的查询
 
-调用 `cacheq.QueryDefinition(key, fetcher)` 定义本地查询身份和数据源读取函数。加载函数返回 `User`，因此函数推断结果类型为 `User`，返回 `cacheq.Definition[User]`。将前一步返回的 `shared` 赋给定义的 `Shared` 字段，其类型必须为 `*cacheq.SharedCache[User]`。
+调用 `cacheq.QueryDefinition(key, fetcher)` 定义本地查询身份和数据源读取函数。加载函数返回 `User`，因此函数推断结果类型为 `User`，返回 `(cacheq.Definition[User], error)`。先处理构造错误，再将前一步返回的 `shared` 赋给定义的 `Shared` 字段，其类型必须为 `*cacheq.SharedCache[User]`。
 
 下面的 `source` 是模拟数据库的并发安全变量，`calls` 统计真实回源次数。此处只定义 Fetcher 回调；创建查询定义时不会执行它。业务接入时将回调替换为数据库或 API 读取，并使用传入的 context。
 
@@ -113,10 +113,13 @@ var source atomic.Value
 source.Store(User{Name: "Alice"})
 var calls atomic.Int64
 // Definition connects the shared rules to a local query identity and source.
-definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+definition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 	calls.Add(1)
 	return source.Load().(User), nil
 })
+if err != nil {
+	panic(err)
+}
 definition.Shared = shared
 
 ```
@@ -369,10 +372,13 @@ func main() {
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
 	// Definition connects the shared rules to a local query identity and source.
-	definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+	definition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 		calls.Add(1)
 		return source.Load().(User), nil
 	})
+	if err != nil {
+		panic(err)
+	}
 	definition.Shared = shared
 
 	// Both Clients use the same shared configuration and keep separate local results.

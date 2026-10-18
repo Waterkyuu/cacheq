@@ -120,18 +120,24 @@ func run() error {
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
-	detail := cacheq.QueryDefinition(
+	detail, err := cacheq.QueryDefinition(
 		"detail",
 		func(context.Context) (User, error) { calls.Add(1); return source.Load().(User), nil },
 		cacheq.QueryOptions{Disable: true},
 	)
+	if err != nil {
+		return err
+	}
 	detail.Tags = tags
 	detail.Shared = detailShared
-	list := cacheq.QueryDefinition(
+	list, err := cacheq.QueryDefinition(
 		"list",
 		func(context.Context) ([]User, error) { calls.Add(1); return []User{source.Load().(User)}, nil },
 		cacheq.QueryOptions{Disable: true},
 	)
+	if err != nil {
+		return err
+	}
 	list.Tags = tags
 	list.Shared = listShared
 	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})

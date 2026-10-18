@@ -56,11 +56,14 @@ func TestHTTPSharedTagInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := cacheq.QueryDefinition(
+	d, err := cacheq.QueryDefinition(
 		"user",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
 		cacheq.QueryOptions{Disable: true},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	d.Shared = shared
 	d.Tags = []string{"tenant:42:users"}
 	a, b := cacheq.NewClient(
@@ -154,11 +157,14 @@ func TestHTTPSharedInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := cacheq.QueryDefinition(
+	d, err := cacheq.QueryDefinition(
 		"user",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
 		cacheq.QueryOptions{Disable: true},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	d.Shared = shared
 	a, b := cacheq.NewClient(
 		cacheq.Options{StaleTime: time.Minute},

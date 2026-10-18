@@ -4,7 +4,7 @@
 
 `QueryOptions` 是 `Query`、`Fetch` 和 `Prefetch` 共用的配置，用于覆盖 Client 默认的新鲜期、重试、超时和执行预算。`Disable` 只控制 Query 的自动加载；显式 `Fetch`、`Prefetch` 和查询对象的 `Refetch` 仍会执行。
 
-`QueryDefinition(key, fetcher, options...)` 创建可复用的 `Definition[V]`，从加载函数推断结果类型 `V`。创建定义不会加载数据，也不会创建缓存或订阅。
+`QueryDefinition(key, fetcher, options...)` 返回 `(Definition[V], error)`，从加载函数推断结果类型 `V`。使用可复用定义前必须处理构造错误。创建定义不会加载数据，也不会创建缓存或订阅。
 
 ## 快速开始：复用同一份配置
 
@@ -67,7 +67,7 @@ observed: hello
 
 ## `QueryDefinition`：集中定义类型化查询
 
-`QueryDefinition` 接收查询键、类型化加载函数和零份或一份 `QueryOptions`，按值返回 `Definition[V]`，不会执行加载函数或校验查询键。校验在操作使用 Client 时执行。省略配置或传入 `QueryOptions{}` 时使用 Client 默认值；为 nil 的字段继承对应默认值。构造时的多份配置会被记录为 `ErrTooManyOptions`，并在定义执行操作时报告。在使用返回的定义前，可以配置其 `Shared` 和 `Tags` 字段。
+`QueryDefinition` 接收查询键、类型化加载函数和零份或一份 `QueryOptions`，返回 `(Definition[V], error)`，不会执行加载函数或校验查询键。查询键和结果类型的校验在操作使用 Client 时执行。省略配置或传入 `QueryOptions{}` 时使用 Client 默认值；为 nil 的字段继承对应默认值。多份配置会在构造时立即返回零值 `Definition[V]` 和 `ErrTooManyOptions`，定义内部不保留错误状态。在使用返回的定义前，可以配置其 `Shared` 和 `Tags` 字段。
 
 返回的查询定义包含五个导出字段：
 
@@ -101,10 +101,13 @@ func main() {
 	ctx := context.Background()
 	hour := time.Hour
 	calls := 0
-	definition := cacheq.QueryDefinition("greeting", func(context.Context) (string, error) {
+	definition, err := cacheq.QueryDefinition("greeting", func(context.Context) (string, error) {
 		calls++
 		return "hello", nil
 	}, cacheq.QueryOptions{Disable: true, StaleTime: &hour})
+	if err != nil {
+		panic(err)
+	}
 	query := definition.Query(client)
 	defer query.Close()
 	fmt.Println("initial calls:", calls)
@@ -140,7 +143,7 @@ refreshed calls: 2
 | `definition.Query(client)` | `*QueryHandle[V]`，契约与 `Query` 相同 |
 | `definition.Prefetch(ctx, client)` | 加载错误，契约与 `Prefetch` 相同 |
 
-原 `QueryDefinition` 结构体已替换为函数。创建定义时改用函数调用；显式声明变量、参数或返回值类型时使用 `Definition[V]`。类型化加载函数可以推断 `V`，包括有类型的 nil 加载函数。直接传入 nil 时没有可供推断的结果类型，必要时需要显式指定类型参数，例如 `cacheq.QueryDefinition[string]("greeting", nil)`。nil 加载函数遵循已有操作契约，无法加载缺失或过期的数据。
+原 `QueryDefinition` 结构体已替换为函数。创建定义时改用函数调用并处理返回的错误；显式声明变量、参数或返回值类型时使用 `Definition[V]`。类型化加载函数可以推断 `V`，包括有类型的 nil 加载函数。直接传入 nil 时没有可供推断的结果类型，必要时需要显式指定类型参数，例如 `cacheq.QueryDefinition[string]("greeting", nil)`。nil 加载函数遵循已有操作契约，无法加载缺失或过期的数据。
 
 方法直接使用定义中的键、加载函数和配置。如果需要定制一个消费者，可以先复制定义，再修改副本的配置并调用方法。修改 Key、Fetcher 或 Options 影响后续操作，不重新配置已有查询对象。后续操作声明的标签会合并到共享查询状态中。配置指针指向的值在每次操作开始时读取。业务需同步共享定义、指针值以及加载函数捕获的可变状态。
 
@@ -196,9 +199,9 @@ options := cacheq.QueryOptions{
 | `Fetch`、`Prefetch` 和失效方法 | 返回错误 |
 | `Query` | 失败句柄的 `Snapshot().Err`、`Updates()` 初始状态和 `Refetch` |
 | `Mutation` | 失败句柄的 `Snapshot().Err`、`Updates()` 初始状态和 `Mutate` |
-| `QueryDefinition` | 记录构造错误，在调用 `Fetch`、`Prefetch`、`Query` 或 `InvalidateShared` 时报告 |
+| `QueryDefinition` | 在构造时立即返回零值 `Definition[V]` 和 `ErrTooManyOptions` |
 
-无效的查询和 Mutation 句柄发布一次错误状态后关闭更新通道。构造时传入多份配置的定义，即使被复制或修改其导出字段，仍保持无效；应重新构造定义来修正调用。
+无效的查询和 Mutation 句柄发布一次错误状态后关闭更新通道。`QueryDefinition` 在创建时直接报告配置错误。设置字段或调用方法前必须检查返回的错误；定义不保留构造错误。
 
 ## 共享请求的配置
 

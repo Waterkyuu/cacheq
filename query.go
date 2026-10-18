@@ -43,23 +43,24 @@ type QueryHandle[V any] struct {
 // Extra configurations produce ErrTooManyOptions through the same failed-handle contract.
 // Disabled handles still receive shared updates and may explicitly Refetch. Close releases the subscription.
 func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOptions) *QueryHandle[V] {
-	definition := QueryDefinition(key, fetch, options...)
-	return query(client, definition)
+	definition, err := QueryDefinition(key, fetch, options...)
+	return query(client, definition, err)
 }
 
 // query registers a typed subscription and its definition's labels before starting automatic work.
-func query[V any](client *Client, definition Definition[V]) *QueryHandle[V] {
+// A constructor error produces a failed handle without registering the zero definition.
+func query[V any](client *Client, definition Definition[V], constructorErr error) *QueryHandle[V] {
 	key := definition.Key
 	enabled := !definition.Options.Disable
 	var request queryRequest
-	if definition.err == nil {
+	if constructorErr == nil {
 		request = definition.request(client.options, TriggerQuery)
 	}
 	policy := request.options
 	handle := &QueryHandle[V]{client: client, key: key, updates: make(chan Snapshot[V], 1)}
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	handle.err = definition.err
+	handle.err = constructorErr
 	if handle.err == nil {
 		handle.err = client.checkLocked(key, reflect.TypeFor[V]())
 	}
@@ -200,7 +201,11 @@ func Fetch[V any](
 	fetch Fetcher[V],
 	options ...QueryOptions,
 ) (V, error) {
-	definition := QueryDefinition(key, fetch, options...)
+	definition, err := QueryDefinition(key, fetch, options...)
+	if err != nil {
+		var zero V
+		return zero, err
+	}
 	return definition.Fetch(ctx, client)
 }
 
@@ -235,7 +240,10 @@ func Prefetch[V any](
 	fetch Fetcher[V],
 	options ...QueryOptions,
 ) error {
-	definition := QueryDefinition(key, fetch, options...)
+	definition, err := QueryDefinition(key, fetch, options...)
+	if err != nil {
+		return err
+	}
 	return definition.Prefetch(ctx, client)
 }
 

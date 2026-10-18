@@ -34,8 +34,7 @@ func TestHTTPTooManyOptions(t *testing.T) {
 				t.Cleanup(query.Close)
 				err = query.Snapshot().Err
 			case "definition":
-				definition := cacheq.QueryDefinition("user", load, options...)
-				_, err = definition.Fetch(ctx, client)
+				_, err = cacheq.QueryDefinition("user", load, options...)
 			}
 			if !errors.Is(err, cacheq.ErrTooManyOptions) || backend.count("/users/42") != 0 {
 				t.Fatalf("rejected HTTP read = %v, requests=%d", err, backend.count("/users/42"))
@@ -113,11 +112,14 @@ func TestHTTPQueryDefinition(t *testing.T) {
 	client := cacheq.NewClient(cacheq.Options{})
 	t.Cleanup(client.Close)
 	hour, retries := time.Hour, 1
-	definition := cacheq.QueryDefinition("user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+	definition, err := cacheq.QueryDefinition("user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
 		cacheq.QueryOptions{
 			Disable: true, StaleTime: &hour, Retry: &retries,
 			RetryDelay: func(int) time.Duration { return 0 },
 		})
+	if err != nil {
+		t.Fatal(err)
+	}
 	query := definition.Query(client)
 	t.Cleanup(query.Close)
 	api.failNext(1)
@@ -167,11 +169,14 @@ func TestHTTPDefinitionCancellation(t *testing.T) {
 			t.Cleanup(server.Close)
 			client := cacheq.NewClient(cacheq.Options{})
 			t.Cleanup(client.Close)
-			definition := cacheq.QueryDefinition(
+			definition, err := cacheq.QueryDefinition(
 				"user",
 				readJSON[user](server.Client(), server.URL),
 				cacheq.QueryOptions{Disable: true},
 			)
+			if err != nil {
+				t.Fatal(err)
+			}
 			query := definition.Query(client)
 			t.Cleanup(query.Close)
 			ctx, cancel := context.WithCancel(context.Background())

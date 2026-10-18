@@ -15,15 +15,21 @@ func TestHTTPQueryTags(t *testing.T) {
 	api := newUserAPI(t)
 	c := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)
-	detailDefinition := cacheq.QueryDefinition(
+	detailDefinition, err := cacheq.QueryDefinition(
 		"tenant:42:profile",
 		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	detailDefinition.Tags = []string{"tenant:42:users"}
-	listDefinition := cacheq.QueryDefinition(
+	listDefinition, err := cacheq.QueryDefinition(
 		"tenant:42:list",
 		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	listDefinition.Tags = []string{"tenant:42:users", "lists"}
 	otherDefinition := detailDefinition
 	otherDefinition.Key, otherDefinition.Tags = "tenant:99:profile", []string{"tenant:99:users"}
@@ -75,11 +81,14 @@ func TestHTTPQueryTagsCancel(t *testing.T) {
 	api := newHeldListAPI(t, [2]*heldHTTPResponse{first, second})
 	c := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)
-	definition := cacheq.QueryDefinition(
+	definition, err := cacheq.QueryDefinition(
 		"one",
 		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
 		cacheq.QueryOptions{Disable: true},
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	definition.Tags = []string{"one"}
 	one := definition.Query(c)
 	t.Cleanup(one.Close)

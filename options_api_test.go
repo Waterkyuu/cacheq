@@ -10,7 +10,7 @@ import (
 
 // TestQueryOptionCounts accepts optional configuration and rejects extras before cache use or loading.
 func TestQueryOptionCounts(t *testing.T) {
-	for _, api := range []string{"fetch", "prefetch", "query", "definition fetch", "definition prefetch", "definition query"} {
+	for _, api := range []string{"fetch", "prefetch", "query"} {
 		for count := range 3 {
 			t.Run(fmt.Sprintf("%s/%d", api, count), func(t *testing.T) {
 				c, _ := newAgeClient(t, Options{StaleTime: time.Hour})
@@ -22,8 +22,6 @@ func TestQueryOptionCounts(t *testing.T) {
 					return 0, nil
 				}
 				options := make([]QueryOptions, count)
-				definition := QueryDefinition("key", load, options...)
-				definition.Tags = []string{"definition"}
 				ctx := context.Background()
 				var err error
 				var query *QueryHandle[int]
@@ -34,12 +32,6 @@ func TestQueryOptionCounts(t *testing.T) {
 					err = Prefetch(ctx, c, "key", load, options...)
 				case "query":
 					query = Query(c, "key", load, options...)
-				case "definition fetch":
-					_, err = definition.Fetch(ctx, c)
-				case "definition prefetch":
-					err = definition.Prefetch(ctx, c)
-				case "definition query":
-					query = definition.Query(c)
 				}
 				if query != nil {
 					t.Cleanup(query.Close)
@@ -62,12 +54,6 @@ func TestQueryOptionCounts(t *testing.T) {
 				if count > 1 {
 					if !errors.Is(err, ErrTooManyOptions) {
 						t.Fatalf("configuration error = %v", err)
-					}
-					if err := definition.InvalidateShared(ctx, c); !errors.Is(err, ErrTooManyOptions) {
-						t.Fatal(err)
-					}
-					if len(selectedTagKeys(t, c, QueryFilter{Tags: []string{"definition"}})) != 0 {
-						t.Fatal("invalid definition registered tags")
 					}
 				} else if err != nil {
 					t.Fatal(err)

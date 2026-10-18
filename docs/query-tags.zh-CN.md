@@ -41,17 +41,26 @@ func main() {
 	backend.Store(User{Name: "Alice"})
 	tags := []string{"tenant:42:users"}
 
-	detailDefinition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+	detailDefinition, err := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
 		return backend.Load().(User), nil
 	})
+	if err != nil {
+		panic(err)
+	}
 	detailDefinition.Tags = tags
-	listDefinition := cacheq.QueryDefinition("tenant:42:users", func(context.Context) ([]User, error) {
+	listDefinition, err := cacheq.QueryDefinition("tenant:42:users", func(context.Context) ([]User, error) {
 		return []User{backend.Load().(User)}, nil
 	})
+	if err != nil {
+		panic(err)
+	}
 	listDefinition.Tags = tags
-	otherDefinition := cacheq.QueryDefinition("tenant:99:user:7", func(context.Context) (User, error) {
+	otherDefinition, err := cacheq.QueryDefinition("tenant:99:user:7", func(context.Context) (User, error) {
 		return User{Name: "Carol"}, nil
 	})
+	if err != nil {
+		panic(err)
+	}
 	otherDefinition.Tags = []string{"tenant:99:users"}
 	if err := detailDefinition.Prefetch(ctx, client); err != nil {
 		panic(err)
