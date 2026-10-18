@@ -98,7 +98,7 @@ The four methods accept these forms through their `target any` parameter:
 
 Query keys must satisfy cacheq's comparable-key requirements. Matching uses exact Go equality, including dynamic types; strings and arrays are not matched by prefix. Only `[]any` denotes a batch argument. Other slice types such as `[]string` cannot be passed directly as batches.
 
-An existing query is a key for which the Client still retains cached state, an active load, or a subscription. This includes subscribed queries without usable data. Constructing a `QueryDefinition` alone does not register a query with a Client.
+An existing query is a key for which the Client still retains cached state, an active load, or a subscription. This includes subscribed queries without usable data. Calling `QueryDefinition` alone does not register a query with a Client.
 
 Filters and predicates select existing queries only and skip missing keys. Passing an exact key or `[]any` directly addresses the specified keys; `Invalidate` can establish stale state for missing keys in these forms. Empty and nil `[]any` batches both perform no operations.
 
@@ -110,7 +110,7 @@ Filters and predicates select existing queries only and skip missing keys. Passi
 | `Tags` | `[]string` | nil | Require any matching registered label; nil is unrestricted, while a non-nil empty slice selects nothing |
 | `Predicate` | `func(key any) bool` | nil | Further restrict candidates; nil accepts all candidates |
 
-Configured fields are combined with AND: a key must satisfy `Keys`, match any requested `Tags`, and satisfy `Predicate`. Duplicate keys are processed once. After the complete key list has been validated, candidates satisfying key and tag restrictions are passed to the predicate at most once. Declare labels through `QueryDefinition.Tags`; see [query tags](query-tags.en-US.md) for registration and lifetime rules.
+Configured fields are combined with AND: a key must satisfy `Keys`, match any requested `Tags`, and satisfy `Predicate`. Duplicate keys are processed once. After the complete key list has been validated, candidates satisfying key and tag restrictions are passed to the predicate at most once. Declare labels through `Definition.Tags`; see [query tags](query-tags.en-US.md) for registration and lifetime rules.
 
 This local fragment uses the `ResourceKey` type from the quick start and can be placed inside an application function:
 

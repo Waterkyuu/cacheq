@@ -41,27 +41,18 @@ func main() {
 	backend.Store(User{Name: "Alice"})
 	tags := []string{"tenant:42:users"}
 
-	detailDefinition := cacheq.QueryDefinition[User]{
-		Key:  "tenant:42:user:7",
-		Tags: tags,
-		Fetcher: func(context.Context) (User, error) {
-			return backend.Load().(User), nil
-		},
-	}
-	listDefinition := cacheq.QueryDefinition[[]User]{
-		Key:  "tenant:42:users",
-		Tags: tags,
-		Fetcher: func(context.Context) ([]User, error) {
-			return []User{backend.Load().(User)}, nil
-		},
-	}
-	otherDefinition := cacheq.QueryDefinition[User]{
-		Key:  "tenant:99:user:7",
-		Tags: []string{"tenant:99:users"},
-		Fetcher: func(context.Context) (User, error) {
-			return User{Name: "Carol"}, nil
-		},
-	}
+	detailDefinition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+		return backend.Load().(User), nil
+	})
+	detailDefinition.Tags = tags
+	listDefinition := cacheq.QueryDefinition("tenant:42:users", func(context.Context) ([]User, error) {
+		return []User{backend.Load().(User)}, nil
+	})
+	listDefinition.Tags = tags
+	otherDefinition := cacheq.QueryDefinition("tenant:99:user:7", func(context.Context) (User, error) {
+		return User{Name: "Carol"}, nil
+	})
+	otherDefinition.Tags = []string{"tenant:99:users"}
 	if err := detailDefinition.Prefetch(ctx, client); err != nil {
 		panic(err)
 	}
@@ -110,10 +101,10 @@ selected removed: true
 
 | 字段 | 类型 | 默认值 | 职责 |
 | --- | --- | --- | --- |
-| `QueryDefinition.Tags` | `[]string` | nil | 声明该查询键的标签；nil 和空切片均表示不声明标签 |
+| `Definition.Tags` | `[]string` | nil | 声明该查询键的标签；nil 和空切片均表示不声明标签 |
 | `QueryFilter.Tags` | `[]string` | nil | 选择至少命中一个指定标签的已有查询；nil 不限制标签，非 nil 的空切片选择零个查询 |
 
-构造 `QueryDefinition` 不登记标签。调用定义的 `Fetch`、`Prefetch` 或 `Query` 时，在成功通过校验并复用缓存、开始或加入加载、或者创建订阅时登记标签。命中新鲜缓存和创建禁用的订阅也会登记，不要求实际发起请求。
+调用 `QueryDefinition` 不登记标签。调用返回定义的 `Fetch`、`Prefetch` 或 `Query` 时，在成功通过校验并复用缓存、开始或加入加载、或者创建订阅时登记标签。命中新鲜缓存和创建禁用的订阅也会登记，不要求实际发起请求。
 
 标签在操作开始时复制。后续修改定义的 `Tags` 切片不会改变已经登记的标签；使用修改后的定义发起新操作时，新增标签会合并到同一查询键。标签保存于对应 Client，使用同一份定义的另一个 Client 需要独立登记。
 

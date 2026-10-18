@@ -4,7 +4,7 @@
 
 `QueryOptions` 是 `Query`、`Fetch` 和 `Prefetch` 共用的配置，用于覆盖 Client 默认的新鲜期、重试、超时和执行预算。`Disable` 只控制 Query 的自动加载；显式 `Fetch`、`Prefetch` 和查询对象的 `Refetch` 仍会执行。
 
-`QueryDefinition[V]` 将查询键、类型化加载函数和 `QueryOptions` 组合为可复用的查询定义。创建定义不会加载数据，也不会创建缓存或订阅。
+`QueryDefinition(key, fetcher, options...)` 创建可复用的 `Definition[V]`，从加载函数推断结果类型 `V`。创建定义不会加载数据，也不会创建缓存或订阅。
 
 ## 快速开始：复用同一份配置
 
@@ -67,7 +67,9 @@ observed: hello
 
 ## `QueryDefinition`：集中定义类型化查询
 
-查询定义包含五个字段：
+`QueryDefinition` 接收查询键、类型化加载函数和可选的 `QueryOptions`，按值返回 `Definition[V]`，不会执行加载函数或校验查询键。校验在操作使用 Client 时执行。不传配置时使用 Client 默认值；传入多份配置时仅最后一份生效。在使用返回的定义前，可以配置其 `Shared` 和 `Tags` 字段。
+
+返回的查询定义包含五个字段：
 
 | 字段 | 职责 |
 | --- | --- |
@@ -99,14 +101,10 @@ func main() {
 	ctx := context.Background()
 	hour := time.Hour
 	calls := 0
-	definition := cacheq.QueryDefinition[string]{
-		Key: "greeting",
-		Fetcher: func(context.Context) (string, error) {
-			calls++
-			return "hello", nil
-		},
-		Options: cacheq.QueryOptions{Disable: true, StaleTime: &hour},
-	}
+	definition := cacheq.QueryDefinition("greeting", func(context.Context) (string, error) {
+		calls++
+		return "hello", nil
+	}, cacheq.QueryOptions{Disable: true, StaleTime: &hour})
 	query := definition.Query(client)
 	defer query.Close()
 	fmt.Println("initial calls:", calls)
@@ -141,6 +139,8 @@ refreshed calls: 2
 | `definition.Fetch(ctx, client)` | `(V, error)`，契约与 `Fetch` 相同 |
 | `definition.Query(client)` | `*QueryHandle[V]`，契约与 `Query` 相同 |
 | `definition.Prefetch(ctx, client)` | 加载错误，契约与 `Prefetch` 相同 |
+
+原 `QueryDefinition` 结构体已替换为函数。创建定义时改用函数调用；显式声明变量、参数或返回值类型时使用 `Definition[V]`。类型化加载函数可以推断 `V`，包括有类型的 nil 加载函数。直接传入 nil 时没有可供推断的结果类型，必要时需要显式指定类型参数，例如 `cacheq.QueryDefinition[string]("greeting", nil)`。nil 加载函数遵循已有操作契约，无法加载缺失或过期的数据。
 
 方法直接使用定义中的键、加载函数和配置。如果需要定制一个消费者，可以先复制定义，再修改副本的配置并调用方法。修改 Key、Fetcher 或 Options 影响后续操作，不重新配置已有查询对象。后续操作声明的标签会合并到共享查询状态中。配置指针指向的值在每次操作开始时读取。业务需同步共享定义、指针值以及加载函数捕获的可变状态。
 

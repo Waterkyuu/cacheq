@@ -4,7 +4,7 @@
 
 `QueryOptions` is the shared configuration accepted by `Query`, `Fetch`, and `Prefetch`. It overrides Client defaults for freshness, retries, timeouts, and execution budgets. `Disable` controls only Query's automatic loading; explicit `Fetch`, `Prefetch`, and handle `Refetch` still execute.
 
-`QueryDefinition[V]` groups a key, typed loader, and `QueryOptions` for reuse across these entry points. Constructing a definition performs no loading and creates no cache or subscription.
+`QueryDefinition(key, fetcher, options...)` creates a reusable `Definition[V]`, inferring the result type `V` from the loader. Constructing a definition performs no loading and creates no cache or subscription.
 
 ## Quick start: reuse one configuration
 
@@ -67,7 +67,9 @@ Omitting options or leaving `Disable` false permits automatic loading. Disabling
 
 ## `QueryDefinition`: define a typed query once
 
-The definition has five fields:
+`QueryDefinition` accepts a query key, a typed loader, and optional `QueryOptions`. It returns a `Definition[V]` by value without executing the loader or validating the key. Validation occurs when an operation uses a Client. Omitting options uses Client defaults; when several values are supplied, only the last applies. Configure `Shared` and `Tags` on the returned definition before use.
+
+The returned definition has five fields:
 
 | Field | Responsibility |
 | --- | --- |
@@ -99,14 +101,10 @@ func main() {
 	ctx := context.Background()
 	hour := time.Hour
 	calls := 0
-	definition := cacheq.QueryDefinition[string]{
-		Key: "greeting",
-		Fetcher: func(context.Context) (string, error) {
-			calls++
-			return "hello", nil
-		},
-		Options: cacheq.QueryOptions{Disable: true, StaleTime: &hour},
-	}
+	definition := cacheq.QueryDefinition("greeting", func(context.Context) (string, error) {
+		calls++
+		return "hello", nil
+	}, cacheq.QueryOptions{Disable: true, StaleTime: &hour})
 	query := definition.Query(client)
 	defer query.Close()
 	fmt.Println("initial calls:", calls)
@@ -141,6 +139,8 @@ refreshed calls: 2
 | `definition.Fetch(ctx, client)` | `(V, error)` with the same contract as `Fetch` |
 | `definition.Query(client)` | `*QueryHandle[V]` with the same contract as `Query` |
 | `definition.Prefetch(ctx, client)` | Loading error with the same contract as `Prefetch` |
+
+The former `QueryDefinition` struct has been replaced by the function. Create definitions with function calls; use `Definition[V]` in explicit variable, parameter, and return type declarations. Typed loaders infer `V`, including typed nil loaders. A bare nil loader has no result type to infer; specify a type argument, such as `cacheq.QueryDefinition[string]("greeting", nil)`, when needed. A nil loader follows the existing operation contracts; it cannot load missing or stale data.
 
 The methods use the definition's key, fetcher, and options directly. To customize one consumer, copy the definition and change the copy's options before calling a method. Changes to Key, Fetcher, or Options apply to subsequent operations without reconfiguring existing handles. Tags declared by subsequent operations are merged into the shared query state. Each method reads option pointer values when its operation starts. Applications must synchronize shared definitions, pointer values, and mutable state captured by loaders.
 
