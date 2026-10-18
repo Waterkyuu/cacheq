@@ -50,24 +50,18 @@ func main() {
 	}
 	fmt.Println("before:", before[0].Name)
 
-	rename := cacheq.Mutation(
-		client,
-		func(ctx context.Context, name string) (User, error) {
-			if err := ctx.Err(); err != nil {
-				return User{}, err
-			}
-			user := User{Name: name}
-			backend.Store(user)
-			return user, nil
-		},
-		cacheq.MutationOptions[string, User]{
-			OnSuccess: func(ctx context.Context, user User, _ string) error {
-				updateErr := cacheq.Set(client, "user:42", user)
-				_, refreshErr := client.InvalidateAndWait(ctx, "users")
-				return errors.Join(updateErr, refreshErr)
-			},
-		},
-	)
+	rename := cacheq.Mutation(client, func(ctx context.Context, name string) (User, error) {
+		if err := ctx.Err(); err != nil {
+			return User{}, err
+		}
+		user := User{Name: name}
+		backend.Store(user)
+		return user, nil
+	}, func(ctx context.Context, user User, _ string) error {
+		updateErr := cacheq.Set(client, "user:42", user)
+		_, refreshErr := client.InvalidateAndWait(ctx, "users")
+		return errors.Join(updateErr, refreshErr)
+	})
 	defer rename.Close()
 	result, err := rename.Mutate(ctx, "Bob")
 	if err != nil {
@@ -91,25 +85,25 @@ detail: Bob
 list: Bob
 ```
 
-`rename.Mutate(ctx, "Bob")` 先修改后端数据。写入成功后，`OnSuccess` 将返回的 `User` 存入 `"user:42"`，再调用 `client.InvalidateAndWait(ctx, "users")`。列表有启用的 `Query`，因此会在回调返回前完成刷新。
+`rename.Mutate(ctx, "Bob")` 先修改后端数据。写入成功后，`onSuccess` 将返回的 `User` 存入 `"user:42"`，再调用 `client.InvalidateAndWait(ctx, "users")`。列表有启用的 `Query`，因此会在回调返回前完成刷新。
 
-`Mutate` 等待写入和 `OnSuccess` 完成。回调通过 `Client.Invalidate` 选择后台刷新，或通过 `Client.InvalidateAndWait` 选择等待刷新。本例采用等待方式，因此 `Mutate` 返回且没有同步错误时，列表快照已经包含 Bob。
+`Mutate` 等待写入和 `onSuccess` 完成。回调通过 `Client.Invalidate` 选择后台刷新，或通过 `Client.InvalidateAndWait` 选择等待刷新。本例采用等待方式，因此 `Mutate` 返回且没有同步错误时，列表快照已经包含 Bob。
 
 ## API 片段前提
 
-以下局部片段使用快速开始中的 `client`、`rename`、`User` 和非 nil 的 `ctx`。包含 `return` 的片段放在返回 `error` 的业务函数中，并导入所用的标准库包。配置片段用于替换创建 Mutation 时传入的 `MutationOptions`。
+以下局部片段使用快速开始中的 `client`、`rename`、`User` 和非 nil 的 `ctx`。包含 `return` 的片段放在返回 `error` 的业务函数中，并导入所用的标准库包。回调片段用于替换创建 Mutation 时传入的第三个参数。
 
 ## `Mutation` 与 `Mutate`：创建和执行写入
 
-`Mutation(client, write, options)` 返回 `MutationHandle[I, V]`。`I` 是输入类型，`V` 是写入结果类型；快速开始中分别为 `string` 和 `User`。业务函数 `Mutator[I, V]` 的签名为 `func(context.Context, I) (V, error)`。
+`Mutation(client, write, onSuccess, options...)` 返回 `MutationHandle[I, V]`，从传入的函数推断输入和结果类型。不需要同步时，第三个参数传 nil。可选的 `MutationOptions` 不再包含泛型类型参数，只配置执行策略。`I` 是输入类型，`V` 是写入结果类型；快速开始中分别为 `string` 和 `User`。业务函数 `Mutator[I, V]` 的签名为 `func(context.Context, I) (V, error)`。
 
 `Mutate(ctx, input)` 执行一次业务函数，等待成功后的缓存同步，并返回 `MutationResult[V]` 和错误。数据库操作应在事务提交成功后才返回成功。cacheq 不自动重试或合并写入；完成后再次传入相同参数，会再次执行业务函数。
 
 同一个句柄同时只接受一次执行，包括缓存同步阶段。重叠调用返回 `ErrMutationBusy`，不会排队或改变正在执行的状态。不同句柄可以并发执行，不会按用户 ID 或其他业务键自动串行化。
 
-## `OnSuccess`：使用写入结果更新缓存
+## `onSuccess`：使用写入结果更新缓存
 
-快速开始中的写入返回完整用户详情，因此 `OnSuccess` 直接调用 `Set`，无需再请求详情接口。如果只需改变已有列表中的一项，可以在回调中使用 [Update](updates.zh-CN.md)。
+快速开始中的写入返回完整用户详情，因此 `onSuccess` 直接调用 `Set`，无需再请求详情接口。如果只需改变已有列表中的一项，可以在回调中使用 [Update](updates.zh-CN.md)。
 
 回调签名为 `func(ctx context.Context, result V, input I) error`。`result` 是业务写入成功返回的数据，`input` 是传给 `Mutate` 的原始参数。context 保留调用者的值和截止时间，句柄或 Client 关闭时也会被取消。Go 要求回调满足声明的函数签名；未使用的参数可写为 `_`。
 
@@ -117,47 +111,41 @@ list: Bob
 
 此设计参考 [TanStack Query 的 mutation 失效方式](https://tanstack.com/query/latest/docs/framework/react/guides/invalidations-from-mutations)：在成功回调中调用查询客户端的缓存 API，并在回调内等待同步完成。Go 使用阻塞方法调用和错误返回替代 JavaScript Promise；cacheq 保留写入提交后通过独立 `SyncErr` 报告同步失败的契约。
 
-## 在 `OnSuccess` 中刷新关联查询
+## 在 `onSuccess` 中刷新关联查询
 
 直接调用 `Client.Invalidate`，传入查询键、`[]any` 或筛选条件。应用声明详情与列表的关系，Mutation 不会自动选择失效目标。固定列表键无需额外的目标计算回调：
 
 ```go
-options := cacheq.MutationOptions[string, User]{
-	OnSuccess: func(context.Context, User, string) error {
-		return client.Invalidate("users", cacheq.InvalidateOptions{RefetchAfterLoad: true})
-	},
+onSuccess := func(context.Context, User, string) error {
+	return client.Invalidate("users", cacheq.InvalidateOptions{RefetchAfterLoad: true})
 }
 ```
 
-此配置将列表标记过期并安排后台刷新；如果已有请求正在执行，还会安排一次有界补刷。`Mutate` 等待回调完成，但回调在 HTTP 刷新完成前返回。后台错误通过对应查询的状态报告。
+此回调将列表标记过期并安排后台刷新；如果已有请求正在执行，还会安排一次有界补刷。`Mutate` 等待回调完成，但回调在 HTTP 刷新完成前返回。后台错误通过对应查询的状态报告。
 
 需要延后加载时，在 Client 调用处传入 `RefetchNone`：
 
 ```go
-options := cacheq.MutationOptions[string, User]{
-	OnSuccess: func(context.Context, User, string) error {
-		return client.Invalidate(
-			[]any{"user:42", "users"},
-			cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
-		)
-	},
+onSuccess := func(context.Context, User, string) error {
+	return client.Invalidate(
+		[]any{"user:42", "users"},
+		cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+	)
 }
 ```
 
-此配置保留旧的详情和列表数据，后续 `Fetch`、新建启用的 `Query` 或手动 `Refetch` 可以重新加载。此回调不会安装写入结果。
+此回调保留旧的详情和列表数据，后续 `Fetch`、新建启用的 `Query` 或手动 `Refetch` 可以重新加载。此回调不会安装写入结果。
 
 回调负责同步顺序和错误处理。提前返回会停止剩余步骤。如果缓存更新失败后仍需尝试失效，应像快速开始一样先执行两个步骤，再用 `errors.Join` 合并错误。查询键应包含租户及用户范围。
 
 ## 提交后等待刷新
 
-在 `OnSuccess` 中调用 `Client.InvalidateAndWait`，即可等待关联刷新。仅刷新固定列表的回调如下：
+在 `onSuccess` 中调用 `Client.InvalidateAndWait`，即可等待关联刷新。仅刷新固定列表的回调如下：
 
 ```go
-options := cacheq.MutationOptions[string, User]{
-	OnSuccess: func(ctx context.Context, _ User, _ string) error {
-		_, err := client.InvalidateAndWait(ctx, "users")
-		return err
-	},
+onSuccess := func(ctx context.Context, _ User, _ string) error {
+	_, err := client.InvalidateAndWait(ctx, "users")
+	return err
 }
 ```
 
@@ -167,7 +155,7 @@ options := cacheq.MutationOptions[string, User]{
 
 使用回调提供的 context 时，`Mutate` 的 context 和句柄生命周期限制等待。写入提交后取消，如果回调返回取消错误，则通过 `SyncErr` 报告；业务返回错误仍为 nil，状态仍为 `Success`。Client 关闭可能报告 `ErrClosed` 或 context 取消，取决于先观察到哪个信号。调用者结束等待后，Client 拥有的刷新可以继续。执行预算在回调开始前释放。
 
-较晚返回成功的写入仍会调用 `OnSuccess`，即使 context 已取消。`Client.InvalidateAndWait` 对开始前已取消的 context 直接返回，不执行失效。如果已确认的写入必须始终将缓存标记过期，应在任何可取消的等待步骤之前，独立于取消调用 `Client.Invalidate`。Mutation 不会在回调返回后隐式执行失效。
+较晚返回成功的写入仍会调用 `onSuccess`，即使 context 已取消。`Client.InvalidateAndWait` 对开始前已取消的 context 直接返回，不执行失效。如果已确认的写入必须始终将缓存标记过期，应在任何可取消的等待步骤之前，独立于取消调用 `Client.Invalidate`。Mutation 不会在回调返回后隐式执行失效。
 
 ## 区分写入失败与同步失败
 
@@ -187,7 +175,7 @@ return nil
 
 **`err == nil` 时，不能仅因为 `SyncErr` 非 nil 就重复提交业务写入。** 例如扣款已经完成、缓存更新失败时，应修复缓存或重新查询业务状态。
 
-`OnSuccess` 返回的错误成为 `SyncErr`，支持 `errors.Is` 和 `errors.As`。回调可以使用 `errors.Join` 保留多个同步步骤的错误。发生同步错误时，结果数据仍可用，Mutation 状态仍为 `Success`。应用可记录该错误，并安排缓存修复或重新查询。
+`onSuccess` 返回的错误成为 `SyncErr`，支持 `errors.Is` 和 `errors.As`。回调可以使用 `errors.Join` 保留多个同步步骤的错误。发生同步错误时，结果数据仍可用，Mutation 状态仍为 `Success`。应用可记录该错误，并安排缓存修复或重新查询。
 
 ## `Snapshot` 与 `Updates`：读取执行状态
 
@@ -206,8 +194,9 @@ return nil
 
 | `MutationOptions` 字段 | 默认值 | 说明 |
 | --- | --- | --- |
-| `OnSuccess` | nil | 写入提交后更新缓存及显式失效，等待回调返回 |
 | `Executor` | nil，继承 Client 配置 | 限制写入回调的并发和排队数量 |
+
+原 `MutationOptions[I, V].OnSuccess` 字段改为 `Mutation` 的第三个参数。迁移时移除 `MutationOptions` 的类型参数，并单独传入成功回调。回调的结果或输入类型与写入函数不匹配时，编译器会拒绝该调用。
 
 多份配置以最后一份为准，不合并字段。配置会被复制；回调捕获的应用数据仍需自行保护。缓存键和失效条件应包含影响结果的租户及用户范围。
 
