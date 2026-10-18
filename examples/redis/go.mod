@@ -3,8 +3,8 @@ module github.com/Waterkyuu/cacheq/examples/redis
 go 1.26.0
 
 require (
-	github.com/Waterkyuu/cacheq v0.2.0
-	github.com/Waterkyuu/cacheq/store/redis v0.0.0
+	github.com/Waterkyuu/cacheq v0.3.0
+	github.com/Waterkyuu/cacheq/store/redis v0.3.0
 	github.com/redis/go-redis/v9 v9.23.0
 )
 
