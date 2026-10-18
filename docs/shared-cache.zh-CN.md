@@ -2,7 +2,7 @@
 
 [English](shared-cache.en-US.md)
 
-两个服务实例读取同一个用户资料时，可以通过 `store/redis` 复用查询结果，减少重复访问数据库或 API。本指南先实现 A 读取资料、B 命中 Redis 的最小程序，再说明业务接入、修改数据后的失效操作和配置方法。
+两个服务实例读取同一个用户资料时，可以通过 `store/redis` 复用查询结果，减少重复访问数据库或 API。本指南按创建存储、创建共享缓存、定义查询、读取结果和失效操作介绍 API 的使用方式，并在文末提供完整程序。
 
 ## 安装
 
@@ -30,163 +30,139 @@ redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 
 程序连接 `127.0.0.1:16379`。Redis 连接必须指向可写主节点，允许 `EVAL` 以及脚本内的 `GET`、`SET`（含 `PX`）和 `DEL`；读取也可能初始化缓存元数据。
 
-## 快速开始
+## 使用方式
 
-在前面创建的临时模块目录（`$CACHEQ_DEMO_DIR`）中，将以下完整程序保存为 `main.go`。程序用内存变量模拟数据库，通过调用次数验证 B 是否复用了 A 的结果。
-
-示例要共享的数据是 `User{Name: "Alice"}`，对应“租户 42 的用户 7 的资料”。程序先创建 Redis 连接 `remote`，再把连接交给 Redis 存储适配器 `store`。`store` 负责执行存储操作；`shared` 则把这个存储与某一份数据的 key、类型和缓存规则组合起来。
-
-`cacheq.NewSharedCache[User](store, options)` 返回 `*cacheq.SharedCache[User]`，用于配置这份资料的共享缓存。下面逐项解释示例中的参数：
-
-| 写法 | 在本例中的具体含义 |
-| --- | --- |
-| `[User]` | 共享结果的 Go 类型是 `User`。缓存写入时编码 User，命中时解码回 User；返回的 `shared` 本身不包含 Alice 的资料 |
-| 第一个参数 `store` | 使用前面创建的 Redis 存储适配器执行读取、写入和失效；多个用户的共享配置可以复用这个适配器 |
-| `Key: "tenant:42:user:7:v1"` | 这条共享记录的身份：租户 42、用户 7、数据版本 v1。查询用户 8 时，使用 `tenant:42:user:8:v1` 等不同 key |
-| `Format: "user.json.v1"` | 标记记录使用 User 的第 1 版 JSON 数据结构。读取方只复用 Format 相同的记录；这个字符串由应用约定，无需注册，也不会自动选择编码器。本例未设置 Codec，所以默认使用 JSON |
-| `TTL: 5 * time.Minute` | 从数据源读取完成起，共享结果最多保留 5 分钟；能否当作新鲜结果复用还取决于 Client 的 `StaleTime`，下例设置为 1 分钟 |
-| `Timeout: 200 * time.Millisecond` | 每次共享存储读取、写入或按 key 失效最多等待 200 毫秒；它不限制数据库或 API 的 Fetcher 耗时 |
-
-`Key` 中的冒号、`tenant`、`user` 和 `v1` 都是本例的命名约定，cacheq 不会解析它们或自动实施租户权限检查。应用负责为不同数据分配不同 key，并在读取前完成鉴权。
-
-创建 `shared` 只校验并保存配置，不会读取用户资料或写入 Redis。后面将它赋给 `QueryDefinition.Shared`，才把共享规则接到查询上；调用 `definition.Fetch(ctx, a)` 时，查询会先检查本地缓存，再按这份规则访问 Redis，必要时调用 Fetcher。不同 Client 各自保存本地结果，通过 Redis 复用同一份共享记录。
+下面按 API 的使用顺序说明：创建 Redis 存储、创建共享缓存、定义查询、读取结果，再处理失效。示例的结果类型是 `User`，表示用户资料：
 
 ```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"sync/atomic"
-	"time"
-
-	"github.com/Waterkyuu/cacheq"
-	redistore "github.com/Waterkyuu/cacheq/store/redis"
-	"github.com/redis/go-redis/v9"
-)
-
 // User contains the profile fields shared between service instances.
 type User struct {
 	// Name is the user's display name.
 	Name string
 }
+```
 
-// main demonstrates a source read followed by reuse in a separate local Client.
-func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+`User` 放在包级。下面的初始化和调用片段依次放在同一个 `main` 函数中，共用前面创建的变量；它们不是独立程序。包含 import 和全部初始化步骤的可运行代码见文末“完整示例与相关文档”。
 
-	// The application owns the Redis connection and closes it at shutdown.
-	remote := redis.NewClient(&redis.Options{
-		Addr: "127.0.0.1:16379", ContextTimeoutEnabled: true,
-		DialTimeout: time.Second, ReadTimeout: time.Second,
-		WriteTimeout: time.Second, MaxRetries: -1,
-	})
-	defer func() { _ = remote.Close() }()
-	if err := remote.Ping(ctx).Err(); err != nil {
-		panic(err)
-	}
-	// Store adapts the borrowed connection to cacheq operations in this namespace.
-	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
-	if err != nil {
-		panic(err)
-	}
+### 创建 Redis 存储
 
-	// Bind one User record's identity and caching rules to the Redis adapter.
-	// Construction validates configuration without reading or writing Redis.
-	shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
-		// Key identifies this tenant's user profile across service instances.
-		Key: "tenant:42:user:7:v1",
-		// Format must match the schema and encoding expected by every reader.
-		Format: "user.json.v1",
-		// TTL caps shared freshness and retention from source completion.
-		TTL: 5 * time.Minute,
-		// Timeout bounds each store call, not the source Fetcher.
-		Timeout: 200 * time.Millisecond,
-	})
-	if err != nil {
-		panic(err)
-	}
-	// Reset only this demonstration record so repeated runs have the same output.
-	if err := shared.Invalidate(ctx); err != nil {
-		panic(err)
-	}
+使用 `redistore.New(remote, options)` 创建 Redis 存储适配器。`remote` 是应用创建的 go-redis 客户端；返回的 `store` 实现 `SharedStore`，供后续共享缓存执行 Redis 读写。`Prefix` 为记录增加应用命名空间，本例使用 `cacheq-quickstart`。
 
-	// A concurrency-safe in-memory source stands in for a database or API.
-	var source atomic.Value
-	source.Store(User{Name: "Alice"})
-	var calls atomic.Int64
-	// Definition connects the shared rules to a local query identity and source.
-	definition := cacheq.QueryDefinition[User]{
-		Key: "tenant:42:user:7",
-		// Shared enables Redis reuse when this query needs to load data.
-		Shared: shared,
-		// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
-		Fetcher: func(context.Context) (User, error) {
-			calls.Add(1)
-			return source.Load().(User), nil
-		},
-	}
+下面先创建最长运行 10 秒的示例 context 和 Redis 连接，再创建适配器。`Ping` 用于验证示例环境可连接；`redistore.New` 本身只校验配置，不访问服务器。
 
-	// Both Clients use the same shared configuration and keep separate local results.
-	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	defer a.Close()
-	defer b.Close()
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
 
-	first, err := definition.Fetch(ctx, a)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("A: %s, source calls: %d\n", first.Name, calls.Load())
-
-	second, err := definition.Fetch(ctx, b)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("B: %s, source calls: %d\n", second.Name, calls.Load())
-	fmt.Printf("shared hits: %d\n", shared.Stats().Hits)
+// The application owns the Redis connection and closes it at shutdown.
+remote := redis.NewClient(&redis.Options{
+	Addr: "127.0.0.1:16379", ContextTimeoutEnabled: true,
+	DialTimeout: time.Second, ReadTimeout: time.Second,
+	WriteTimeout: time.Second, MaxRetries: -1,
+})
+defer func() { _ = remote.Close() }()
+if err := remote.Ping(ctx).Err(); err != nil {
+	panic(err)
+}
+// Store adapts the borrowed connection to cacheq operations in this namespace.
+store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
+if err != nil {
+	panic(err)
 }
 ```
 
-在保存 `main.go` 的目录执行：
+在业务项目中，Redis 连接和 `store` 可以在应用启动时创建，供多个查询复用。Redis 连接由应用负责关闭；不要在每次读取时重新建立连接。
 
-```sh
-go run .
+### 创建共享缓存
+
+使用 `cacheq.NewSharedCache[V](store, options)` 为一份查询结果创建共享缓存配置。`V` 是保存和读取的结果类型，本例为上面定义的 `User`；`store` 使用前一步创建的 Redis 存储。
+
+本例要共享“租户 42 的用户 7 的资料”：共享 key 为 `tenant:42:user:7:v1`，按默认 JSON 编码，格式标识为 `user.json.v1`，从数据源加载完成起最多保留 5 分钟，每次共享存储操作最多等待 200 毫秒。
+
+```go
+// Bind one User record's identity and caching rules to the Redis adapter.
+// Construction validates configuration without reading or writing Redis.
+shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
+	// Key identifies this tenant's user profile across service instances.
+	Key: "tenant:42:user:7:v1",
+	// Format must match the schema and encoding expected by every reader.
+	Format: "user.json.v1",
+	// TTL caps shared freshness and retention from source completion.
+	TTL: 5 * time.Minute,
+	// Timeout bounds each store call, not the source Fetcher.
+	Timeout: 200 * time.Millisecond,
+})
+if err != nil {
+	panic(err)
+}
 ```
 
-预期输出：
+返回的 `shared` 类型为 `*cacheq.SharedCache[User]`，保存这份数据的存储和复用规则。创建时只校验并保存配置，不会加载用户资料；下一节通过 `QueryDefinition.Shared` 将它连接到查询。
 
-```text
-A: Alice, source calls: 1
-B: Alice, source calls: 1
-shared hits: 1
+查询用户 8 时，应创建使用 `tenant:42:user:8:v1` 等不同 key 的配置，可以继续复用同一个 `store`。key 中的冒号和各段文字只是应用的命名约定。`Format` 是读取方匹配的数据结构与编码版本标识，不选择编码器；本例未设置 `Codec`，所以使用默认 JSON。无效的 key、Format、TTL 或 Timeout 等配置会返回错误，具体约束见“配置说明”。
+
+### 定义使用共享缓存的查询
+
+使用 `cacheq.QueryDefinition[User]` 将本地查询身份、共享缓存配置和数据源读取函数组合起来。将前一步返回的 `shared` 赋给 `Shared`；`Fetcher` 定义实际从哪里取得 `User`。
+
+下面的 `source` 是模拟数据库的并发安全变量，`calls` 统计真实回源次数。此处只定义 Fetcher 回调；创建查询定义时不会执行它。业务接入时将回调替换为数据库或 API 读取，并使用传入的 context。
+
+```go
+// A concurrency-safe in-memory source stands in for a database or API.
+var source atomic.Value
+source.Store(User{Name: "Alice"})
+var calls atomic.Int64
+// Definition connects the shared rules to a local query identity and source.
+definition := cacheq.QueryDefinition[User]{
+	Key: "tenant:42:user:7",
+	// Shared enables Redis reuse when this query needs to load data.
+	Shared: shared,
+	// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
+	Fetcher: func(context.Context) (User, error) {
+		calls.Add(1)
+		return source.Load().(User), nil
+	},
+}
 ```
 
-A 没有本地或共享结果，因此执行 `Fetcher` 并将结果写入 Redis。B 的本地缓存也是空的，但从 Redis 读到了 Alice，数据源调用次数仍为 1。后续对 A 或 B 的新鲜结果读取直接命中各自的本地缓存。
+`QueryDefinition.Key` 标识当前 Client 内的查询，`SharedCacheOptions.Key` 标识跨实例共享的记录；两者分别配置，不会自动转换。相同本地 key 应使用一致的结果类型和加载规则。
 
-程序每次运行前只重置 `cacheq-quickstart` 命名空间中的示例记录，以便输出一致。这是演示准备步骤，业务启动时不应清空缓存；生产数据也不要使用该命名空间。完成后，在 Redis 终端按 Ctrl+C 停止临时服务。
+### 读取查询结果
 
-## 使用方式
+使用 `definition.Fetch(ctx, client)` 读取结果，它等待并返回 `User` 或错误。Client 保存本地查询状态；业务中通常在应用内复用同一个 Client，请求传入自己的 context。下面创建 A、B 两个 Client，模拟两个独立服务实例。
 
-### 接入业务项目
+`StaleTime: time.Minute` 表示数据源结果在 1 分钟内可作为新鲜数据复用。A 没有可用记录时执行 Fetcher 并写入 Redis；B 随后可以复用 Redis 记录。最后用 `shared.Stats().Hits` 查看共享命中次数。
 
-按程序的创建顺序接入：
+```go
+// Both Clients use the same shared configuration and keep separate local results.
+a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+defer a.Close()
+defer b.Close()
 
-1. 在应用启动时创建 go-redis 客户端 `remote`，再通过 `redistore.New` 创建 `store`。它实现 cacheq 的 `SharedStore` 接口，负责 Redis 读写；同一个存储对象可以用于多个查询。`redistore.New` 不访问服务器，示例中的 `Ping` 用于提前发现连接问题。
-2. 为每一种查询身份创建 `NewSharedCache[V]`，其中 `V` 是结果类型。示例中的 `shared` 只对应租户 42 的用户 7；查询其他用户时应使用不同的 key。配置可复用，不需要每次请求重新创建。
-3. 将 `shared` 赋给 `QueryDefinition.Shared`。将示例的 `Fetcher` 替换成实际的数据库或 API 读取函数，使用传入的 context，并返回 `User` 和错误。`source`、`calls` 只是演示数据和计数器，业务代码不需要保留。
-4. 在请求处理中调用 `definition.Fetch(ctx, client)`，取得 `User` 或错误。`ctx` 使用请求的 context；应用内复用同一个 `Client`，让不同请求共享本地结果。示例的 A、B 用于模拟两个独立实例。
+first, err := definition.Fetch(ctx, a)
+if err != nil {
+	panic(err)
+}
+fmt.Printf("A: %s, source calls: %d\n", first.Name, calls.Load())
 
-不同进程可以各自创建连接、存储和查询配置，但共享结果需要一致的 Redis 地址、数据库、`Prefix`、`EnableTags`、共享 key、`Format` 和序列化方式。不要把不同租户、权限或查询参数对应的结果放在同一个 key 下。
+second, err := definition.Fetch(ctx, b)
+if err != nil {
+	panic(err)
+}
+fmt.Printf("B: %s, source calls: %d\n", second.Name, calls.Load())
+fmt.Printf("shared hits: %d\n", shared.Stats().Hits)
+```
 
-应用退出时关闭 `Client`，再关闭应用持有的 Redis 连接。`Client.Close()` 不会关闭 `remote`，也不会删除 Redis 数据。示例中的 `defer` 按这个顺序执行。
+读取顺序为本地新鲜结果、Redis 新鲜记录、Fetcher。B 的共享命中不会再次执行 Fetcher；之后的新鲜读取直接使用各自 Client 的本地结果。文末完整示例包含初始记录重置，便于重复验证输出。
+
+应用退出时先关闭 Client，再关闭 Redis 连接。`Client.Close()` 不关闭注入的连接，也不删除 Redis 数据。不同进程复用共享记录时，应使用一致的 Redis 数据集、命名空间、共享 key、Format、Codec 和 EnableTags 配置。
 
 ### 修改数据后使缓存失效
 
 先完成数据库或 API 写入，再调用 `definition.InvalidateShared`。该方法先使 Redis 记录失效，再使指定 Client 中的查询失效；随后读取会重新访问数据源。
 
-将下面片段放在快速开始的 `main` 函数末尾、最后一条输出之后。它复用已有的 `source`、`definition`、`ctx`、`a` 和 `calls`，用修改内存数据模拟一次成功的业务写入：
+将下面片段放在文末完整示例的 `main` 函数末尾、最后一条输出之后。它复用已有的 `source`、`definition`、`ctx`、`a` 和 `calls`，用修改内存数据模拟一次成功的业务写入：
 
 ```go
 // Simulate a successful database or API write before invalidating the cache.
@@ -296,7 +272,7 @@ B refreshed: Bob, source calls: 3
 | 现象 | 检查原因 | 处理方式 |
 | --- | --- | --- |
 | `go run` 报找不到适配器或要求更新 Go | 本地替换路径错误，或 Go 版本不足 | 检查两个 `replace` 是否指向当前源码，使用 Go 1.26+ |
-| 快速开始的 `Ping` 报错 | Redis 未启动、地址或权限错误 | 确认服务监听 `127.0.0.1:16379`；该检查是演示的启动检查，不是 cacheq 强制要求 |
+| 示例的 `Ping` 报错 | Redis 未启动、地址或权限错误 | 确认服务监听 `127.0.0.1:16379`；该检查是演示的启动检查，不是 cacheq 强制要求 |
 | B 再次回源，`ReadErrors` 增加 | Redis 连接、ACL 或操作超时 | 检查连接选项、可写主节点和脚本权限；用下方统计区分故障和普通未命中 |
 | `Hits` 为 0，但没有读错误 | `StaleTime` 为 0、记录已过期，或始终命中本地缓存 | 配置正新鲜期，用新的 Client 验证共享命中；本地命中不会增加共享 Hits |
 | `DecodeErrors` 增加并回源 | Format 不匹配、记录损坏或 Codec 解码失败 | 对齐类型、Format 和 Codec；不兼容结果改用新 key |
@@ -304,7 +280,7 @@ B refreshed: Bob, source calls: 3
 | A 失效后 B 仍读到旧值 | B 的本地结果仍新鲜，且未启用 watcher | 显式使 B 本地失效，或配置 `WatchShared` |
 | 构造配置时报错 | key、Format 为空，TTL 非正数，或缺少标签能力 | 按配置表检查；无效共享配置返回 `ErrInvalidSharedCache`，缺少能力返回 `ErrSharedCapability` |
 
-在快速开始的 `main` 函数末尾加入以下片段，读取已有 `shared` 的统计：
+在文末完整示例的 `main` 函数末尾加入以下片段，读取已有 `shared` 的统计：
 
 ```go
 stats := shared.Stats()
@@ -326,6 +302,126 @@ fmt.Printf("hits=%d misses=%d read_errors=%d write_errors=%d\n",
 - 存储和 Codec 调用在 Client 锁外执行；Executor 的一个槽覆盖整次加载。共享缓存故障本身不触发查询重试，数据源错误仍遵守查询重试策略。取消是协作式的，驱动和 Fetcher 都需要响应 context。
 
 ## 完整示例与相关文档
+
+### 运行完整示例
+
+在安装步骤创建的临时模块目录（`$CACHEQ_DEMO_DIR`）中，将以下完整程序保存为 `main.go`。它组合了前面的创建和读取操作，并只重置示例记录，以保证重复运行时输出一致。
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+	redistore "github.com/Waterkyuu/cacheq/store/redis"
+	"github.com/redis/go-redis/v9"
+)
+
+// User contains the profile fields shared between service instances.
+type User struct {
+	// Name is the user's display name.
+	Name string
+}
+
+// main demonstrates a source read followed by reuse in a separate local Client.
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// The application owns the Redis connection and closes it at shutdown.
+	remote := redis.NewClient(&redis.Options{
+		Addr: "127.0.0.1:16379", ContextTimeoutEnabled: true,
+		DialTimeout: time.Second, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, MaxRetries: -1,
+	})
+	defer func() { _ = remote.Close() }()
+	if err := remote.Ping(ctx).Err(); err != nil {
+		panic(err)
+	}
+	// Store adapts the borrowed connection to cacheq operations in this namespace.
+	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
+	if err != nil {
+		panic(err)
+	}
+
+	// Bind one User record's identity and caching rules to the Redis adapter.
+	// Construction validates configuration without reading or writing Redis.
+	shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
+		// Key identifies this tenant's user profile across service instances.
+		Key: "tenant:42:user:7:v1",
+		// Format must match the schema and encoding expected by every reader.
+		Format: "user.json.v1",
+		// TTL caps shared freshness and retention from source completion.
+		TTL: 5 * time.Minute,
+		// Timeout bounds each store call, not the source Fetcher.
+		Timeout: 200 * time.Millisecond,
+	})
+	if err != nil {
+		panic(err)
+	}
+	// Reset only this demonstration record so repeated runs have the same output.
+	if err := shared.Invalidate(ctx); err != nil {
+		panic(err)
+	}
+
+	// A concurrency-safe in-memory source stands in for a database or API.
+	var source atomic.Value
+	source.Store(User{Name: "Alice"})
+	var calls atomic.Int64
+	// Definition connects the shared rules to a local query identity and source.
+	definition := cacheq.QueryDefinition[User]{
+		Key: "tenant:42:user:7",
+		// Shared enables Redis reuse when this query needs to load data.
+		Shared: shared,
+		// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
+		Fetcher: func(context.Context) (User, error) {
+			calls.Add(1)
+			return source.Load().(User), nil
+		},
+	}
+
+	// Both Clients use the same shared configuration and keep separate local results.
+	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	defer a.Close()
+	defer b.Close()
+
+	first, err := definition.Fetch(ctx, a)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("A: %s, source calls: %d\n", first.Name, calls.Load())
+
+	second, err := definition.Fetch(ctx, b)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("B: %s, source calls: %d\n", second.Name, calls.Load())
+	fmt.Printf("shared hits: %d\n", shared.Stats().Hits)
+}
+```
+
+在保存 `main.go` 的目录运行：
+
+```sh
+go run .
+```
+
+预期输出：
+
+```text
+A: Alice, source calls: 1
+B: Alice, source calls: 1
+shared hits: 1
+```
+
+A 回源后，B 复用了 Redis 结果，所以数据源调用次数仍为 1。程序只重置 `cacheq-quickstart` 命名空间中的示例记录；业务启动时不应执行这项重置，也不要用该命名空间保存生产数据。示例结束后，在 Redis 终端按 Ctrl+C 停止临时服务。
+
+### 相关文档
 
 - [完整 Redis 示例与运行说明](../examples/redis/)：运行 `shared_cache` 验证共享读取、显式失效和 Redis 故障回源；运行 `shared_invalidation` 验证标签及跨实例通知。
 - [共享失效通知与标签](shared-invalidation.zh-CN.md)：让其他实例及时标记本地结果 stale，并对详情、列表等多个查询统一失效。

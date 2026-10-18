@@ -2,7 +2,7 @@
 
 [简体中文](shared-cache.zh-CN.md)
 
-Use `store/redis` to share query results between service instances reading the same user profile, reducing repeated database or API calls. This guide starts with a minimal program in which A loads the profile and B reuses it from Redis, then covers application integration, invalidation after writes, and configuration.
+Use `store/redis` to share query results between service instances reading the same user profile, reducing repeated database or API calls. This guide explains API usage for creating a store, creating a shared cache, defining queries, fetching results, and invalidation, with a complete program at the end.
 
 ## Installation
 
@@ -30,163 +30,139 @@ redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 
 The program connects to `127.0.0.1:16379`. Use a writable primary connection that permits `EVAL` and the scripts' `GET`, `SET` (including `PX`), and `DEL` commands. Reads can initialize cache metadata too.
 
-## Quick start
+## Usage
 
-Save the following complete program as `main.go` in the temporary module directory created above (`$CACHEQ_DEMO_DIR`). It uses an in-memory database substitute and counts source calls to show whether B reuses A's result.
-
-The result to share is `User{Name: "Alice"}`, the profile of user 7 in tenant 42. The program creates a Redis connection named `remote`, then passes it to the Redis store adapter named `store`. The store executes storage operations; `shared` combines that store with one record's key, type, and caching rules.
-
-`cacheq.NewSharedCache[User](store, options)` returns a `*cacheq.SharedCache[User]` configuring shared caching for that profile. The arguments in this example mean:
-
-| Expression | Meaning in this example |
-| --- | --- |
-| `[User]` | The shared result's Go type is User. Writes encode a User and hits decode back into a User; the returned shared object does not itself contain Alice's profile |
-| First argument `store` | Use the previously created Redis adapter for reads, writes, and invalidation; configurations for several users can reuse this adapter |
-| `Key: "tenant:42:user:7:v1"` | Identify the shared record for tenant 42, user 7, data version v1. Use a different key such as `tenant:42:user:8:v1` for user 8 |
-| `Format: "user.json.v1"` | Label the record as version 1 of the User JSON schema. Readers reuse only records with a matching Format; the application chooses this string without registration, and it does not select a codec. JSON is the default here because Codec is unset |
-| `TTL: 5 * time.Minute` | Retain the shared result for at most five minutes from source completion; reuse as fresh data also depends on the Client's StaleTime, set to one minute below |
-| `Timeout: 200 * time.Millisecond` | Wait at most 200 milliseconds for each shared read, write, or key invalidation; this does not bound the database or API Fetcher |
-
-The colons and the tenant, user, and v1 segments in Key are example naming conventions. Cacheq does not parse them or enforce tenant permissions. The application must assign separate keys to different data and authorize reads.
-
-Creating shared only validates and saves configuration; it does not read a profile or write Redis data. Assigning it to QueryDefinition.Shared later attaches these rules to the query. When definition.Fetch(ctx, a) runs, it checks local data, then accesses Redis using this configuration, and invokes the Fetcher when needed. Each Client keeps its own local results while Redis holds the shared record.
+The following sections follow API usage order: create a Redis store, create a shared cache, define a query, fetch results, and invalidate them. The example's result type is User, representing a user profile:
 
 ```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"sync/atomic"
-	"time"
-
-	"github.com/Waterkyuu/cacheq"
-	redistore "github.com/Waterkyuu/cacheq/store/redis"
-	"github.com/redis/go-redis/v9"
-)
-
 // User contains the profile fields shared between service instances.
 type User struct {
 	// Name is the user's display name.
 	Name string
 }
+```
 
-// main demonstrates a source read followed by reuse in a separate local Client.
-func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+Declare User at package level. Place the initialization and operation snippets below in the same main function, in order, reusing the objects created earlier. They are not standalone programs. The runnable program with imports and all setup appears under "Complete examples and related guides" at the end.
 
-	// The application owns the Redis connection and closes it at shutdown.
-	remote := redis.NewClient(&redis.Options{
-		Addr: "127.0.0.1:16379", ContextTimeoutEnabled: true,
-		DialTimeout: time.Second, ReadTimeout: time.Second,
-		WriteTimeout: time.Second, MaxRetries: -1,
-	})
-	defer func() { _ = remote.Close() }()
-	if err := remote.Ping(ctx).Err(); err != nil {
-		panic(err)
-	}
-	// Store adapts the borrowed connection to cacheq operations in this namespace.
-	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
-	if err != nil {
-		panic(err)
-	}
+### Create a Redis store
 
-	// Bind one User record's identity and caching rules to the Redis adapter.
-	// Construction validates configuration without reading or writing Redis.
-	shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
-		// Key identifies this tenant's user profile across service instances.
-		Key: "tenant:42:user:7:v1",
-		// Format must match the schema and encoding expected by every reader.
-		Format: "user.json.v1",
-		// TTL caps shared freshness and retention from source completion.
-		TTL: 5 * time.Minute,
-		// Timeout bounds each store call, not the source Fetcher.
-		Timeout: 200 * time.Millisecond,
-	})
-	if err != nil {
-		panic(err)
-	}
-	// Reset only this demonstration record so repeated runs have the same output.
-	if err := shared.Invalidate(ctx); err != nil {
-		panic(err)
-	}
+Use `redistore.New(remote, options)` to create a Redis storage adapter. The application creates remote as a go-redis client; the returned store implements SharedStore for subsequent shared cache operations. Prefix gives records an application namespace, `cacheq-quickstart` here.
 
-	// A concurrency-safe in-memory source stands in for a database or API.
-	var source atomic.Value
-	source.Store(User{Name: "Alice"})
-	var calls atomic.Int64
-	// Definition connects the shared rules to a local query identity and source.
-	definition := cacheq.QueryDefinition[User]{
-		Key: "tenant:42:user:7",
-		// Shared enables Redis reuse when this query needs to load data.
-		Shared: shared,
-		// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
-		Fetcher: func(context.Context) (User, error) {
-			calls.Add(1)
-			return source.Load().(User), nil
-		},
-	}
+This code creates an example context with a ten-second lifetime and a Redis connection, then creates the adapter. Ping verifies connectivity for the example; redistore.New itself validates configuration without server I/O.
 
-	// Both Clients use the same shared configuration and keep separate local results.
-	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-	defer a.Close()
-	defer b.Close()
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
 
-	first, err := definition.Fetch(ctx, a)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("A: %s, source calls: %d\n", first.Name, calls.Load())
-
-	second, err := definition.Fetch(ctx, b)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("B: %s, source calls: %d\n", second.Name, calls.Load())
-	fmt.Printf("shared hits: %d\n", shared.Stats().Hits)
+// The application owns the Redis connection and closes it at shutdown.
+remote := redis.NewClient(&redis.Options{
+	Addr: "127.0.0.1:16379", ContextTimeoutEnabled: true,
+	DialTimeout: time.Second, ReadTimeout: time.Second,
+	WriteTimeout: time.Second, MaxRetries: -1,
+})
+defer func() { _ = remote.Close() }()
+if err := remote.Ping(ctx).Err(); err != nil {
+	panic(err)
+}
+// Store adapts the borrowed connection to cacheq operations in this namespace.
+store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
+if err != nil {
+	panic(err)
 }
 ```
 
-Run from the directory containing `main.go`:
+In an application, create the Redis connection and store at startup and reuse them for multiple queries. The application owns connection cleanup; do not reconnect for every read.
 
-```sh
-go run .
+### Create a shared cache
+
+Use `cacheq.NewSharedCache[V](store, options)` to configure shared caching for one query result. V is the type to save and restore, the User defined above in this example. The store argument is the Redis adapter created in the previous step.
+
+This example shares the profile of user 7 in tenant 42 under `tenant:42:user:7:v1`, using default JSON encoding and the format label `user.json.v1`. It retains the result for at most five minutes from source completion and waits at most 200 milliseconds for each shared store operation.
+
+```go
+// Bind one User record's identity and caching rules to the Redis adapter.
+// Construction validates configuration without reading or writing Redis.
+shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
+	// Key identifies this tenant's user profile across service instances.
+	Key: "tenant:42:user:7:v1",
+	// Format must match the schema and encoding expected by every reader.
+	Format: "user.json.v1",
+	// TTL caps shared freshness and retention from source completion.
+	TTL: 5 * time.Minute,
+	// Timeout bounds each store call, not the source Fetcher.
+	Timeout: 200 * time.Millisecond,
+})
+if err != nil {
+	panic(err)
+}
 ```
 
-Expected output:
+The returned shared has type `*cacheq.SharedCache[User]` and holds storage and reuse rules for this data. Construction only validates and saves configuration; it does not load a profile. The next section attaches it to a query through QueryDefinition.Shared.
 
-```text
-A: Alice, source calls: 1
-B: Alice, source calls: 1
-shared hits: 1
+For user 8, create a configuration with a different key such as `tenant:42:user:8:v1`, reusing the same store. Colons and key segments are application naming conventions. Format labels the schema and encoding version readers must match; it does not choose a codec. JSON is used here because Codec is unset. Invalid key, Format, TTL, Timeout, or other options return errors; see "Configuration" for constraints.
+
+### Define a query using the shared cache
+
+Use `cacheq.QueryDefinition[User]` to combine a local query identity, shared cache configuration, and source read. Assign the shared object from the previous step to Shared; Fetcher defines where to obtain a User.
+
+Here source is a concurrency-safe database substitute and calls counts source reads. This code only defines the Fetcher callback; constructing a query definition does not execute it. In application code, replace it with a database or API read that uses its supplied context.
+
+```go
+// A concurrency-safe in-memory source stands in for a database or API.
+var source atomic.Value
+source.Store(User{Name: "Alice"})
+var calls atomic.Int64
+// Definition connects the shared rules to a local query identity and source.
+definition := cacheq.QueryDefinition[User]{
+	Key: "tenant:42:user:7",
+	// Shared enables Redis reuse when this query needs to load data.
+	Shared: shared,
+	// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
+	Fetcher: func(context.Context) (User, error) {
+		calls.Add(1)
+		return source.Load().(User), nil
+	},
+}
 ```
 
-A has neither a local nor a shared result, so it runs the Fetcher and writes the result to Redis. B also has an empty local cache, but reads Alice from Redis: the source call count remains 1. Subsequent fresh reads by either Client use that Client's local cache.
+QueryDefinition.Key identifies the query within one Client; SharedCacheOptions.Key identifies the cross-instance record. Configure them separately; neither is derived from the other. Use consistent result types and loading rules for the same local key.
 
-Each run resets only the demonstration record in the `cacheq-quickstart` namespace for repeatable output. This is demonstration setup; do not clear caches at application startup or use this namespace for production data. When finished, stop the disposable server with Ctrl+C in its terminal.
+### Fetch query results
 
-## Usage
+Use `definition.Fetch(ctx, client)` to wait for a User or an error. A Client owns local query state. Applications normally reuse a Client and supply each request's context. This example creates Clients A and B to simulate separate service instances.
 
-### Integrate with an application
+StaleTime of one minute permits reusing a source result as fresh within that interval. A invokes the Fetcher and writes Redis when no usable record exists; B can then reuse that Redis record. Finally, shared.Stats().Hits reports shared cache hits.
 
-Follow the program's initialization order:
+```go
+// Both Clients use the same shared configuration and keep separate local results.
+a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+defer a.Close()
+defer b.Close()
 
-1. Create the go-redis client `remote` at application startup, then wrap it with `redistore.New` to create `store`. It implements cacheq's `SharedStore` interface for Redis operations and can serve multiple queries. `redistore.New` performs no server I/O; the example's Ping detects connection problems early.
-2. Create `NewSharedCache[V]` for each query identity, where `V` is the result type. The example's `shared` describes only user 7 in tenant 42; other users need different keys. Reuse the configuration instead of recreating it for every request.
-3. Assign `shared` to `QueryDefinition.Shared`. Replace the demonstration Fetcher with a database or API read that uses its supplied context and returns `User` and an error. The `source` and `calls` variables are demonstration data and instrumentation, not application requirements.
-4. Call `definition.Fetch(ctx, client)` in request handling to obtain a `User` or error. Use the request context and reuse a Client within the application so requests share local results. A and B simulate two independent instances.
+first, err := definition.Fetch(ctx, a)
+if err != nil {
+	panic(err)
+}
+fmt.Printf("A: %s, source calls: %d\n", first.Name, calls.Load())
 
-Different processes create their own connections, stores, and query configurations. To share results, they must agree on the Redis address, database, Prefix, EnableTags setting, shared key, Format, and codec. Keep results for different tenants, permissions, or query parameters under different keys.
+second, err := definition.Fetch(ctx, b)
+if err != nil {
+	panic(err)
+}
+fmt.Printf("B: %s, source calls: %d\n", second.Name, calls.Load())
+fmt.Printf("shared hits: %d\n", shared.Stats().Hits)
+```
 
-At shutdown, close the Clients before the application-owned Redis connection. `Client.Close()` neither closes `remote` nor deletes Redis data. The example's defers run in that order.
+Reads check fresh local data, a fresh Redis record, then the Fetcher. B's shared hit does not invoke the Fetcher again. Subsequent fresh reads use each Client's local data. The complete example at the end resets its initial record for repeatable output.
+
+At shutdown, close Clients before the Redis connection. Client.Close does not close the injected connection or delete Redis data. Processes sharing a record must agree on the Redis dataset, namespace, shared key, Format, Codec, and EnableTags setting.
 
 ### Invalidate a result after updating the source
 
 Commit the database or API write before calling `definition.InvalidateShared`. It invalidates the Redis record first, then the query in the supplied Client. A subsequent read loads from the source.
 
-Insert this snippet at the end of the quick start's main function, after its last output line. It reuses `source`, `definition`, `ctx`, `a`, and `calls`, simulating a successful business write by changing the in-memory source:
+Insert this snippet at the end of the complete example's main function at the end, after its last output line. It reuses `source`, `definition`, `ctx`, `a`, and `calls`, simulating a successful business write by changing the in-memory source:
 
 ```go
 // Simulate a successful database or API write before invalidating the cache.
@@ -296,7 +272,7 @@ Explicit invalidation does not silently degrade: if the remote InvalidateShared 
 | Symptom | Cause to check | Action |
 | --- | --- | --- |
 | `go run` cannot find the adapter or requires a newer Go version | Incorrect local replacement paths or an older toolchain | Check both source replacements and use Go 1.26+ |
-| The quick start's Ping fails | Redis is stopped, or its address or permissions are wrong | Check the server at `127.0.0.1:16379`; this is a demonstration startup check, not a cacheq requirement |
+| The example's Ping fails | Redis is stopped, or its address or permissions are wrong | Check the server at `127.0.0.1:16379`; this is a demonstration startup check, not a cacheq requirement |
 | B loads the source again and ReadErrors increases | Redis connection, ACL, or operation timeout | Check connection settings, writable-primary access, and script permissions; use the statistics below to distinguish failure from an ordinary miss |
 | Hits stays at 0 without read errors | StaleTime is 0, the record expired, or reads always hit local data | Set positive freshness and use a new Client to verify shared hits; local hits do not increment shared Hits |
 | DecodeErrors increases and the source runs | Format mismatch, damaged record, or codec decoding failure | Align types, Format, and Codec; use a new key for incompatible results |
@@ -304,7 +280,7 @@ Explicit invalidation does not silently degrade: if the remote InvalidateShared 
 | B returns old data after A invalidates | B has fresh local data without a watcher | Invalidate B locally or configure WatchShared |
 | Configuration construction fails | Empty key or Format, nonpositive TTL, or missing tag support | Check the configuration tables; invalid shared options return ErrInvalidSharedCache and missing capabilities return ErrSharedCapability |
 
-Add this snippet at the end of the quick start's main function to inspect the existing `shared` object's statistics:
+Add this snippet at the end of the complete example's main function at the end to inspect the existing `shared` object's statistics:
 
 ```go
 stats := shared.Stats()
@@ -326,6 +302,126 @@ fmt.Printf("hits=%d misses=%d read_errors=%d write_errors=%d\n",
 - Store and Codec calls run outside the Client lock; an Executor slot covers the entire load. Shared cache failures alone do not trigger query retries; source failures follow the query retry policy. Cancellation is cooperative, so both the driver and Fetcher must honor context.
 
 ## Complete examples and related guides
+
+### Run the complete example
+
+Save the following complete program as main.go in the temporary module created during installation (`$CACHEQ_DEMO_DIR`). It combines the creation and fetching operations above, resetting only its demonstration record for repeatable output.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+	redistore "github.com/Waterkyuu/cacheq/store/redis"
+	"github.com/redis/go-redis/v9"
+)
+
+// User contains the profile fields shared between service instances.
+type User struct {
+	// Name is the user's display name.
+	Name string
+}
+
+// main demonstrates a source read followed by reuse in a separate local Client.
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// The application owns the Redis connection and closes it at shutdown.
+	remote := redis.NewClient(&redis.Options{
+		Addr: "127.0.0.1:16379", ContextTimeoutEnabled: true,
+		DialTimeout: time.Second, ReadTimeout: time.Second,
+		WriteTimeout: time.Second, MaxRetries: -1,
+	})
+	defer func() { _ = remote.Close() }()
+	if err := remote.Ping(ctx).Err(); err != nil {
+		panic(err)
+	}
+	// Store adapts the borrowed connection to cacheq operations in this namespace.
+	store, err := redistore.New(remote, redistore.Options{Prefix: "cacheq-quickstart"})
+	if err != nil {
+		panic(err)
+	}
+
+	// Bind one User record's identity and caching rules to the Redis adapter.
+	// Construction validates configuration without reading or writing Redis.
+	shared, err := cacheq.NewSharedCache[User](store, cacheq.SharedCacheOptions[User]{
+		// Key identifies this tenant's user profile across service instances.
+		Key: "tenant:42:user:7:v1",
+		// Format must match the schema and encoding expected by every reader.
+		Format: "user.json.v1",
+		// TTL caps shared freshness and retention from source completion.
+		TTL: 5 * time.Minute,
+		// Timeout bounds each store call, not the source Fetcher.
+		Timeout: 200 * time.Millisecond,
+	})
+	if err != nil {
+		panic(err)
+	}
+	// Reset only this demonstration record so repeated runs have the same output.
+	if err := shared.Invalidate(ctx); err != nil {
+		panic(err)
+	}
+
+	// A concurrency-safe in-memory source stands in for a database or API.
+	var source atomic.Value
+	source.Store(User{Name: "Alice"})
+	var calls atomic.Int64
+	// Definition connects the shared rules to a local query identity and source.
+	definition := cacheq.QueryDefinition[User]{
+		Key: "tenant:42:user:7",
+		// Shared enables Redis reuse when this query needs to load data.
+		Shared: shared,
+		// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
+		Fetcher: func(context.Context) (User, error) {
+			calls.Add(1)
+			return source.Load().(User), nil
+		},
+	}
+
+	// Both Clients use the same shared configuration and keep separate local results.
+	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	defer a.Close()
+	defer b.Close()
+
+	first, err := definition.Fetch(ctx, a)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("A: %s, source calls: %d\n", first.Name, calls.Load())
+
+	second, err := definition.Fetch(ctx, b)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("B: %s, source calls: %d\n", second.Name, calls.Load())
+	fmt.Printf("shared hits: %d\n", shared.Stats().Hits)
+}
+```
+
+Run from the directory containing main.go:
+
+```sh
+go run .
+```
+
+Expected output:
+
+```text
+A: Alice, source calls: 1
+B: Alice, source calls: 1
+shared hits: 1
+```
+
+After A loads the source, B reuses the Redis result, so the source call count stays at 1. The program resets only the demonstration record in the cacheq-quickstart namespace. Do not perform this reset at application startup or keep production data in this namespace. Stop the disposable server with Ctrl+C in its terminal when finished.
+
+### Related guides
 
 - [Complete Redis examples and run instructions](../examples/redis/): run shared_cache for shared reads, explicit invalidation, and Redis failure fallback; run shared_invalidation for tags and cross-instance notifications.
 - [Shared invalidation and tags](shared-invalidation.en-US.md): promptly mark other instances' local data stale and invalidate related detail/list queries together.

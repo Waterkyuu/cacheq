@@ -43,13 +43,50 @@ If setup requires a repository checkout or local `replace` directives, provide
 the commands and identify the paths the reader must change. Do not assume an
 unverified package version is available to install.
 
-### 3. Quick start
+### 3. API usage
 
 ```markdown
-## Quick start
+## Usage
+
+### Create <resource>
+
+<Explain what this operation creates, why the application needs it, which API
+it uses, what the arguments represent, and what the returned object does.>
+
+<Focused example of this operation, including error handling.>
+
+<Explain the result and when it becomes useful to the next operation.>
+
+### <Next operation, such as define a query or fetch a result>
+
+<Explain this API's purpose, inputs, and returned result before the code.>
+
+<Focused example reusing objects from the preceding operation.>
+```
+
+Organize the main explanation by operations such as "Create a shared cache",
+"Define a query", "Fetch results", and "Invalidate cached data". Each operation
+must have its own heading, a direct explanation, and a focused code example.
+Do not substitute a large program with comments or a parameter table for these
+API usage sections.
+
+At each API's first use, explain its type argument, dependencies, concrete option
+values, return value, error behavior, and whether it performs I/O. Explain how
+its returned object connects to later calls. Introduce one operation at a time;
+do not put every object's explanation into a single preamble.
+
+Identify the origin of variables and helpers. State which file or function each
+snippet extends and whether it is standalone. Introduce required result types
+before using them as type arguments. Say which objects to reuse across requests,
+who closes them, and when a callback is defined versus actually executed.
+
+### 4. Complete runnable example
+
+```markdown
+## Complete example
 
 Save the following program as `main.go` in <the configured module directory>.
-This example <states the one behavior demonstrated>.
+It combines the operations above to <state the behavior demonstrated>.
 
 <One complete Go program.>
 
@@ -64,50 +101,18 @@ Expected output:
 <Explain what in the output demonstrates success.>
 ```
 
-The program must include `package`, imports, data types, dependency initialization,
-configuration, a public API call, result handling, error handling, and cleanup.
-Use small, concrete input values. Explain which values to replace in a real
-application. Include required service addresses and environment variables.
+Place the complete program after the focused API sections, either immediately
+below them or in the final examples section. A short getting-started page may
+lead with a runnable program; an API usage guide must explain operations first.
 
-Before the first program, explain the key objects and how they connect. For each
-feature-specific constructor, explain its type argument, dependencies, concrete
-option values, and returned object. State whether construction performs I/O or
-only saves configuration, and which later call uses it. A configuration table
-later in the guide does not replace these first-use explanations.
+Include package, imports, result types, initialization, configuration, public
+calls, result handling, error handling, and cleanup. State addresses and required
+environment variables. Explain which values to replace in a real application.
 
-Demonstrate the smallest useful scenario. Keep unrelated capabilities out of this
-program. For Redis shared caching, demonstrate a source read followed by another
-Client reusing that result; add invalidation and notifications in later sections.
-Do not paste a large demonstration covering every feature into the quick start.
-Explain repeat-run behavior if existing remote state affects the output.
-
-### 4. Usage
-
-```markdown
-## Usage
-
-### <First common task, expressed as an action>
-
-<When to perform this operation and where the following snippet belongs.>
-
-<Focused Go snippet using objects introduced in the quick start.>
-
-<Returned result, observable effect, and relevant error behavior.>
-
-### <Next common task>
-
-<Follow the same format. Introduce one additional capability.>
-```
-
-Use concrete task headings such as "Invalidate a result after updating the
-source" or "Receive invalidation notifications in another instance". Do not
-collect unrelated operations under a heading such as "Advanced usage".
-
-Identify the origin of every variable and helper used by a snippet. State which
-file or function it extends. Label snippets that are not standalone programs.
-Explain inputs and return values at the call site. Say which objects to reuse
-across requests and who owns their cleanup. Link to prerequisites before using
-APIs introduced in another guide.
+Demonstrate the smallest useful scenario. For Redis sharing, show a source read
+followed by another Client reusing the result. Keep optional capabilities in
+separate API usage sections. Explain repeat-run behavior and demonstration-only
+setup such as resetting a reserved cache record.
 
 ### 5. Configuration
 
@@ -164,7 +169,7 @@ reference when needed. Do not imply unsupported guarantees.
 - [<Related guide>](<guide-path>): <when the reader needs it>.
 ```
 
-The quick start must work without following these links. Omit sections that do
+The complete program must work without following these links. Omit sections that do
 not apply to the feature; do not invent content to fill the structure.
 
 ## Chinese section headings
@@ -174,7 +179,7 @@ Use the same section order and examples in both languages:
 | English | Simplified Chinese |
 | --- | --- |
 | Installation | 安装 |
-| Quick start | 快速开始 |
+| Complete example | 完整示例 |
 | Usage | 使用方式 |
 | Configuration | 配置说明 |
 | Error handling and common problems | 错误处理与常见问题 |
