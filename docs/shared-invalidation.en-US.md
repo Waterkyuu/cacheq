@@ -12,7 +12,7 @@ Remote tags group different shared keys and result types. Enable `redistore.Opti
 
 The authoritative database or API write must commit before invalidation. Notification delivery does not provide a distributed transaction, a synchronous barrier across instances, or durable event replay.
 
-## Requirements and quick start
+## Installation
 
 The core contracts remain compatible with Go 1.22. The optional Redis module requires Go 1.26 and the dependency version declared in its go.mod. In addition to the shared cache's commands, notifications require `PUBLISH` and `SUBSCRIBE`; tags require `HGET`, `HSET`, `HGETALL`, and `HEXISTS`. Use a writable primary connection with appropriate ACL permissions and context/socket timeouts.
 
@@ -22,30 +22,194 @@ From the checked-out repository, start a disposable server in one terminal:
 redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 ```
 
-From the repository root, in another terminal:
+In another terminal, prepare the existing example module from the repository root. Its checked-in `go.mod` uses local replacements for the core and Redis adapter; no published adapter version is required:
 
 ```sh
 cd examples/redis
-REDIS_ADDR=127.0.0.1:16379 go run ./shared_invalidation
+go mod download
 ```
 
-Expected output:
+## Usage
 
-```text
-initial detail: Alice
-initial list: Alice
-source calls: 2
-notified detail stale: true
-notified list stale: true
-retained detail: Alice
-refreshed detail: Bob
-refreshed list: Bob
-source calls: 4
+The snippets below extend an application's `run() error` function and are not standalone programs. Reuse `ctx`, the service lifetime context, and `remote`, the configured `*redis.Client`, from [Create a Redis store](shared-cache.en-US.md#create-a-redis-store). The application owns that connection and its timeouts. Use the imports `context`, `fmt`, `time`, `github.com/Waterkyuu/cacheq`, and `redistore "github.com/Waterkyuu/cacheq/store/redis"`. The complete program below includes all setup and imports.
+
+The existing query returns this profile type, declared at package level:
+
+```go
+// User represents the immutable source value shared by detail and list queries.
+type User struct {
+	// Name is the display name returned by the authoritative source.
+	Name string
+}
 ```
 
-Two Clients reuse a `User` detail and a `[]User` list through Redis. A commits the source change and invalidates their shared label. B receives stale snapshots for both result types without manual local invalidation, retains Alice during the stale interval, and explicitly fetches Bob. `RefetchNone` and disabled handles make this example's source call counts deterministic. Production applications can use the default observed-query refresh policy.
+### Enable notifications on the store
 
-The example resets only the reserved `cacheq-invalidation-demo` namespace's demonstration label. Metadata remains until that disposable Redis server is stopped. The complete program is maintained at [examples/redis/shared_invalidation/main.go](../examples/redis/shared_invalidation/main.go).
+Replace the application's existing `redistore.New` call with the configuration below. `EnableNotifications` defaults to false; true publishes invalidations and permits subscriptions. Keep the existing application's Prefix in production; `cacheq-notification-usage` is an example namespace. Every writer requiring notification propagation must enable publishing. Redis ACLs need `PUBLISH` and `SUBSCRIBE` in addition to the [shared cache commands](shared-cache.en-US.md#installation).
+
+```go
+store, err := redistore.New(remote, redistore.Options{
+	Prefix: "cacheq-notification-usage", EnableNotifications: true,
+})
+if err != nil {
+	return err
+}
+```
+
+The returned `store` borrows `remote`; construction validates configuration without Redis I/O. Reuse this exact store object for the query bindings and watcher within each Client. Separate processes can construct their own objects with the same remote namespace. Enabling notifications does not require remote tags.
+
+### Bind an existing query to the notification store
+
+Reuse `definition`, the application's `cacheq.Definition[User]` created by `QueryDefinition` as in [Define a query](shared-cache.en-US.md#define-a-query-using-the-shared-cache). Its Fetcher reads the committed user profile from the application's source. `User` is the profile result type declared above.
+
+`NewSharedCache` infers `User` from `SharedCacheOptions[User]`. The key includes tenant, record identity, and schema version; `Format` selects the JSON schema and `TTL` caps shared freshness at five minutes. Keep the application's existing key, format, and TTL when updating a configuration. Attach the returned shared cache to the definition before using it with a Client.
+
+```go
+shared, err := cacheq.NewSharedCache(store, cacheq.SharedCacheOptions[User]{
+	Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
+})
+if err != nil {
+	return err
+}
+definition.Shared = shared
+```
+
+Neither construction nor assignment performs Redis I/O. A later load binds the query's local key to this store and shared key. No tags are needed for key invalidation.
+
+### Start one watcher for the Client and store
+
+Reuse `client`, the application's long-lived `*cacheq.Client` (`a` in the complete example). Call `WatchShared` once at startup for this Client/store pair. It performs subscription I/O, waits for admission, and returns a `*SharedWatcher`; setup failures return an error without retaining a reader. Existing queries bound to this store become stale to repair the pre-subscription gap.
+
+```go
+watch, err := client.WatchShared(ctx, store, cacheq.InvalidateOptions{
+	Refetch: cacheq.RefetchNone,
+})
+if err != nil {
+	return err
+}
+defer watch.Close()
+```
+
+The watcher uses the service lifetime `ctx`, not a short-lived request context. Its lifetime also ends when the Client closes. This example selects `RefetchNone`, so notifications retain data and mark it stale without loading automatically. Omitting the options uses `RefetchObserved`, allowing enabled observers to refresh. Another process starts its own watcher on its own Client and store.
+
+### Load the bound query
+
+Load the existing definition through the same Client. `Fetch` returns a `User` or an error; a fresh local hit performs no Redis I/O, while a load can read Redis and invoke the source Fetcher. The returned user is usable immediately; watcher delivery to peers remains asynchronous.
+
+```go
+user, err := definition.Fetch(ctx, client)
+if err != nil {
+	return err
+}
+fmt.Printf("loaded user: %s\n", user.Name)
+```
+
+### Invalidate one shared key after a committed write
+
+After the authoritative database or API write succeeds, call `definition.InvalidateShared` with the same Client. It performs remote key invalidation first, publishes the notification, then marks that definition's exact local key stale. `RefetchNone` leaves the next read responsible for loading; it does not wait for peer watchers or refresh completion.
+
+```go
+// The database or API write has already committed successfully.
+if err := definition.InvalidateShared(ctx, client, cacheq.InvalidateOptions{
+	Refetch: cacheq.RefetchNone,
+}); err != nil {
+	return fmt.Errorf("invalidate committed user change: %w", err)
+}
+```
+
+Remote failure returns an error and leaves local state unchanged; a timeout can leave the remote outcome uncertain. Handle invalidation failure separately from the already committed write. Retrying the business write solely because invalidation failed can duplicate its effects. `shared.Invalidate(ctx)` is the remote-only alternative; it does not synchronously apply the initiating Client's local invalidation.
+
+### Enable optional remote tags
+
+Skip this section when key invalidation is sufficient. To group detail and list records, create a store with `EnableTags: true` and start its watcher. The separate example prefix keeps this optional flow independent from the key-only flow above. Tag mode uses a separate Redis layout and notification channel; all participants in a tagged namespace must agree on Prefix and EnableTags. Tags additionally require `HGET`, `HSET`, `HGETALL`, and `HEXISTS` permissions.
+
+```go
+tagStore, err := redistore.New(remote, redistore.Options{
+	Prefix: "cacheq-tag-usage", EnableNotifications: true, EnableTags: true,
+})
+if err != nil {
+	return err
+}
+tagWatch, err := client.WatchShared(ctx, tagStore, cacheq.InvalidateOptions{
+	Refetch: cacheq.RefetchNone,
+})
+if err != nil {
+	return err
+}
+defer tagWatch.Close()
+```
+
+Store construction performs no I/O; `WatchShared` subscribes using the same admission and lifetime rules as above. Reuse `tagStore` for every tagged shared cache and `tagWatch` for this Client/store pair. Enabling tags does not migrate records from the key-only layout.
+
+### Register a definition's remote tags
+
+Enable `ShareTags` in `SharedCacheOptions[User]` and assign `Definition.Tags` before loading. `ShareTags` requests remote registration; without it, newly declared labels remain local. Construction returns `ErrSharedCapability` if the store cannot register tags.
+
+The following code copies the existing definition, preserving its source Fetcher, and uses a new local key so no fresh local result skips the initial shared read. The label includes the tenant and groups this detail record with any list record declaring the same label. `NewSharedCache` validates without I/O; `tagged.Fetch` performs the shared read that registers membership, including on a Redis cache hit.
+
+```go
+tagShared, err := cacheq.NewSharedCache(tagStore, cacheq.SharedCacheOptions[User]{
+	Key: "tenant:42:user:7:v1", Format: "user.json.v1", TTL: 5 * time.Minute,
+	ShareTags: true,
+})
+if err != nil {
+	return err
+}
+tagged := definition
+tagged.Key = "tagged-detail"
+tagged.Shared = tagShared
+tagged.Tags = []string{"tenant:42:users"}
+if _, err := tagged.Fetch(ctx, client); err != nil {
+	return err
+}
+```
+
+Constructing a definition, creating a disabled handle, or hitting fresh local data does not register remote membership. When adding labels to an already loaded local key, create a handle from the updated definition and explicitly `Refetch(ctx)` to force registration. Remote membership is additive; changing groups may require a new versioned shared key or namespace.
+
+### Invalidate the registered tags after a committed write
+
+`client.InvalidateSharedTags` takes the same `tagStore` and the labels to invalidate. It performs remote I/O and then invalidates this Client's matching bound queries. Matching is exact, case-sensitive OR: any listed label is sufficient, and an empty list is a no-op. Other Clients receive notifications asynchronously through their own watchers.
+
+```go
+// The business write affecting the tagged records has already committed.
+operation, cancel := context.WithTimeout(ctx, 2*time.Second)
+defer cancel()
+if err := client.InvalidateSharedTags(
+	operation,
+	tagStore,
+	[]string{"tenant:42:users"},
+	cacheq.InvalidateOptions{Refetch: cacheq.RefetchNone},
+); err != nil {
+	return fmt.Errorf("invalidate committed users change: %w", err)
+}
+```
+
+The two-second operation deadline bounds this tag call; unlike shared-key invalidation, it uses the supplied context directly. Remote errors leave local state unchanged. A successful remote operation is not rolled back if local processing later fails. Handle this failure separately from the business write.
+
+### Inspect watcher diagnostics and release the subscription
+
+`watch.Stats()` reads counters without Redis I/O. `LastError` retains the latest transport or decoding failure even after recovery; use it with `Errors` and `Resyncs` to diagnose notification gaps. `Done()` closes when processing stops and subscription resources have been released. Unexpected stream closure terminates the watcher; investigate the failure and recreate it if the application needs to resume watching.
+
+```go
+stats := watch.Stats()
+if stats.LastError != nil {
+	fmt.Printf("watcher errors: %d, last error: %v\n", stats.Errors, stats.LastError)
+}
+select {
+case <-watch.Done():
+	fmt.Println("watcher stopped")
+default:
+}
+watch.Close()
+```
+
+`Close()` cancels processing and waits for subscription release. It is idempotent, so explicit shutdown can coexist with deferred cleanup. Closing or canceling a watcher does not close its Client or the borrowed Redis connection. At shutdown, release watchers and Clients before closing `remote`; query handles still require their own cleanup.
+
+## Complete example
+
+The program below combines remote tags and two Clients to invalidate a user detail and list after a committed source change. It is maintained at [examples/redis/shared_invalidation/main.go](../examples/redis/shared_invalidation/main.go). To run an edited copy, save it as `main.go` in a new `invalidation-guide` directory inside the configured `examples/redis` module, then run it from that module with `REDIS_ADDR=127.0.0.1:16379 go run ./invalidation-guide`.
+
+The example resets only the reserved `cacheq-invalidation-demo` namespace's demonstration label, so repeated runs produce the same output. Metadata remains until the disposable Redis server is stopped. `RefetchNone` and disabled handles make the source call counts deterministic; production applications can use the default observed-query refresh policy.
 
 ```go
 // Command shared_invalidation demonstrates typed remote tag invalidation and local notification delivery.
@@ -219,6 +383,29 @@ func waitStale[V any](ctx context.Context, query *cacheq.QueryHandle[V]) error {
 	}
 }
 ```
+
+Run the maintained example from the repository root while the disposable Redis server is running:
+
+```sh
+cd examples/redis
+REDIS_ADDR=127.0.0.1:16379 go run ./shared_invalidation
+```
+
+Expected output:
+
+```text
+initial detail: Alice
+initial list: Alice
+source calls: 2
+notified detail stale: true
+notified list stale: true
+retained detail: Alice
+refreshed detail: Bob
+refreshed list: Bob
+source calls: 4
+```
+
+Two Clients reuse a `User` detail and a `[]User` list through Redis. A commits the source change and invalidates their shared label. B receives stale snapshots for both result types, retains Alice during the stale interval, and explicitly fetches Bob. The source call count rises from two to four only after the explicit reads.
 
 ## API contracts
 
