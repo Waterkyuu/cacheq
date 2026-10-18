@@ -36,26 +36,34 @@ type QueryHandle[V any] struct {
 }
 
 // Query creates a typed handle and loads missing or stale data in the background.
-// Automatic loading defaults to enabled; if options are supplied, the last option wins.
+// Automatic loading defaults to enabled; omitted options use Client defaults.
 // Nil policy fields inherit Client defaults; each handle evaluates its own ordinary freshness.
 // Concurrent loads share the initiator's policy; automatic invalidation uses the oldest enabled handle.
 // Invalid keys, incompatible result types, and nil fetchers are reported through Snapshot and Updates.
+// Extra configurations produce ErrTooManyOptions through the same failed-handle contract.
 // Disabled handles still receive shared updates and may explicitly Refetch. Close releases the subscription.
 func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOptions) *QueryHandle[V] {
-	definition := QueryDefinition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
-	return query(client, definition)
+	definition, err := QueryDefinition(key, fetch, options...)
+	return query(client, definition, err)
 }
 
 // query registers a typed subscription and its definition's labels before starting automatic work.
-func query[V any](client *Client, definition QueryDefinition[V]) *QueryHandle[V] {
+// A constructor error produces a failed handle without registering the zero definition.
+func query[V any](client *Client, definition Definition[V], constructorErr error) *QueryHandle[V] {
 	key := definition.Key
 	enabled := !definition.Options.Disable
-	request := definition.request(client.options, TriggerQuery)
+	var request queryRequest
+	if constructorErr == nil {
+		request = definition.request(client.options, TriggerQuery)
+	}
 	policy := request.options
 	handle := &QueryHandle[V]{client: client, key: key, updates: make(chan Snapshot[V], 1)}
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	handle.err = client.checkLocked(key, reflect.TypeFor[V]())
+	handle.err = constructorErr
+	if handle.err == nil {
+		handle.err = client.checkLocked(key, reflect.TypeFor[V]())
+	}
 	if handle.err == nil && definition.Fetcher == nil {
 		handle.err = ErrNoFetcher
 	}
@@ -67,6 +75,7 @@ func query[V any](client *Client, definition QueryDefinition[V]) *QueryHandle[V]
 	// Bind before registering a typed publisher so no concurrent writer can install another type.
 	_ = client.bindLocked(key, reflect.TypeFor[V]())
 	client.registerTagsLocked(key, request.tags)
+	client.registerSharedLocked(key, request)
 	observer := &subscription{
 		enabled: enabled,
 		request: request,
@@ -180,7 +189,7 @@ func (h *QueryHandle[V]) activeLocked() error {
 
 // Fetch waits for fresh data without owning a long-lived subscription.
 // The result type is inferred from fetch, allowing one client to serve unrelated data types.
-// Optional per-call overrides are copied; only the last options value overrides Client defaults.
+// An omitted configuration uses Client defaults; extra values return ErrTooManyOptions without loading.
 // Disable controls automatic subscriptions only and does not suppress this explicit read.
 // Ordinary freshness is evaluated independently; explicit loader deadlines stay authoritative.
 // Joining in-flight work preserves its initiator's loader, retries, and timeout.
@@ -192,21 +201,12 @@ func Fetch[V any](
 	fetch Fetcher[V],
 	options ...QueryOptions,
 ) (V, error) {
-	definition := QueryDefinition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
+	definition, err := QueryDefinition(key, fetch, options...)
+	if err != nil {
+		var zero V
+		return zero, err
+	}
 	return definition.Fetch(ctx, client)
-}
-
-// FetchWithOptions is a compatibility wrapper for callers predating optional Fetch arguments.
-//
-// Deprecated: pass QueryOptions directly to Fetch instead.
-func FetchWithOptions[V any](
-	ctx context.Context,
-	client *Client,
-	key any,
-	fetch Fetcher[V],
-	options QueryOptions,
-) (V, error) {
-	return Fetch(ctx, client, key, fetch, options)
 }
 
 // FetchWithExpiry loads data with an absolute freshness deadline, preserving the age of restored data.
@@ -231,7 +231,8 @@ func FetchWithExpiry[V any](ctx context.Context, client *Client, key any, load L
 }
 
 // Prefetch warms a typed key without returning its data; unlike browser prefetch APIs it returns errors.
-// It uses the same loading policy as Fetch, ignores Disable, and applies only the last options value.
+// It uses the supplied loading policy like Fetch and ignores Disable.
+// Omitted options use Client defaults; extra values return ErrTooManyOptions without loading.
 func Prefetch[V any](
 	ctx context.Context,
 	client *Client,
@@ -239,7 +240,10 @@ func Prefetch[V any](
 	fetch Fetcher[V],
 	options ...QueryOptions,
 ) error {
-	definition := QueryDefinition[V]{Key: key, Fetcher: fetch, Options: lastQueryOptions(options)}
+	definition, err := QueryDefinition(key, fetch, options...)
+	if err != nil {
+		return err
+	}
 	return definition.Prefetch(ctx, client)
 }
 
@@ -292,6 +296,7 @@ func (c *Client) setLocked(key, value any, typ reflect.Type) {
 	now := c.options.Clock()
 	cached := entry{
 		typ: typ, value: value, hasData: true, updatedAt: now, tags: c.entries[key].tags,
+		shared:    c.entries[key].shared,
 		expiresAt: c.limitExpiry(now, now.Add(c.options.StaleTime)), ordinary: true,
 	}
 	c.advanceRevisionLocked(&cached)
@@ -345,6 +350,7 @@ func (c *Client) fetch(
 		}
 		if !force && fresh {
 			c.registerTagsLocked(key, request.tags)
+			c.registerSharedLocked(key, request)
 			c.emitEventLocked(
 				Event{Key: key, Kind: EventCacheHit, Trigger: request.trigger, Reason: ReasonFresh, Err: cached.err},
 			)
@@ -357,11 +363,19 @@ func (c *Client) fetch(
 			c.mu.Unlock()
 			return nil, ErrNoFetcher
 		}
+		pending := c.pending[key]
+		if pending != nil && pending.request.options.Executor.heldBy(ctx) {
+			// Joining preserves the initiator's budget, even when this caller overrides or disables its own.
+			// Reject before registering or invalidating state so a caller-held slot cannot block its own wait.
+			c.mu.Unlock()
+			return nil, ErrExecutionReentry
+		}
 		if err := c.bindLocked(key, typ); err != nil {
 			c.mu.Unlock()
 			return nil, err
 		}
 		c.registerTagsLocked(key, request.tags)
+		c.registerSharedLocked(key, request)
 		if force {
 			cached = c.entries[key]
 			cached.expiresAt = time.Time{}
@@ -372,7 +386,6 @@ func (c *Client) fetch(
 			c.notifyLocked(key)
 			force = false
 		}
-		pending := c.pending[key]
 		if pending == nil {
 			pending = c.startLocked(ctx, key, request)
 		} else {

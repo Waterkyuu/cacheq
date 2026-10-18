@@ -140,7 +140,11 @@ func TestUpdateCancelsOldLoad(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	t.Cleanup(func() { once.Do(func() { close(release) }) })
-	h := Query(c, "key", func(context.Context) (int, error) { close(started); <-release; return 99, nil })
+	h := Query(
+		c,
+		"key",
+		func(context.Context) (int, error) { close(started); <-release; return 99, nil },
+	)
 	t.Cleanup(h.Close)
 	c.Invalidate("key")
 	<-started

@@ -520,7 +520,11 @@ func TestGCUseRestartsRetention(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "query":
-				handle := Query(client, "a", func(context.Context) (string, error) { return "unused", nil })
+				handle := Query(
+					client,
+					"a",
+					func(context.Context) (string, error) { return "unused", nil },
+				)
 				handle.Close()
 			case "snapshot":
 				Get[string](client, "a")

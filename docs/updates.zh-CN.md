@@ -115,6 +115,7 @@ case errors.Is(err, cacheq.ErrUpdateConflict):
 default:
 	return err
 }
+
 ```
 
 `ErrUpdateConflict` 表示本次计算结果没有写入。示例中的 `Invalidate` 保留当前数据，并按默认规则刷新有启用查询对象的列表；没有订阅时只标记过期。详见[缓存失效](invalidation.zh-CN.md)。

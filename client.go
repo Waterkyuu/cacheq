@@ -74,6 +74,12 @@ type entry struct {
 	invalidated bool
 	// updatedAt records the last installation of usable data.
 	updatedAt time.Time
+	// fetchedAt preserves source freshness when sharedExpiresAt identifies a shared result.
+	fetchedAt time.Time
+	// sharedExpiresAt caps every consumer's freshness for a shared result; zero means no shared cap.
+	sharedExpiresAt time.Time
+	// shared retains remote notification identity independently of data freshness and local writes.
+	shared sharedBinding
 	// err records the most recent failure while earlier data can remain available.
 	err error
 	// staleReason records the latest explicit stale cause without keeping removed-key history.
@@ -86,6 +92,8 @@ type queryRequest struct {
 	tags []string
 	// load produces data and an optional explicit expiration outside the client lock.
 	load Loader[any]
+	// shared optionally performs typed shared-cache access within the existing loader attempt.
+	shared *sharedQuery
 	// options supplies the initiator's retry, timeout, and ordinary freshness settings.
 	options Options
 	// ordinary distinguishes fetchers from loaders with authoritative absolute deadlines.
@@ -154,23 +162,20 @@ func NewClient(options Options) *Client {
 
 // Invalidate marks targets selected by an exact key, []any, func(any) bool, or QueryFilter stale.
 // Completed data is retained while selected queries become stale.
-// By default it refreshes enabled observed queries only when no load is active; the last option wins.
+// The zero-value configuration refreshes enabled observed queries only when no load is active.
 // RefetchAfterLoad optionally coalesces in-flight invalidations into one bounded follow-up.
+// Omitted options use zero values; extras return ErrTooManyOptions before selecting or changing targets.
 // Batches are validated before changes; predicates run outside the lock against existing keys.
 // Filter and predicate selection use existing keys only, exclude additions, and skip removed keys.
 // Nil targets or direct predicates are invalid; a nil QueryFilter.Predicate imposes no restriction.
 // Empty batches succeed; closed clients return ErrClosed without evaluating predicates.
 func (c *Client) Invalidate(target any, options ...InvalidateOptions) error {
-	_, err := c.invalidate(target, lastInvalidateOptions(options), nil)
-	return err
-}
-
-// lastInvalidateOptions applies the existing last-option-wins convention.
-func lastInvalidateOptions(options []InvalidateOptions) InvalidateOptions {
-	if len(options) == 0 {
-		return InvalidateOptions{}
+	option, err := singleOptions(options)
+	if err != nil {
+		return err
 	}
-	return options[len(options)-1]
+	_, err = c.invalidate(target, option, nil)
+	return err
 }
 
 // invalidate applies shared target selection and records the scheduled refresh for each selected key.
@@ -319,12 +324,19 @@ func (c *Client) startLocked(ctx context.Context, key any, request queryRequest)
 func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 	defer pending.cancel()
 	value, expiresAt, err := c.run(ctx, key, pending)
+	var source sharedResult
+	if result, ok := value.(sharedResult); ok {
+		source = result
+		value = result.value
+	}
 	if ctx.Err() != nil {
 		value, expiresAt, err = nil, time.Time{}, ctx.Err()
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	duration := c.loadNow().Sub(pending.startedAt)
+	// A changed remote generation rejects persistence and also prevents this older snapshot becoming locally fresh.
+	pending.invalidated = pending.invalidated || source.invalidated
 	c.stats.TotalLoadDuration += duration
 	switch {
 	case err == nil:
@@ -343,9 +355,15 @@ func (c *Client) execute(ctx context.Context, key any, pending *flight) {
 			installsData := err == nil || c.options.Clock().Before(expiresAt)
 			if installsData {
 				cached.value, cached.hasData, cached.updatedAt = value, true, c.options.Clock()
+				cached.fetchedAt, cached.sharedExpiresAt = source.fetchedAt, source.expiresAt
+				for _, tag := range source.tags {
+					if !matchesQueryTags(cached.shared.tags, []string{tag}) {
+						cached.shared.tags = append(cached.shared.tags, tag)
+					}
+				}
 				cached.ordinary = pending.request.ordinary
 				if cached.ordinary {
-					expiresAt = cached.updatedAt.Add(pending.request.options.StaleTime)
+					expiresAt = c.ordinaryExpiry(cached, pending.request.options.StaleTime)
 				}
 				expiresAt = c.limitExpiry(cached.updatedAt, expiresAt)
 			}
@@ -441,6 +459,29 @@ func (c *Client) attempt(
 		c.emitEventLocked(event)
 	}
 	c.mu.Unlock()
+	if pending.request.shared != nil {
+		forced := pending.reason == ReasonInvalidated || pending.reason == ReasonRefetch
+		// Failed refreshes remain invalidated; reusing their old shared record would undo that invalidation.
+		bypass := forced || pending.reason == ReasonPreviousFailure
+		returnValue, sharedErr := pending.request.shared.load(ctx, bypass, func(tags []string) {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.pending[key] != pending || c.closed {
+				return
+			}
+			cached := c.entries[key]
+			for _, tag := range tags {
+				if !matchesQueryTags(cached.shared.tags, []string{tag}) {
+					cached.shared.tags = append(cached.shared.tags, tag)
+				}
+			}
+			c.entries[key] = cached
+		})
+		if sharedErr != nil {
+			return nil, time.Time{}, sharedErr
+		}
+		return returnValue, time.Time{}, nil
+	}
 	return pending.request.load(ctx)
 }
 
@@ -498,11 +539,16 @@ func (c *Client) checkLocked(key any, typ reflect.Type) error {
 	if key == nil || !reflect.ValueOf(key).Comparable() {
 		return fmt.Errorf("%w: %T", ErrInvalidKey, key)
 	}
+	// NaN-containing keys are comparable but cannot retrieve their own map entries.
+	if key != key { //nolint:gocritic // Reject non-reflexive keys before any map access.
+		return fmt.Errorf("%w: %T", ErrInvalidKey, key)
+	}
 	cached := c.entries[key]
 	typeMismatch := typ != nil && cached.typ != nil && cached.typ != typ
 	if typeMismatch {
+		// Key value formatting can reenter Client APIs while mu is held; type formatting cannot.
 		return fmt.Errorf(
-			"%w: key %v contains %v, requested %v",
+			"%w: key type %T contains %v, requested %v",
 			ErrTypeMismatch,
 			key,
 			cached.typ,
@@ -529,7 +575,7 @@ func (c *Client) discardLocked(key any, reason EventReason) {
 	cached := c.entries[key]
 	c.forgetCapacityLocked(key)
 	if len(c.observers[key]) > 0 || c.pending[key] != nil {
-		c.entries[key] = entry{typ: cached.typ, tags: cached.tags}
+		c.entries[key] = entry{typ: cached.typ, tags: cached.tags, shared: cached.shared}
 	} else {
 		delete(c.entries, key)
 	}
@@ -562,9 +608,22 @@ func (c *Client) entryFreshnessLocked(cached entry, staleTime time.Duration) (ti
 		return expiresAt, false
 	}
 	if cached.ordinary && !cached.invalidated {
-		expiresAt = c.limitExpiry(cached.updatedAt, cached.updatedAt.Add(staleTime))
+		expiresAt = c.ordinaryExpiry(cached, staleTime)
 	}
 	return expiresAt, c.options.Clock().Before(expiresAt)
+}
+
+// ordinaryExpiry applies consumer freshness to source time and caps it by shared and local age limits.
+func (c *Client) ordinaryExpiry(cached entry, staleTime time.Duration) time.Time {
+	start := cached.updatedAt
+	if !cached.sharedExpiresAt.IsZero() {
+		start = cached.fetchedAt
+	}
+	expiresAt := start.Add(staleTime)
+	if !cached.sharedExpiresAt.IsZero() && expiresAt.After(cached.sharedExpiresAt) {
+		expiresAt = cached.sharedExpiresAt
+	}
+	return c.limitExpiry(cached.updatedAt, expiresAt)
 }
 
 // withFreshnessLocked applies one consumer's freshness to ordinary, non-invalidated shared data.

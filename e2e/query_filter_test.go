@@ -14,9 +14,21 @@ func TestHTTPQueryFilter(t *testing.T) {
 	api := newUserAPI(t)
 	c := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)
-	detail := cacheq.Query(c, "tenant:42:user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
-	list := cacheq.Query(c, "tenant:42:users", readJSON[[]user](api.server.Client(), api.server.URL+"/users"))
-	other := cacheq.Query(c, "tenant:99:user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
+	detail := cacheq.Query(
+		c,
+		"tenant:42:user",
+		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+	)
+	list := cacheq.Query(
+		c,
+		"tenant:42:users",
+		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
+	)
+	other := cacheq.Query(
+		c,
+		"tenant:99:user",
+		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+	)
 	t.Cleanup(detail.Close)
 	t.Cleanup(list.Close)
 	t.Cleanup(other.Close)

@@ -95,7 +95,7 @@ func TestEventsTriggers(t *testing.T) {
 			return err
 		}},
 		{name: "fetch options", trigger: TriggerFetch, reason: ReasonMissing, call: func(t *testing.T, c *Client) error {
-			_, err := Fetch(context.Background(), c, "a", load, QueryOptions{})
+			_, err := Fetch(context.Background(), c, "a", load)
 			return err
 		}},
 		{name: "expiry", trigger: TriggerFetch, reason: ReasonMissing, call: func(t *testing.T, c *Client) error {
@@ -270,7 +270,12 @@ func TestEventsFailureReasons(t *testing.T) {
 		t.Fatalf("fresh fallback = %+v", hit)
 	}
 	now = now.Add(time.Minute)
-	_, _ = Fetch(context.Background(), c, "fallback", func(context.Context) (int, error) { return 7, nil })
+	_, _ = Fetch(
+		context.Background(),
+		c,
+		"fallback",
+		func(context.Context) (int, error) { return 7, nil },
+	)
 	if start := receiveTestEvent(t, s.Events()); start.Reason != ReasonExpired {
 		t.Fatalf("expired fallback = %+v", start)
 	}

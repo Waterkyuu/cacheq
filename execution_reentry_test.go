@@ -116,7 +116,11 @@ func TestExecutionReentryCallbacks(t *testing.T) {
 			case "query":
 				_, err = Fetch(ctx, c, "outer", load)
 			case "mutation":
-				h := Mutation(c, func(ctx context.Context, _ int) (int, error) { return load(ctx) })
+				h := Mutation(
+					c,
+					func(ctx context.Context, _ int) (int, error) { return load(ctx) },
+					nil,
+				)
 				t.Cleanup(h.Close)
 				_, err = h.Mutate(ctx, 1)
 			case "batch":

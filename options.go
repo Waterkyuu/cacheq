@@ -15,11 +15,14 @@ var ErrQueryClosed = errors.New("query handle is closed")
 // ErrTypeMismatch indicates a key was reused with a different static result type.
 var ErrTypeMismatch = errors.New("query result type mismatch")
 
-// ErrInvalidKey indicates a nil or non-comparable key, or a nil direct query predicate.
-var ErrInvalidKey = errors.New("query key must be non-nil and comparable")
+// ErrInvalidKey indicates a nil, non-comparable, or non-reflexive key, or a nil direct query predicate.
+var ErrInvalidKey = errors.New("query key must be non-nil, comparable, and equal to itself")
 
 // ErrNoFetcher indicates an operation requiring data has no loader to execute.
 var ErrNoFetcher = errors.New("query has no fetcher")
+
+// ErrTooManyOptions indicates that an operation received more than one configuration value.
+var ErrTooManyOptions = errors.New("at most one configuration value is allowed")
 
 // Status describes the most recent result independently of background fetching.
 type Status uint8
@@ -69,7 +72,7 @@ type Options struct {
 
 // QueryOptions overrides loading policy for Query, Fetch, and Prefetch.
 // Disable only controls Query's automatic loading; explicit reads and Refetch still execute.
-// Nil policy fields inherit Client defaults; the last complete options value wins.
+// Nil policy fields inherit Client defaults; operations accept zero or one options value.
 // Duration and retry values are copied when applied; execution budgets are shared.
 // Callbacks run outside the Client lock and must synchronize captured mutable state.
 type QueryOptions struct {
@@ -95,12 +98,16 @@ type QueryOptions struct {
 	DisableExecutor bool
 }
 
-// lastQueryOptions selects one complete override value without merging separate arguments.
-func lastQueryOptions(options []QueryOptions) QueryOptions {
-	if len(options) == 0 {
-		return QueryOptions{}
+// singleOptions resolves an omitted configuration to zero and rejects extras before operation side effects.
+func singleOptions[T any](options []T) (T, error) {
+	var option T
+	if len(options) > 1 {
+		return option, ErrTooManyOptions
 	}
-	return options[len(options)-1]
+	if len(options) == 1 {
+		option = options[0]
+	}
+	return option, nil
 }
 
 // resolvePolicy copies scalar overrides while sharing callbacks and the selected execution budget.

@@ -262,7 +262,9 @@ func TestBatcherFetcherInvalidation(t *testing.T) {
 			t.Fatalf("initial query = %+v", state)
 		}
 	}
-	if err := client.Invalidate([]any{batchProductKey{ID: 1}, batchProductKey{ID: 2}}); err != nil {
+	if err := client.Invalidate(
+		[]any{batchProductKey{ID: 1}, batchProductKey{ID: 2}},
+	); err != nil {
 		t.Fatal(err)
 	}
 	receiveBatchValue(t, timers)
@@ -457,7 +459,12 @@ func TestBatcherFetcherScopedKeys(t *testing.T) {
 			},
 			BatchOptions{MaxBatchSize: 1},
 		)
-		value, err := Fetch(context.Background(), client, tenantProductKey{Tenant: tenant, ID: 42}, b.Fetcher(42))
+		value, err := Fetch(
+			context.Background(),
+			client,
+			tenantProductKey{Tenant: tenant, ID: 42},
+			b.Fetcher(42),
+		)
 		if value != tenant || err != nil {
 			t.Fatalf("tenant %s = %q, %v", tenant, value, err)
 		}

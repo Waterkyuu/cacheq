@@ -115,6 +115,7 @@ case errors.Is(err, cacheq.ErrUpdateConflict):
 default:
 	return err
 }
+
 ```
 
 `ErrUpdateConflict` means the computed result was not written. The example's `Invalidate` retains current data and refreshes an enabled observed list by default. Without subscribers, it only marks data stale. See [invalidation](invalidation.en-US.md).

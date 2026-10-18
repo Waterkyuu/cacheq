@@ -24,7 +24,11 @@ func TestExecutionSharing(t *testing.T) {
 	t.Cleanup(first.Close)
 	<-started
 	queuedCalls := atomic.Int32{}
-	queued := Query(c, "queued", func(context.Context) (int, error) { queuedCalls.Add(1); return 2, nil })
+	queued := Query(
+		c,
+		"queued",
+		func(context.Context) (int, error) { queuedCalls.Add(1); return 2, nil },
+	)
 	t.Cleanup(queued.Close)
 	awaitExecution(t, e, 1, 1)
 	joined := make(chan error, 1)
@@ -91,7 +95,11 @@ func TestExecutionClientLifetime(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	t.Cleanup(func() { once.Do(func() { close(release) }) })
-	first := Query(c, "first", func(context.Context) (int, error) { close(started); <-release; return 1, nil })
+	first := Query(
+		c,
+		"first",
+		func(context.Context) (int, error) { close(started); <-release; return 1, nil },
+	)
 	t.Cleanup(first.Close)
 	<-started
 	other := NewClient(Options{Executor: e})

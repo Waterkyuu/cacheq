@@ -4,7 +4,7 @@
 
 缓存失效保留已有数据，并将其标记为过期。修改用户资料后，可以同时使详情和列表失效，即使它们分别返回 `User` 和 `[]User`。
 
-`Invalidate` 接受精确单键、`[]any` 列表、`func(any) bool` 条件函数或可复用的 `QueryFilter`。[统一查询筛选](query-filters.zh-CN.md)可以组合精确键和条件函数，并复用于等待刷新、取消和删除。配置可省略；传多个配置时最后一个生效。只有 `[]any` 被识别为批量列表，其他切片类型需要显式转换。nil 参数和非法键返回 `ErrInvalidKey`；空列表或 nil `[]any` 列表不做任何操作。
+`Invalidate` 接受精确单键、`[]any` 列表、`func(any) bool` 条件函数或可复用的 `QueryFilter`。[统一查询筛选](query-filters.zh-CN.md)可以组合精确键和条件函数，并复用于等待刷新、取消和删除。配置可以省略，最多传入一份 `InvalidateOptions`；多份配置会在失效前返回 `ErrTooManyOptions`。只有 `[]any` 被识别为批量列表，其他切片类型需要显式转换。nil 参数和非法键返回 `ErrInvalidKey`；空列表或 nil `[]any` 列表不做任何操作。
 
 ## 快速开始
 
@@ -77,6 +77,7 @@ after: updated
 if err := client.Invalidate("user:42"); err != nil {
 	return err
 }
+
 ```
 
 数据保留、`Stale` 变成 true，并通知查询对象。有启用的查询对象时，用其加载函数启动后台刷新；没有启用的对象时只标记过期。
@@ -92,6 +93,7 @@ detail := cacheq.Query(client, "user:42", getUser) // QueryHandle[User]
 users := cacheq.Query(client, "users", getUsers)   // QueryHandle[[]User]
 defer detail.Close()
 defer users.Close()
+
 ```
 
 业务先成功提交用户修改，再让相关缓存失效：
@@ -101,6 +103,7 @@ defer users.Close()
 if err := client.Invalidate([]any{"user:42", "users"}); err != nil {
 	return err
 }
+
 ```
 
 一次调用覆盖同一客户端中的不同结果类型。默认刷新有启用查询对象的键，其余键只变旧。重复键只处理一次，避免重复启动请求，或再次标记刚启动的刷新为过期。
@@ -177,6 +180,7 @@ if err := client.Invalidate(func(key any) bool {
 }); err != nil {
 	return err
 }
+
 ```
 
 字符串前缀没有内置的特殊含义。使用字符串时自己匹配前缀；使用结构体时匹配字段。键仍然必须可比较，包含切片或映射的结构体不能使用。
@@ -215,6 +219,7 @@ for _, result := range results {
 if err != nil {
 	return err
 }
+
 ```
 
 该片段需要导入 `fmt`。此入口自动启用 `RefetchAfterLoad`，接受与 `Invalidate` 相同的单键、`[]any`、条件函数和可选配置。只有存在启用查询对象及加载函数的键才刷新。没有订阅、仅有禁用对象或使用 `RefetchNone` 的键只标记过期，结果显示跳过；不会为仅使用 Fetch 的键保存加载函数。

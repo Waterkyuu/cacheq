@@ -193,54 +193,6 @@ h3 {
 .home-requirements > span {
 	margin: 0 8px;
 }
-.home-guides {
-	display: grid;
-	grid-template-columns: repeat(3, 1fr);
-	gap: 16px;
-	margin-top: 64px;
-}
-.guide-card {
-	border: 1px solid var(--color-hairline);
-	border-radius: 12px;
-	padding: 22px 20px;
-	display: flex;
-	flex-direction: column;
-	color: var(--color-ink);
-	background: var(--color-canvas);
-}
-.guide-card:hover {
-	text-decoration: none;
-	color: var(--color-ink);
-	border-color: var(--color-mute);
-}
-.guide-card h2 {
-	display: flex;
-	justify-content: space-between;
-	gap: 8px;
-	font-size: 17px;
-	line-height: 1.5;
-	margin: 0 0 12px;
-	font-weight: 500;
-}
-.guide-card h2 > span {
-	color: var(--color-mute);
-	font-size: 14px;
-}
-.guide-card p {
-	color: var(--color-body);
-	font-size: 13px;
-	line-height: 1.7;
-	margin-bottom: 20px;
-	flex: 1;
-}
-.guide-card code {
-	color: var(--color-mute);
-	font-size: 10px;
-	background: none;
-	border: 0;
-	padding: 0;
-	white-space: normal;
-}
 .home-code {
 	width: min(100%, 660px);
 	margin: 80px auto 88px;
@@ -394,11 +346,6 @@ h3 {
 	}
 	.home-intro > p {
 		font-size: 16px;
-	}
-	.home-guides {
-		grid-template-columns: 1fr;
-		gap: 12px;
-		margin-top: 48px;
 	}
 	.home-code {
 		margin-block: 48px;

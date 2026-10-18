@@ -188,7 +188,12 @@ func TestEventsRemovalCauses(t *testing.T) {
 			if removed.Kind != EventCacheRemoved || removed.Reason != reason || Get[int](c, "a").HasData {
 				t.Fatalf("removal = %+v", removed)
 			}
-			_, err := Fetch(context.Background(), c, "a", func(context.Context) (int, error) { return 9, nil })
+			_, err := Fetch(
+				context.Background(),
+				c,
+				"a",
+				func(context.Context) (int, error) { return 9, nil },
+			)
 			if err != nil {
 				t.Fatal(err)
 			}

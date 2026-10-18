@@ -18,17 +18,11 @@ var ErrMutationBusy = errors.New("mutation is already running")
 // Cancellation does not prove that a remote write was rolled back. Writes are never retried or deduplicated.
 type Mutator[I, V any] func(context.Context, I) (V, error)
 
-// MutationOptions declares cache synchronization after a successful write.
-// The success callback executes once outside internal locks, including when cancellation races with write success.
-// Captured state and input/result references remain application-owned and require synchronization.
-type MutationOptions[I, V any] struct {
-	// OnSuccess runs once after a committed write with its context, result, and original input.
-	// It may update cache entries or call Client.Invalidate or Client.InvalidateAndWait explicitly.
-	// Mutate stays Pending until it returns; its error is reported through SyncErr, not the write error.
-	// It still runs after late write success with a canceled context; nil skips synchronization.
-	OnSuccess func(context.Context, V, I) error
+// MutationOptions configures execution independently of a mutation's input and result types.
+// Supply the typed success callback directly to Mutation instead of through these options.
+type MutationOptions struct {
 	// Executor optionally overrides the Client budget for the business write; nil inherits it.
-	// Capacity is released before OnSuccess, which may start its own loads.
+	// Capacity is released before the success callback, which may start its own loads.
 	Executor *Executor
 }
 

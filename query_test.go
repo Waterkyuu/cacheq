@@ -3,6 +3,7 @@ package cacheq
 import (
 	"context"
 	"errors"
+	"math"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -70,7 +71,7 @@ func TestQueryDisabled(t *testing.T) {
 			if state.Fetching || calls.Load() != 0 {
 				t.Fatalf("disabled invalidation = %+v; calls = %d", state, calls.Load())
 			}
-			client.Invalidate([]any{"users"}, InvalidateOptions{})
+			client.Invalidate([]any{"users"})
 			if state = observer.Snapshot(); state.Fetching || calls.Load() != 0 {
 				t.Fatalf("disabled batch invalidation = %+v; calls = %d", state, calls.Load())
 			}
@@ -105,7 +106,7 @@ func TestQueryEnableTransitions(t *testing.T) {
 	client.Invalidate("users")
 	awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Data == 2 && !s.Fetching })
 	observer.SetEnabled(false)
-	client.Invalidate([]any{"users"}, InvalidateOptions{})
+	client.Invalidate([]any{"users"})
 	state = awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Stale && !s.Fetching })
 	if state.Data != 2 || calls.Load() != 2 {
 		t.Fatalf("disabled refresh = %+v; calls = %d", state, calls.Load())
@@ -129,7 +130,6 @@ func TestQueryFreshData(t *testing.T) {
 			calls.Add(1)
 			return 8, nil
 		},
-		QueryOptions{},
 	)
 	t.Cleanup(observer.Close)
 	if state := observer.Snapshot(); state.Data != 7 || state.Fetching || calls.Load() != 0 {
@@ -173,7 +173,6 @@ func TestQuerySharedEnablement(t *testing.T) {
 		client,
 		"users",
 		fetch,
-		QueryOptions{},
 	)
 	t.Cleanup(first.Close)
 	<-started
@@ -181,7 +180,6 @@ func TestQuerySharedEnablement(t *testing.T) {
 		client,
 		"users",
 		fetch,
-		QueryOptions{},
 	)
 	t.Cleanup(second.Close)
 	close(release)
@@ -268,7 +266,6 @@ func TestQueryDisableDuringLoad(t *testing.T) {
 			}
 			return int(call), nil
 		},
-		QueryOptions{},
 	)
 	t.Cleanup(observer.Close)
 	<-started
@@ -300,7 +297,6 @@ func TestQueryFailure(t *testing.T) {
 			calls.Add(1)
 			return 0, failure
 		},
-		QueryOptions{},
 	)
 	t.Cleanup(observer.Close)
 	state := awaitState(t, observer.Updates(), func(s Snapshot[int]) bool { return s.Err != nil && !s.Fetching })
@@ -345,7 +341,6 @@ func TestQueryClose(t *testing.T) {
 				client,
 				"users",
 				nil,
-				QueryOptions{},
 			)
 			state := <-closed.Updates()
 			if !errors.Is(state.Err, ErrClosed) || state.Fetching {
@@ -400,7 +395,6 @@ func TestQueryCloseDuringLoad(t *testing.T) {
 				return 7, nil
 			}
 		},
-		QueryOptions{},
 	)
 	t.Cleanup(observer.Close)
 	<-started
@@ -434,7 +428,6 @@ func TestQueryClientCancellation(t *testing.T) {
 			finished <- ctx.Err()
 			return 0, ctx.Err()
 		},
-		QueryOptions{},
 	)
 	t.Cleanup(observer.Close)
 	<-started
@@ -484,7 +477,7 @@ func TestHeterogeneousQueries(t *testing.T) {
 		!settings.Snapshot().Data["dark"] {
 		t.Fatal("heterogeneous cache lost typed values")
 	}
-	if err := c.Invalidate([]any{"user:42", "users", "users"}, InvalidateOptions{}); err != nil {
+	if err := c.Invalidate([]any{"user:42", "users", "users"}); err != nil {
 		t.Fatal(err)
 	}
 	awaitState(t, detail.Updates(), func(s Snapshot[testUser]) bool { return detailCalls.Load() == 2 && !s.Fetching })
@@ -574,7 +567,11 @@ func TestLiveHandleTypeBinding(t *testing.T) {
 	for _, action := range []string{"remove", "clear"} {
 		t.Run(action, func(t *testing.T) {
 			c := newInvalidationClient(t)
-			handle := Query(c, "user", func(context.Context) (testUser, error) { return testUser{Name: "Alice"}, nil })
+			handle := Query(
+				c,
+				"user",
+				func(context.Context) (testUser, error) { return testUser{Name: "Alice"}, nil },
+			)
 			awaitState(t, handle.Updates(), func(s Snapshot[testUser]) bool { return s.HasData && !s.Fetching })
 			if action == "remove" {
 				c.Remove("user")
@@ -647,17 +644,37 @@ func TestNilAndInterfaceResults(t *testing.T) {
 	}
 }
 
-// TestInvalidKeys rejects unhashable keys and validates batches before changing any selected entry.
+// TestInvalidKeys rejects unsafe map keys and validates batches before changing any selected entry.
 func TestInvalidKeys(t *testing.T) {
 	c := newInvalidationClient(t)
 	Set(c, "safe", 1)
-	keys := []any{nil, []string{"users"}, map[string]int{}, struct{ Value any }{Value: []int{1}}}
+	keys := []any{
+		nil, []string{"users"}, map[string]int{}, struct {
+			// Value hides a non-comparable dynamic value inside a comparable struct type.
+			Value any
+		}{Value: []int{1}},
+		math.NaN(), float32(math.NaN()), complex(math.NaN(), 0),
+		struct {
+			// Value makes its containing key non-reflexive.
+			Value float64
+		}{Value: math.NaN()}, [1]float64{math.NaN()},
+		struct {
+			// Value verifies that equality inspects nested interface contents.
+			Value any
+		}{Value: [1]float64{math.NaN()}},
+	}
 	for _, key := range keys {
 		if err := Set(c, key, 1); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid set = %v", err)
 		}
 		if state := Get[int](c, key); !errors.Is(state.Err, ErrInvalidKey) {
 			t.Fatalf("invalid get = %+v", state)
+		}
+		if err := Update(c, key, func(int) (int, error) {
+			t.Fatal("invalid key invoked updater")
+			return 0, nil
+		}); !errors.Is(err, ErrInvalidKey) {
+			t.Fatalf("invalid update = %v", err)
 		}
 		if _, err := Fetch(
 			context.Background(),
@@ -674,6 +691,13 @@ func TestInvalidKeys(t *testing.T) {
 		if !errors.Is(handle.Snapshot().Err, ErrInvalidKey) {
 			t.Fatal("invalid query accepted")
 		}
+		if state := <-handle.Updates(); !errors.Is(state.Err, ErrInvalidKey) {
+			t.Fatalf("invalid query update = %+v", state)
+		}
+		if _, open := <-handle.Updates(); open {
+			t.Fatal("invalid query left updates open")
+		}
+		handle.Close()
 		if err := c.Cancel(key); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid cancel = %v", err)
 		}
@@ -683,12 +707,18 @@ func TestInvalidKeys(t *testing.T) {
 		if err := c.Invalidate(key); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid invalidate = %v", err)
 		}
-		if err := c.Invalidate([]any{"safe", key}, InvalidateOptions{}); !errors.Is(err, ErrInvalidKey) {
+		if err := c.Invalidate([]any{"safe", key}); !errors.Is(err, ErrInvalidKey) {
 			t.Fatalf("invalid batch = %v", err)
+		}
+		if err := c.Remove(QueryFilter{Keys: []any{"safe", key}}); !errors.Is(err, ErrInvalidKey) {
+			t.Fatalf("invalid filter = %v", err)
 		}
 		if Get[int](c, "safe").Stale {
 			t.Fatal("invalid batch partially invalidated data")
 		}
+	}
+	if stats := c.Stats(); stats.CacheEntries != 1 || stats.Loads != 0 {
+		t.Fatalf("invalid keys retained state or started work: %+v", stats)
 	}
 }
 
@@ -821,7 +851,11 @@ func TestInvalidateDeferred(t *testing.T) {
 	Set(c, "user", "cached")
 	Set(c, "users", []string{"cached"})
 	var calls atomic.Int32
-	handle := Query(c, "user", func(context.Context) (string, error) { calls.Add(1); return "new", nil })
+	handle := Query(
+		c,
+		"user",
+		func(context.Context) (string, error) { calls.Add(1); return "new", nil },
+	)
 	t.Cleanup(handle.Close)
 	c.Invalidate([]any{"user", "users"}, InvalidateOptions{Refetch: RefetchNone})
 	if state := handle.Snapshot(); !state.Stale || state.Data != "cached" || state.Fetching || calls.Load() != 0 {
@@ -864,7 +898,7 @@ func TestInvalidateDuringLoad(t *testing.T) {
 	})
 	t.Cleanup(handle.Close)
 	<-started
-	c.Invalidate([]any{"user", "user"}, InvalidateOptions{})
+	c.Invalidate([]any{"user", "user"})
 	close(release)
 	state := awaitState(t, handle.Updates(), func(s Snapshot[string]) bool { return s.HasData && !s.Fetching })
 	if !state.Stale || state.Data != "loaded" || calls.Load() != 1 {
@@ -987,21 +1021,19 @@ func TestInvalidateTargets(t *testing.T) {
 	}
 }
 
-// TestInvalidateRefreshModes applies default and last-option refresh policies to all selection forms.
+// TestInvalidateRefreshModes applies observed and deferred refresh policies to all selection forms.
 func TestInvalidateRefreshModes(t *testing.T) {
 	for _, target := range []any{"users", []any{"users", "users"}, func(key any) bool { return key == "users" }} {
 		for _, tc := range []struct {
-			// name identifies the option precedence scenario.
+			// name identifies the refresh policy.
 			name string
 			// options configures whether invalidation should start a refresh.
-			options []InvalidateOptions
+			options InvalidateOptions
 			// refresh reports whether the observer should receive fresh data.
 			refresh bool
 		}{
 			{name: "default", refresh: true},
-			{name: "deferred", options: []InvalidateOptions{{Refetch: RefetchNone}}},
-			{name: "last enables", options: []InvalidateOptions{{Refetch: RefetchNone}, {}}, refresh: true},
-			{name: "last defers", options: []InvalidateOptions{{}, {Refetch: RefetchNone}}},
+			{name: "deferred", options: InvalidateOptions{Refetch: RefetchNone}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				c := newInvalidationClient(t)
@@ -1010,7 +1042,7 @@ func TestInvalidateRefreshModes(t *testing.T) {
 				}
 				query := Query(c, "users", func(context.Context) (int, error) { return 2, nil })
 				t.Cleanup(query.Close)
-				if err := c.Invalidate(target, tc.options...); err != nil {
+				if err := c.Invalidate(target, tc.options); err != nil {
 					t.Fatal(err)
 				}
 				state := query.Snapshot()

@@ -13,6 +13,36 @@ import (
 	cacheq "github.com/Waterkyuu/cacheq"
 )
 
+// TestHTTPTooManyOptions rejects extra configurations without issuing an HTTP request.
+func TestHTTPTooManyOptions(t *testing.T) {
+	for _, api := range []string{"fetch", "prefetch", "query", "definition"} {
+		t.Run(api, func(t *testing.T) {
+			backend := newUserAPI(t)
+			client := cacheq.NewClient(cacheq.Options{})
+			t.Cleanup(client.Close)
+			load := readJSON[user](backend.server.Client(), backend.server.URL+"/users/42")
+			options := []cacheq.QueryOptions{{}, {}}
+			ctx := context.Background()
+			var err error
+			switch api {
+			case "fetch":
+				_, err = cacheq.Fetch(ctx, client, "user", load, options...)
+			case "prefetch":
+				err = cacheq.Prefetch(ctx, client, "user", load, options...)
+			case "query":
+				query := cacheq.Query(client, "user", load, options...)
+				t.Cleanup(query.Close)
+				err = query.Snapshot().Err
+			case "definition":
+				_, err = cacheq.QueryDefinition("user", load, options...)
+			}
+			if !errors.Is(err, cacheq.ErrTooManyOptions) || backend.count("/users/42") != 0 {
+				t.Fatalf("rejected HTTP read = %v, requests=%d", err, backend.count("/users/42"))
+			}
+		})
+	}
+}
+
 // TestHTTPSharedQueryOptions applies one disabled configuration to subscriptions and explicit HTTP reads.
 func TestHTTPSharedQueryOptions(t *testing.T) {
 	for _, entry := range []string{"fetch", "prefetch", "refetch"} {
@@ -82,13 +112,13 @@ func TestHTTPQueryDefinition(t *testing.T) {
 	client := cacheq.NewClient(cacheq.Options{})
 	t.Cleanup(client.Close)
 	hour, retries := time.Hour, 1
-	definition := cacheq.QueryDefinition[user]{
-		Key:     "user",
-		Fetcher: readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-		Options: cacheq.QueryOptions{
+	definition, err := cacheq.QueryDefinition("user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+		cacheq.QueryOptions{
 			Disable: true, StaleTime: &hour, Retry: &retries,
 			RetryDelay: func(int) time.Duration { return 0 },
-		},
+		})
+	if err != nil {
+		t.Fatal(err)
 	}
 	query := definition.Query(client)
 	t.Cleanup(query.Close)
@@ -139,9 +169,13 @@ func TestHTTPDefinitionCancellation(t *testing.T) {
 			t.Cleanup(server.Close)
 			client := cacheq.NewClient(cacheq.Options{})
 			t.Cleanup(client.Close)
-			definition := cacheq.QueryDefinition[user]{
-				Key: "user", Fetcher: readJSON[user](server.Client(), server.URL),
-				Options: cacheq.QueryOptions{Disable: true},
+			definition, err := cacheq.QueryDefinition(
+				"user",
+				readJSON[user](server.Client(), server.URL),
+				cacheq.QueryOptions{Disable: true},
+			)
+			if err != nil {
+				t.Fatal(err)
 			}
 			query := definition.Query(client)
 			t.Cleanup(query.Close)

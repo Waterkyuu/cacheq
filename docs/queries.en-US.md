@@ -79,7 +79,7 @@ Expected output:
 Alice
 ```
 
-Each key has one static result type: `"user:42"` stores `User`; `"users"` stores `[]User`. Include all parameters, tenants, and identities affecting a result in its key. Strings, integers, and comparable structs are supported. Nil keys, slices, and maps are rejected. Sharing is in-process; this is not automatic cross-service synchronization.
+Each key has one static result type: `"user:42"` stores `User`; `"users"` stores `[]User`. Include all parameters, tenants, and identities affecting a result in its key. Strings, integers, and comparable structs are supported. Keys must equal themselves under Go equality. Nil keys, slices, maps, and NaN values (including structs, arrays, or complex values containing NaN) return `ErrInvalidKey`. Invalid keys cannot create cache entries, loads, or subscriptions; target lists are validated before any changes. Sharing is in-process; this is not automatic cross-service synchronization.
 
 ## API snippet prerequisites
 
@@ -91,11 +91,12 @@ The following partial snippets use `client`, `getUser`, and `getUsers` from the 
 users := cacheq.Query(client, "users", getUsers)
 defer users.Close()
 state := users.Snapshot()
+
 ```
 
 Missing data starts an initial request. Fresh data is reused. Stale data remains available while a background request runs. Neither `Query` nor `Snapshot()` waits for HTTP completion. A snapshot is a value; a previously returned variable does not update itself.
 
-Omitting options, supplying an empty `cacheq.QueryOptions{}`, or leaving `Disable` false enables loading. Set `Disable: true` to disable automatic loading. If multiple options are supplied, the last wins. Construction failures appear in `Snapshot().Err` and the initial `Updates()` value; the failed handle's channel then closes.
+Omitting options, supplying `cacheq.QueryOptions{}`, or leaving `Disable` false enables loading. Set `Disable: true` to disable automatic loading. Configuration is optional and limited to one value; extras produce `ErrTooManyOptions` on the failed handle. Construction failures appear in `Snapshot().Err` and the initial `Updates()` value; the failed handle's channel then closes.
 
 ## `Updates`: receive the latest state
 
@@ -158,6 +159,7 @@ if err != nil {
 	return err
 }
 _ = users // []User
+
 ```
 
 Fresh cached results return immediately; stale or missing results wait for a load. Use this in HTTP handlers, jobs, or business steps requiring the result. It shares data and in-flight work with `Query`. `Fetcher[V]` is a `func(context.Context) (V, error)` business loader. Create the client once at the application boundary and inject it into request handlers.
