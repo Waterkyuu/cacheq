@@ -15,14 +15,16 @@ func TestHTTPQueryTags(t *testing.T) {
 	api := newUserAPI(t)
 	c := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)
-	detailDefinition := cacheq.QueryDefinition[user]{
-		Key: "tenant:42:profile", Tags: []string{"tenant:42:users"},
-		Fetcher: readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-	}
-	listDefinition := cacheq.QueryDefinition[[]user]{
-		Key: "tenant:42:list", Tags: []string{"tenant:42:users", "lists"},
-		Fetcher: readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
-	}
+	detailDefinition := cacheq.QueryDefinition(
+		"tenant:42:profile",
+		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+	)
+	detailDefinition.Tags = []string{"tenant:42:users"}
+	listDefinition := cacheq.QueryDefinition(
+		"tenant:42:list",
+		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
+	)
+	listDefinition.Tags = []string{"tenant:42:users", "lists"}
 	otherDefinition := detailDefinition
 	otherDefinition.Key, otherDefinition.Tags = "tenant:99:profile", []string{"tenant:99:users"}
 	detail, list, other := detailDefinition.Query(c), listDefinition.Query(c), otherDefinition.Query(c)
@@ -73,10 +75,12 @@ func TestHTTPQueryTagsCancel(t *testing.T) {
 	api := newHeldListAPI(t, [2]*heldHTTPResponse{first, second})
 	c := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 	t.Cleanup(c.Close)
-	definition := cacheq.QueryDefinition[[]user]{
-		Key: "one", Tags: []string{"one"}, Options: cacheq.QueryOptions{Disable: true},
-		Fetcher: readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
-	}
+	definition := cacheq.QueryDefinition(
+		"one",
+		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
+		cacheq.QueryOptions{Disable: true},
+	)
+	definition.Tags = []string{"one"}
 	one := definition.Query(c)
 	t.Cleanup(one.Close)
 	definition.Key, definition.Tags = "two", []string{"two"}

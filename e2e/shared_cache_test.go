@@ -57,10 +57,8 @@ func TestHTTPSharedCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := cacheq.QueryDefinition[user]{
-		Key: "user:42", Shared: shared,
-		Fetcher: readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-	}
+	d := cacheq.QueryDefinition("user:42", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
+	d.Shared = shared
 	c1 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	c2 := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	t.Cleanup(c1.Close)

@@ -82,14 +82,11 @@ func TestHTTPQueryDefinition(t *testing.T) {
 	client := cacheq.NewClient(cacheq.Options{})
 	t.Cleanup(client.Close)
 	hour, retries := time.Hour, 1
-	definition := cacheq.QueryDefinition[user]{
-		Key:     "user",
-		Fetcher: readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
-		Options: cacheq.QueryOptions{
+	definition := cacheq.QueryDefinition("user", readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+		cacheq.QueryOptions{
 			Disable: true, StaleTime: &hour, Retry: &retries,
 			RetryDelay: func(int) time.Duration { return 0 },
-		},
-	}
+		})
 	query := definition.Query(client)
 	t.Cleanup(query.Close)
 	api.failNext(1)
@@ -139,10 +136,11 @@ func TestHTTPDefinitionCancellation(t *testing.T) {
 			t.Cleanup(server.Close)
 			client := cacheq.NewClient(cacheq.Options{})
 			t.Cleanup(client.Close)
-			definition := cacheq.QueryDefinition[user]{
-				Key: "user", Fetcher: readJSON[user](server.Client(), server.URL),
-				Options: cacheq.QueryOptions{Disable: true},
-			}
+			definition := cacheq.QueryDefinition(
+				"user",
+				readJSON[user](server.Client(), server.URL),
+				cacheq.QueryOptions{Disable: true},
+			)
 			query := definition.Query(client)
 			t.Cleanup(query.Close)
 			ctx, cancel := context.WithCancel(context.Background())
