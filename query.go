@@ -363,6 +363,13 @@ func (c *Client) fetch(
 			c.mu.Unlock()
 			return nil, ErrNoFetcher
 		}
+		pending := c.pending[key]
+		if pending != nil && pending.request.options.Executor.heldBy(ctx) {
+			// Joining preserves the initiator's budget, even when this caller overrides or disables its own.
+			// Reject before registering or invalidating state so a caller-held slot cannot block its own wait.
+			c.mu.Unlock()
+			return nil, ErrExecutionReentry
+		}
 		if err := c.bindLocked(key, typ); err != nil {
 			c.mu.Unlock()
 			return nil, err
@@ -379,7 +386,6 @@ func (c *Client) fetch(
 			c.notifyLocked(key)
 			force = false
 		}
-		pending := c.pending[key]
 		if pending == nil {
 			pending = c.startLocked(ctx, key, request)
 		} else {

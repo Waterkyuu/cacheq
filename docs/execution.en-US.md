@@ -186,6 +186,8 @@ defer query.Close()
 
 If an outer callback already holds the Batcher's Executor, `Load` returns `ErrExecutionReentry` before collecting or joining a key. The Client does not retry this error, even when wrapped, and does not call `RetryIf`. Nested query and mutation acquisitions through the callback context are also rejected. Rejections do not increase `Stats().Rejected`, which counts overload only.
 
+`Fetch`, `Prefetch`, and `QueryHandle.Refetch` also reject synchronous joins when the callback context holds the existing load's Executor. The check uses the initiator's budget, so overriding or disabling the joining caller's budget does not bypass it. Fresh cache hits remain available without acquiring capacity; joins to loads using a different or disabled Executor remain permitted.
+
 Detection depends on propagating the supplied callback context. Replacing it with `context.Background()` or starting independently owned background work loses that ownership information. Avoid nested dependencies on a held budget; configure capacity at the actual backend boundary. Separate budgets remain independently enforced and can still form dependency cycles if configured at multiple waiting layers.
 
 ## Overload and retries
