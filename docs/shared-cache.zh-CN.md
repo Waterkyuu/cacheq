@@ -30,6 +30,33 @@ redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 
 程序连接 `127.0.0.1:16379`。Redis 连接必须指向可写主节点，允许 `EVAL` 以及脚本内的 `GET`、`SET`（含 `PX`）和 `DEL`；读取也可能初始化缓存元数据。
 
+## 两个 Client 的最小示例
+
+可运行的[最小示例](../examples/redis/shared_cache_minimal/main.go)使用两个 Client：各自保存独立的本地缓存，共用一个 Redis 存储。`SharedCache` 保存共享存储规则，`Definition.Shared` 把规则接到查询上。创建这两个对象时都不会加载数据。
+
+保持上面的临时 Redis 运行，在**仓库根目录**执行：
+
+```sh
+REDIS_ADDR=127.0.0.1:16379 go -C examples/redis run ./shared_cache_minimal
+```
+
+预期输出：
+
+```text
+source: loading user 7
+A first: Alice, shared hits: 0
+B first: Alice, shared hits: 1
+A again: Alice, shared hits: 1
+```
+
+1. A 第一次调用 `definition.Fetch(ctx, a)`，本地缓存和共享存储都没有新鲜结果。cacheq 执行数据源回调，将 Alice 编码为 JSON 写入 Redis，并在 A 的本地缓存中保留 Alice。
+2. B 第一次调用 `definition.Fetch(ctx, b)`，本地没有结果，便从 Redis 读取并解码为一个新的 `User`，再保存在 B 的本地缓存中。数据源回调不会执行。
+3. A 再次调用 `definition.Fetch(ctx, a)`，直接返回本地的新鲜结果。共享命中次数仍为一，因为本次没有访问 Redis。
+
+`Definition.Key` 标识各个 Client 内的缓存项；`SharedCacheOptions.Key` 与适配器的 Prefix 一起标识 Redis 中的记录，本例的两个 key 都使用 `user:7`。A、B 放在同一个进程中是为了展示执行顺序。实际的不同服务进程只需配置相同的 Redis 命名空间、共享 key、兼容的 Format 和结果类型，就能复用记录，无需共享 Go 对象。
+
+示例在读取前只清理专用 `cacheq-minimal-demo` 共享 key，因此重复运行会得到相同输出。`StaleTime` 决定 Client 何时把结果视为新鲜，shared 的 `TTL` 限制共享结果的新鲜度和保留时间；这里都设为一分钟。Redis 适配器的失效元数据可以比结果数据保留更久。
+
 ## 使用方式
 
 下面按 API 的使用顺序说明：创建 Redis 存储、创建共享缓存、定义查询、读取结果，再处理失效。示例的结果类型是 `User`，表示用户资料：

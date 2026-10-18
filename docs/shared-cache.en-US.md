@@ -30,6 +30,33 @@ redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no
 
 The program connects to `127.0.0.1:16379`. Use a writable primary connection that permits `EVAL` and the scripts' `GET`, `SET` (including `PX`), and `DEL` commands. Reads can initialize cache metadata too.
 
+## Minimal two-client demo
+
+The runnable [minimal example](../examples/redis/shared_cache_minimal/main.go) uses two Clients with independent local caches and one Redis store. `SharedCache` supplies storage rules, and `Definition.Shared` attaches those rules to the query. Constructing either object does not load data.
+
+With the disposable Redis above running, execute from the **repository root**:
+
+```sh
+REDIS_ADDR=127.0.0.1:16379 go -C examples/redis run ./shared_cache_minimal
+```
+
+Expected output:
+
+```text
+source: loading user 7
+A first: Alice, shared hits: 0
+B first: Alice, shared hits: 1
+A again: Alice, shared hits: 1
+```
+
+1. A's first `definition.Fetch(ctx, a)` finds no fresh local or shared value. cacheq calls the source callback, encodes Alice as JSON in Redis, and retains Alice in A's local cache.
+2. B's first `definition.Fetch(ctx, b)` finds no local value, decodes the Redis record into a new `User`, and retains it in B's local cache. The source callback does not run.
+3. A's next `definition.Fetch(ctx, a)` returns its fresh local value. The shared-hit counter stays at one because Redis is not accessed.
+
+`Definition.Key` identifies an entry within each Client. `SharedCacheOptions.Key`, together with the adapter's Prefix, identifies the Redis record; this example uses `user:7` for both keys. A and B run in one process to make the sequence visible. Separate service processes can reuse the same record by configuring the same Redis namespace, shared key, compatible Format, and result type. They do not need to share a Go object.
+
+The example clears only its reserved `cacheq-minimal-demo` shared key before reading, so repeated runs produce the same output. `StaleTime` controls when Clients consider data fresh, while the shared `TTL` caps the shared result's freshness and retention. Both are one minute here; the Redis adapter's invalidation metadata can outlive the result payload.
+
 ## Usage
 
 The following sections follow API usage order: create a Redis store, create a shared cache, define a query, fetch results, and invalidate them. The example's result type is User, representing a user profile:
