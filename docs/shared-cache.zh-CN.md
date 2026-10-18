@@ -97,13 +97,13 @@ if err != nil {
 }
 ```
 
-返回的 `shared` 类型为 `*cacheq.SharedCache[User]`，保存这份数据的存储和复用规则。创建时只校验并保存配置，不会加载用户资料；下一节通过 `QueryDefinition.Shared` 将它连接到查询。
+返回的 `shared` 类型为 `*cacheq.SharedCache[User]`，保存这份数据的存储和复用规则。创建时只校验并保存配置，不会加载用户资料；下一节通过 `Definition.Shared` 将它连接到查询。
 
 查询用户 8 时，应创建使用 `tenant:42:user:8:v1` 等不同 key 的配置，可以继续复用同一个 `store`。key 中的冒号和各段文字只是应用的命名约定。`Format` 是读取方匹配的数据结构与编码版本标识，不选择编码器；本例未设置 `Codec`，所以使用默认 JSON。无效的 key、Format、TTL 或 Timeout 等配置会返回错误，具体约束见“配置说明”。
 
 ### 定义使用共享缓存的查询
 
-使用 `cacheq.QueryDefinition[User]` 将本地查询身份、共享缓存配置和数据源读取函数组合起来。将前一步返回的 `shared` 赋给 `Shared`；`Fetcher` 定义实际从哪里取得 `User`。
+调用 `cacheq.QueryDefinition(key, fetcher)` 定义本地查询身份和数据源读取函数。加载函数返回 `User`，因此函数推断结果类型为 `User`，返回 `cacheq.Definition[User]`。将前一步返回的 `shared` 赋给定义的 `Shared` 字段，其类型必须为 `*cacheq.SharedCache[User]`。
 
 下面的 `source` 是模拟数据库的并发安全变量，`calls` 统计真实回源次数。此处只定义 Fetcher 回调；创建查询定义时不会执行它。业务接入时将回调替换为数据库或 API 读取，并使用传入的 context。
 
@@ -113,19 +113,15 @@ var source atomic.Value
 source.Store(User{Name: "Alice"})
 var calls atomic.Int64
 // Definition connects the shared rules to a local query identity and source.
-definition := cacheq.QueryDefinition[User]{
-	Key: "tenant:42:user:7",
-	// Shared enables Redis reuse when this query needs to load data.
-	Shared: shared,
-	// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
-	Fetcher: func(context.Context) (User, error) {
-		calls.Add(1)
-		return source.Load().(User), nil
-	},
-}
+definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+	calls.Add(1)
+	return source.Load().(User), nil
+})
+definition.Shared = shared
+
 ```
 
-`QueryDefinition.Key` 标识当前 Client 内的查询，`SharedCacheOptions.Key` 标识跨实例共享的记录；两者分别配置，不会自动转换。相同本地 key 应使用一致的结果类型和加载规则。
+`Definition.Key` 标识当前 Client 内的查询，`SharedCacheOptions.Key` 标识跨实例共享的记录；两者分别配置，不会自动转换。相同本地 key 应使用一致的结果类型和加载规则。
 
 ### 读取查询结果
 
@@ -228,8 +224,8 @@ B refreshed: Bob, source calls: 3
 
 | 字段 | 用途 | 必填或默认值 | 使用约束 |
 | --- | --- | --- | --- |
-| `QueryDefinition.Key` | 当前 Client 内的查询身份 | 必填 | 使用受支持的可比较值，包含影响结果的租户、权限和参数；相同 key 使用一致的结果类型和加载配置 |
-| `QueryDefinition.Shared` | 将查询连接到共享缓存 | 默认 `nil`，只使用本地缓存 | `SharedCache[V]` 的 `V` 与查询结果类型一致 |
+| `Definition.Key` | 当前 Client 内的查询身份 | 必填 | 使用受支持的可比较值，包含影响结果的租户、权限和参数；相同 key 使用一致的结果类型和加载配置 |
+| `Definition.Shared` | 将查询连接到共享缓存 | 默认 `nil`，只使用本地缓存 | `SharedCache[V]` 的 `V` 与查询结果类型一致 |
 | `SharedCacheOptions.Key` | 跨实例共享记录的身份 | 必填非空字符串 | 不会从本地 key 自动生成；示例为 `tenant:42:user:7:v1` |
 | `SharedCacheOptions.Format` | 结果的数据结构和编码版本 | 必填非空字符串 | 示例为 `user.json.v1`；不兼容升级应同时使用新的共享 key |
 | `SharedCacheOptions.Codec` | 对结果编码和解码 | 默认 `JSONCodec[V]` | JSON 只保留可序列化字段；自定义 `Codec[V]` 的方法必须支持并发调用 |
@@ -259,7 +255,7 @@ B refreshed: Bob, source calls: 3
 | `redistore.Options.Prefix` | 隔离应用或环境的 Redis 命名空间 | 空值使用 `cacheq` | 不允许 `{` 或 `}`；生产项目使用自己的命名空间 |
 | `redistore.Options.EnableNotifications` | 发布失效事件并允许 watcher 订阅 | 默认 `false` | 需要额外的 Pub/Sub 权限；所有发布方都应启用 |
 | `redistore.Options.EnableTags` | 启用跨 key 的远端标签失效 | 默认 `false` | 使用独立的数据布局；一个命名空间集中在一个 Cluster slot |
-| `SharedCacheOptions.ShareTags` | 将 `QueryDefinition.Tags` 登记到远端 | 默认 `false` | 要求存储启用标签能力；仍会遵守同一共享记录上已登记的标签 |
+| `SharedCacheOptions.ShareTags` | 将 `Definition.Tags` 登记到远端 | 默认 `false` | 要求存储启用标签能力；仍会遵守同一共享记录上已登记的标签 |
 
 通知和标签的接入示例、权限、watcher 清理及 Cluster 取舍见[共享失效通知与标签](shared-invalidation.zh-CN.md)。
 
@@ -373,16 +369,11 @@ func main() {
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
 	// Definition connects the shared rules to a local query identity and source.
-	definition := cacheq.QueryDefinition[User]{
-		Key: "tenant:42:user:7",
-		// Shared enables Redis reuse when this query needs to load data.
-		Shared: shared,
-		// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
-		Fetcher: func(context.Context) (User, error) {
-			calls.Add(1)
-			return source.Load().(User), nil
-		},
-	}
+	definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+		calls.Add(1)
+		return source.Load().(User), nil
+	})
+	definition.Shared = shared
 
 	// Both Clients use the same shared configuration and keep separate local results.
 	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})

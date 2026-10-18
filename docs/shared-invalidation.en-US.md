@@ -8,7 +8,7 @@
 
 Set `redistore.Options.EnableNotifications: true` to publish changes and allow watchers. Its default false preserves the original storage-only command and ACL contract. All writers must enable it for immediate notification propagation.
 
-Remote tags group different shared keys and result types. Enable `redistore.Options.EnableTags` on the store and `SharedCacheOptions.ShareTags` on each participating query. `QueryDefinition.Tags` then supplies the labels registered remotely. `Client.InvalidateSharedTags` advances the remote tag generations and invalidates matching queries in the initiating Client. Watchers propagate the operation to other Clients in the same remote namespace.
+Remote tags group different shared keys and result types. Enable `redistore.Options.EnableTags` on the store and `SharedCacheOptions.ShareTags` on each participating query. `Definition.Tags` then supplies the labels registered remotely. `Client.InvalidateSharedTags` advances the remote tag generations and invalidates matching queries in the initiating Client. Watchers propagate the operation to other Clients in the same remote namespace.
 
 The authoritative database or API write must commit before invalidation. Notification delivery does not provide a distributed transaction, a synchronous barrier across instances, or durable event replay.
 
@@ -120,14 +120,20 @@ func run() error {
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
-	detail := cacheq.QueryDefinition[User]{
-		Key: "detail", Tags: tags, Shared: detailShared, Options: cacheq.QueryOptions{Disable: true},
-		Fetcher: func(context.Context) (User, error) { calls.Add(1); return source.Load().(User), nil },
-	}
-	list := cacheq.QueryDefinition[[]User]{
-		Key: "list", Tags: tags, Shared: listShared, Options: cacheq.QueryOptions{Disable: true},
-		Fetcher: func(context.Context) ([]User, error) { calls.Add(1); return []User{source.Load().(User)}, nil },
-	}
+	detail := cacheq.QueryDefinition(
+		"detail",
+		func(context.Context) (User, error) { calls.Add(1); return source.Load().(User), nil },
+		cacheq.QueryOptions{Disable: true},
+	)
+	detail.Tags = tags
+	detail.Shared = detailShared
+	list := cacheq.QueryDefinition(
+		"list",
+		func(context.Context) ([]User, error) { calls.Add(1); return []User{source.Load().(User)}, nil },
+		cacheq.QueryOptions{Disable: true},
+	)
+	list.Tags = tags
+	list.Shared = listShared
 	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	defer a.Close()

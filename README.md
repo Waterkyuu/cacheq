@@ -31,7 +31,7 @@ how they execute and how consumers receive their results.
 | Several handlers or components read the same user, configuration, or resource | Reuse fresh cached data and share in-flight requests for the same key |
 | A list or aggregation needs many objects from a backend with a bulk API | Collect different-key loads into batches, or submit known keys with `LoadMany` |
 | A successful write must update a detail view and refresh related lists or totals | Coordinate cache updates and invalidation through Mutation; optionally wait for associated refreshes |
-| Multiple callers need the same query key, loader, and loading policy | Reuse a `QueryDefinition` and shared `QueryOptions`; use tags and filters to manage related queries |
+| Multiple callers need the same query key, loader, and loading policy | Create reusable definitions with `QueryDefinition` and shared `QueryOptions`; use tags and filters to manage related queries |
 | A view or long-running task needs to react to loading, results, errors, and refreshes | Subscribe to typed query updates; inspect diagnostic events to trace execution |
 | Reads and writes share a database or service with limited capacity | Bound active callbacks and queued work with a shared `Executor` |
 

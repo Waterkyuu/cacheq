@@ -97,13 +97,13 @@ if err != nil {
 }
 ```
 
-The returned shared has type `*cacheq.SharedCache[User]` and holds storage and reuse rules for this data. Construction only validates and saves configuration; it does not load a profile. The next section attaches it to a query through QueryDefinition.Shared.
+The returned shared has type `*cacheq.SharedCache[User]` and holds storage and reuse rules for this data. Construction only validates and saves configuration; it does not load a profile. The next section attaches it to a query through Definition.Shared.
 
 For user 8, create a configuration with a different key such as `tenant:42:user:8:v1`, reusing the same store. Colons and key segments are application naming conventions. Format labels the schema and encoding version readers must match; it does not choose a codec. JSON is used here because Codec is unset. Invalid key, Format, TTL, Timeout, or other options return errors; see "Configuration" for constraints.
 
 ### Define a query using the shared cache
 
-Use `cacheq.QueryDefinition[User]` to combine a local query identity, shared cache configuration, and source read. Assign the shared object from the previous step to Shared; Fetcher defines where to obtain a User.
+Call `cacheq.QueryDefinition(key, fetcher)` to define the local query identity and source read. The loader returns `User`, so the function infers `User` and returns `cacheq.Definition[User]`. Assign the shared object from the previous step to the returned definition's `Shared` field; it must have type `*cacheq.SharedCache[User]`.
 
 Here source is a concurrency-safe database substitute and calls counts source reads. This code only defines the Fetcher callback; constructing a query definition does not execute it. In application code, replace it with a database or API read that uses its supplied context.
 
@@ -113,19 +113,15 @@ var source atomic.Value
 source.Store(User{Name: "Alice"})
 var calls atomic.Int64
 // Definition connects the shared rules to a local query identity and source.
-definition := cacheq.QueryDefinition[User]{
-	Key: "tenant:42:user:7",
-	// Shared enables Redis reuse when this query needs to load data.
-	Shared: shared,
-	// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
-	Fetcher: func(context.Context) (User, error) {
-		calls.Add(1)
-		return source.Load().(User), nil
-	},
-}
+definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+	calls.Add(1)
+	return source.Load().(User), nil
+})
+definition.Shared = shared
+
 ```
 
-QueryDefinition.Key identifies the query within one Client; SharedCacheOptions.Key identifies the cross-instance record. Configure them separately; neither is derived from the other. Use consistent result types and loading rules for the same local key.
+Definition.Key identifies the query within one Client; SharedCacheOptions.Key identifies the cross-instance record. Configure them separately; neither is derived from the other. Use consistent result types and loading rules for the same local key.
 
 ### Fetch query results
 
@@ -228,8 +224,8 @@ Choose an invalidation API by its scope:
 
 | Field | Purpose | Required or default | Constraints |
 | --- | --- | --- | --- |
-| `QueryDefinition.Key` | Query identity within this Client | Required | Use a supported comparable value containing result-affecting tenant, permission, and parameter scope; use consistent result types and loading configurations for the same key |
-| `QueryDefinition.Shared` | Connect the query to shared caching | Default nil: local caching only | The `V` in `SharedCache[V]` matches the query result type |
+| `Definition.Key` | Query identity within this Client | Required | Use a supported comparable value containing result-affecting tenant, permission, and parameter scope; use consistent result types and loading configurations for the same key |
+| `Definition.Shared` | Connect the query to shared caching | Default nil: local caching only | The `V` in `SharedCache[V]` matches the query result type |
 | `SharedCacheOptions.Key` | Cross-instance record identity | Required nonempty string | Not derived automatically from the local key; the example uses `tenant:42:user:7:v1` |
 | `SharedCacheOptions.Format` | Result schema and encoding version | Required nonempty string | The example uses `user.json.v1`; incompatible upgrades also need a new shared key |
 | `SharedCacheOptions.Codec` | Encode and decode results | Default `JSONCodec[V]` | JSON preserves only serializable fields; custom `Codec[V]` methods must support concurrent calls |
@@ -259,7 +255,7 @@ Timeout bounds each store call separately, not the whole query. Request contexts
 | `redistore.Options.Prefix` | Isolate Redis namespaces by application or environment | Empty selects `cacheq` | Braces are rejected; use your own production namespace |
 | `redistore.Options.EnableNotifications` | Publish invalidations and allow watcher subscriptions | Default false | Requires additional Pub/Sub permissions; enable on every publisher |
 | `redistore.Options.EnableTags` | Enable remote tag invalidation across keys | Default false | Uses a separate data layout; one namespace occupies one Cluster slot |
-| `SharedCacheOptions.ShareTags` | Register QueryDefinition.Tags remotely | Default false | Requires enabled store tag support; existing tags on the same shared record are still honored |
+| `SharedCacheOptions.ShareTags` | Register Definition.Tags remotely | Default false | Requires enabled store tag support; existing tags on the same shared record are still honored |
 
 See [shared invalidation and tags](shared-invalidation.en-US.md) for notification/tag examples, permissions, watcher cleanup, and Cluster tradeoffs.
 
@@ -373,16 +369,11 @@ func main() {
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
 	// Definition connects the shared rules to a local query identity and source.
-	definition := cacheq.QueryDefinition[User]{
-		Key: "tenant:42:user:7",
-		// Shared enables Redis reuse when this query needs to load data.
-		Shared: shared,
-		// Fetcher is defined now; cacheq calls it later when fresh data is unavailable.
-		Fetcher: func(context.Context) (User, error) {
-			calls.Add(1)
-			return source.Load().(User), nil
-		},
-	}
+	definition := cacheq.QueryDefinition("tenant:42:user:7", func(context.Context) (User, error) {
+		calls.Add(1)
+		return source.Load().(User), nil
+	})
+	definition.Shared = shared
 
 	// Both Clients use the same shared configuration and keep separate local results.
 	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})

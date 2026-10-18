@@ -8,7 +8,7 @@
 
 设置 `redistore.Options.EnableNotifications: true` 后，存储发布变更并允许 watcher。该字段默认为 false，保持原有纯存储命令与 ACL 契约；需要及时传播通知的写入方均应启用。
 
-远端标签可以将不同共享 key 和结果类型关联成组。存储启用 `redistore.Options.EnableTags`，各参与查询启用 `SharedCacheOptions.ShareTags`，由 `QueryDefinition.Tags` 提供远端登记的标签。`Client.InvalidateSharedTags` 更换远端标签版本，并使发起 Client 中的匹配查询失效。同一远端命名空间中的其他 Client 通过 watcher 接收该操作。
+远端标签可以将不同共享 key 和结果类型关联成组。存储启用 `redistore.Options.EnableTags`，各参与查询启用 `SharedCacheOptions.ShareTags`，由 `Definition.Tags` 提供远端登记的标签。`Client.InvalidateSharedTags` 更换远端标签版本，并使发起 Client 中的匹配查询失效。同一远端命名空间中的其他 Client 通过 watcher 接收该操作。
 
 权威数据库或 API 写入必须先成功提交，再使缓存失效。通知投递不提供分布式事务、跨实例同步完成屏障或持久化事件重放。
 
@@ -120,14 +120,20 @@ func run() error {
 	var source atomic.Value
 	source.Store(User{Name: "Alice"})
 	var calls atomic.Int64
-	detail := cacheq.QueryDefinition[User]{
-		Key: "detail", Tags: tags, Shared: detailShared, Options: cacheq.QueryOptions{Disable: true},
-		Fetcher: func(context.Context) (User, error) { calls.Add(1); return source.Load().(User), nil },
-	}
-	list := cacheq.QueryDefinition[[]User]{
-		Key: "list", Tags: tags, Shared: listShared, Options: cacheq.QueryOptions{Disable: true},
-		Fetcher: func(context.Context) ([]User, error) { calls.Add(1); return []User{source.Load().(User)}, nil },
-	}
+	detail := cacheq.QueryDefinition(
+		"detail",
+		func(context.Context) (User, error) { calls.Add(1); return source.Load().(User), nil },
+		cacheq.QueryOptions{Disable: true},
+	)
+	detail.Tags = tags
+	detail.Shared = detailShared
+	list := cacheq.QueryDefinition(
+		"list",
+		func(context.Context) ([]User, error) { calls.Add(1); return []User{source.Load().(User)}, nil },
+		cacheq.QueryOptions{Disable: true},
+	)
+	list.Tags = tags
+	list.Shared = listShared
 	a := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	b := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
 	defer a.Close()
