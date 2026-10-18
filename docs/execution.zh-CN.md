@@ -186,6 +186,8 @@ defer query.Close()
 
 如果外层回调已经持有 Batcher 的 Executor，`Load` 在收集或加入键之前返回 `ErrExecutionReentry`。Client 不重试这一错误，包括包装后的错误，也不会调用 `RetryIf`。通过回调 context 再次获取同一预算的嵌套查询和 Mutation 同样被拒绝。这种拒绝不会增加 `Stats().Rejected`，该计数只记录过载。
 
+当回调 context 持有已有加载使用的 Executor 时，`Fetch`、`Prefetch` 和 `QueryHandle.Refetch` 也会拒绝同步加入。检查使用发起者的预算，因此覆盖或禁用加入者的预算不能绕过检查。新鲜缓存命中无需获取名额，仍可正常返回；已有加载使用其他 Executor 或禁用预算时，仍允许加入。
+
 检测依赖传递回调收到的 context。替换为 `context.Background()` 或启动独立拥有生命周期的后台工作会丢失预算所有权信息。应避免嵌套依赖已持有的预算，在实际后端边界配置容量。不同预算仍各自生效；在多个相互等待的层配置预算仍可能形成依赖环。
 
 ## 过载与重试
