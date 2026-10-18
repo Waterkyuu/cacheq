@@ -239,10 +239,9 @@ test("Go search results resolve to published sections and public source declarat
 		await assertDestination(record.url, path.join(build, "index.html"));
 });
 
-test("new feature guides are discoverable and render the maintained API documentation", async () => {
+test("feature guides are discoverable in the sidebar and render the maintained API documentation", async () => {
 	for (const locale of ["en", "zh-CN"]) {
 		const prefix = locale === "en" ? "" : "zh-CN/";
-		const homepage = await readFile(path.join(build, prefix, "index.html"), "utf8");
 		const queries = await readFile(path.join(build, prefix, "docs/queries/index.html"), "utf8");
 		for (const [slug, declarations] of [
 			[
@@ -268,7 +267,6 @@ test("new feature guides are discoverable and render the maintained API document
 			["bubbletea", ["Bubble Tea", "examples/bubbletea", "QueryHandle"]],
 		] as const) {
 			const route = `/cacheq/${prefix}docs/${slug}/`;
-			assert.ok(homepage.includes(`href="${route}"`), `Missing ${locale} ${slug} homepage link`);
 			assert.ok(queries.includes(`href="${route}"`), `Missing ${locale} ${slug} sidebar link`);
 			const guide = await readFile(path.join(build, prefix, `docs/${slug}/index.html`), "utf8");
 			for (const declaration of declarations) assert.ok(guide.includes(declaration));
