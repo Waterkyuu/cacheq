@@ -30,7 +30,7 @@ func (c *Client) touchGCLocked(key any) {
 	if releaseBinding {
 		// An evicted key needs its type binding only while a handle or load owns it.
 		// Release empty metadata when that owner leaves, even when timed GC is disabled.
-		c.discardLocked(key)
+		c.discardLocked(key, ReasonNone)
 		return
 	}
 	if c.options.GCTime <= 0 {
@@ -63,7 +63,7 @@ func (c *Client) collectGC(key any, task *gcTask) {
 	delete(c.gcTasks, key)
 	if len(c.observers[key]) == 0 && c.pending[key] == nil {
 		c.stats.GCCollections++
-		c.discardLocked(key)
+		c.discardLocked(key, ReasonInactive)
 	}
 }
 

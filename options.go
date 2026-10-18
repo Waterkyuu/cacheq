@@ -15,11 +15,14 @@ var ErrQueryClosed = errors.New("query handle is closed")
 // ErrTypeMismatch indicates a key was reused with a different static result type.
 var ErrTypeMismatch = errors.New("query result type mismatch")
 
-// ErrInvalidKey indicates a nil or non-comparable key, or a nil invalidation predicate.
-var ErrInvalidKey = errors.New("query key must be non-nil and comparable")
+// ErrInvalidKey indicates a nil, non-comparable, or non-reflexive key, or a nil direct query predicate.
+var ErrInvalidKey = errors.New("query key must be non-nil, comparable, and equal to itself")
 
 // ErrNoFetcher indicates an operation requiring data has no loader to execute.
 var ErrNoFetcher = errors.New("query has no fetcher")
+
+// ErrTooManyOptions indicates that an operation received more than one configuration value.
+var ErrTooManyOptions = errors.New("at most one configuration value is allowed")
 
 // Status describes the most recent result independently of background fetching.
 type Status uint8
@@ -51,38 +54,64 @@ type Options struct {
 	// Retry limits additional attempts after the initial load; zero disables retries.
 	Retry int
 	// RetryIf permits another attempt for an error, subject to Retry and cancellation.
-	// Nil retries every error except cancellation and deadline expiration; it runs outside the client lock.
+	// Cancellation, deadline expiration, ErrQueueFull, ErrBatcherClosed, and ErrExecutionReentry never retry.
+	// Nil permits every other error; the predicate runs outside the client lock.
 	RetryIf func(error) bool
 	// RetryDelay supplies the delay before each additional attempt, numbered from one.
 	// Nil uses exponential backoff capped at thirty seconds.
 	RetryDelay func(attempt int) time.Duration
 	// Timeout bounds the entire load, including retries; zero uses the caller's deadline.
 	Timeout time.Duration
+	// Executor optionally bounds concurrent loader attempts and queued loads across clients.
+	// Nil leaves execution unrestricted. Queue time counts toward Timeout; retry waits hold no slot.
+	// For batched fetchers, use DisableExecutor on the query and BatchOptions.Executor on bulk callbacks.
+	Executor *Executor
 	// Clock supplies freshness and retention checks; nil uses time.Now.
 	Clock func() time.Time
 }
 
-// FetchOptions overrides freshness and request behavior for one imperative fetch.
-// Nil fields inherit Client defaults; pointer fields allow explicit zero values.
-// Capacity, data age, garbage collection, and the clock remain owned by the Client.
-// Callbacks run outside the Client lock and must synchronize any captured mutable state.
-type FetchOptions struct {
-	// StaleTime overrides this consumer's freshness for ordinary data; zero makes it immediately stale.
+// QueryOptions overrides loading policy for Query, Fetch, and Prefetch.
+// Disable only controls Query's automatic loading; explicit reads and Refetch still execute.
+// Nil policy fields inherit Client defaults; operations accept zero or one options value.
+// Duration and retry values are copied when applied; execution budgets are shared.
+// Callbacks run outside the Client lock and must synchronize captured mutable state.
+type QueryOptions struct {
+	// Disable prevents Query's automatic loading when true; its zero value permits loading.
+	// The value is copied during construction; later permission changes use SetEnabled.
+	Disable bool
+	// StaleTime overrides this consumer's freshness for ordinary data; nil inherits Client defaults.
 	// Explicit deadlines from FetchWithExpiry remain authoritative.
 	StaleTime *time.Duration
-	// Retry overrides the number of additional attempts; zero disables retries.
+	// Retry overrides additional attempts for loads this consumer initiates; zero disables retries.
 	Retry *int
 	// RetryIf overrides which errors permit another attempt within the retry limit.
-	// To allow every non-cancellation error despite a Client predicate, supply a function returning true.
 	RetryIf func(error) bool
 	// RetryDelay overrides the delay before each additional attempt, numbered from one.
 	RetryDelay func(attempt int) time.Duration
-	// Timeout overrides the whole load's deadline, including retries; zero adds no Client timeout.
+	// Timeout overrides this consumer's whole-load timeout; zero adds no Client timeout.
+	// Joining an existing request preserves its initiator's retry and timeout policy.
 	Timeout *time.Duration
+	// Executor overrides the budget for loads this consumer initiates; nil inherits Client defaults.
+	Executor *Executor
+	// DisableExecutor skips the outer loader budget, taking precedence over Executor.
+	// Use it with a budgeted Batcher so only the actual bulk callback acquires capacity.
+	DisableExecutor bool
 }
 
-// resolvePolicy copies overrides into an independent policy without retaining caller-owned pointers.
-func resolvePolicy(options Options, policy FetchOptions) Options {
+// singleOptions resolves an omitted configuration to zero and rejects extras before operation side effects.
+func singleOptions[T any](options []T) (T, error) {
+	var option T
+	if len(options) > 1 {
+		return option, ErrTooManyOptions
+	}
+	if len(options) == 1 {
+		option = options[0]
+	}
+	return option, nil
+}
+
+// resolvePolicy copies scalar overrides while sharing callbacks and the selected execution budget.
+func resolvePolicy(options Options, policy QueryOptions) Options {
 	if policy.StaleTime != nil {
 		options.StaleTime = *policy.StaleTime
 	}
@@ -98,37 +127,13 @@ func resolvePolicy(options Options, policy FetchOptions) Options {
 	if policy.Timeout != nil {
 		options.Timeout = *policy.Timeout
 	}
-	return options
-}
-
-// QueryOptions controls one handle's automatic loading, freshness, retry policy, and timeout.
-// Query defaults to automatic loading unless Disable is true, including when other options are supplied.
-// Nil policy fields inherit Client defaults.
-// Pointer values are copied; callbacks run outside the Client lock and must synchronize captured mutable state.
-type QueryOptions struct {
-	// Disable prevents automatic loading when true; its zero value permits loading.
-	// The value is copied during construction; later permission changes use SetEnabled.
-	Disable bool
-	// StaleTime overrides this handle's freshness for ordinary shared data; nil inherits Client defaults.
-	// Explicit deadlines from FetchWithExpiry remain authoritative.
-	StaleTime *time.Duration
-	// Retry overrides additional attempts for loads this handle initiates; zero disables retries.
-	Retry *int
-	// RetryIf overrides which errors permit another attempt within the retry limit.
-	RetryIf func(error) bool
-	// RetryDelay overrides the delay before each additional attempt, numbered from one.
-	RetryDelay func(attempt int) time.Duration
-	// Timeout overrides this handle's whole-load timeout; zero adds no Client timeout.
-	// Joining an existing request preserves its initiator's retry and timeout policy.
-	Timeout *time.Duration
-}
-
-// fetchOptions extracts request overrides without applying observer enablement to imperative calls.
-func (o QueryOptions) fetchOptions() FetchOptions {
-	return FetchOptions{
-		StaleTime: o.StaleTime, Retry: o.Retry, RetryIf: o.RetryIf,
-		RetryDelay: o.RetryDelay, Timeout: o.Timeout,
+	if policy.Executor != nil {
+		options.Executor = policy.Executor
 	}
+	if policy.DisableExecutor {
+		options.Executor = nil
+	}
+	return options
 }
 
 // RefetchMode controls whether invalidation starts background work for subscribed queries.
@@ -145,6 +150,9 @@ const (
 type InvalidateOptions struct {
 	// Refetch selects background refresh behavior; the zero value uses RefetchObserved.
 	Refetch RefetchMode
+	// RefetchAfterLoad coalesces in-flight invalidations into one follow-up for enabled observers.
+	// A follow-up never schedules another follow-up; RefetchNone disables scheduling.
+	RefetchAfterLoad bool
 }
 
 // Snapshot exposes a query's data, freshness, request activity, and latest error.

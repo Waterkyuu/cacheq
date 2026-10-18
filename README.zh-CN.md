@@ -5,7 +5,7 @@
 
   <p><a href="./README.md">English</a> | <strong>简体中文</strong></p>
 
-  <p><strong>缓存、重试、共享查询数据</strong></p>
+  <p><strong>管理共享查询数据、请求状态和刷新生命周期</strong></p>
   <p>面向 Go 1.22 及以上版本、没有外部依赖的查询客户端</p>
   <p>多个组件共享数据、合并重复请求，并订阅查询状态。</p>
 
@@ -16,15 +16,32 @@
   <p><a href="#功能">功能</a> · <a href="#安装">安装</a></p>
 </div>
 
+## 什么时候使用 cacheq
+
+当 Go 应用需要协调数据加载与同步时，可以使用 cacheq：复用缓存结果、合并并发请求、批量读取，或在写入后刷新关联查询。
+
+它适用于后端服务、CLI/TUI 应用和后台任务。HTTP 请求、数据库操作或其他加载逻辑由应用提供；cacheq 管理这些操作的执行，以及结果如何传递给消费者。
+
+| 应用场景 | cacheq 提供的能力 |
+| --- | --- |
+| 多个处理函数或组件读取同一个用户、配置或资源 | 复用新鲜缓存，合并相同 key 的执行中请求 |
+| 列表或聚合查询需要从支持批量接口的后端读取多个对象 | 将不同 key 的加载合并为批次，或通过 `LoadMany` 提交已知的一组 key |
+| 写入成功后，需要更新详情并刷新关联列表或统计 | 通过 Mutation 组织缓存更新和失效，并按需等待关联刷新完成 |
+| 多处调用需要复用相同的查询 key、加载函数和加载策略 | 通过 `QueryDefinition` 创建可复用定义并共享 `QueryOptions`，通过标签与筛选管理关联查询 |
+| 界面或持续运行的任务需要响应加载、结果、错误和刷新 | 订阅类型安全的查询更新，通过诊断事件追踪执行过程 |
+| 读取和写入共用一个容量有限的数据库或服务 | 通过共享 `Executor` 限制活动回调与排队工作 |
+
+cacheq 在单个进程中维护查询状态和本地结果。需要跨进程复用序列化结果的查询，可以启用可选[共享结果缓存](docs/shared-cache.zh-CN.md)，包括独立的 Redis 适配器。少量本地值只需过期处理时，TTL 缓存可能已经足够。
+
 ## 功能
 
-- 一个共享客户端缓存用户详情、列表、配置等不同类型的数据。
-- 每个查询有明确的数据类型，同键类型冲突返回错误。
-- 一个 `Query` 入口管理状态、更新通知、条件开关和手动刷新。
-- 缓存新鲜期、后台刷新、同键请求合并、重试和请求超时。
-- 通过查询与获取配置，按消费者覆盖新鲜时间、重试错误判断和超时。
-- 单键、跨类型批量和按条件失效，可选择延后请求。
-- 本地缓存更新、预加载、请求取消和闲置缓存自动删除。
+- 类型安全的共享查询与缓存。
+- 缓存策略与生命周期管理。
+- 可选 Redis 共享结果缓存与按 key 失效。
+- 缓存更新、数据写入与失效管理。
+- 自动批量加载。
+- 共享执行预算。
+- 查询可观测性。
 
 ## 安装
 
@@ -36,17 +53,61 @@ go get github.com/Waterkyuu/cacheq
 
 ## 快速开始
 
-```go
-client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-defer client.Close()
+把这个完整程序保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。无需服务器或凭据。
 
-query := cacheq.Query(client, "greeting", func(context.Context) (string, error) {
-	return "hello", nil
-})
-defer query.Close()
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+)
+
+// main gives two components the same query without loading the data twice.
+func main() {
+	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	defer client.Close()
+
+	var calls atomic.Int32
+	load := func(context.Context) (string, error) {
+		calls.Add(1)
+		return "hello", nil
+	}
+	queries := []*cacheq.QueryHandle[string]{
+		cacheq.Query(client, "greeting", load),
+		cacheq.Query(client, "greeting", load),
+	}
+	for _, query := range queries {
+		defer query.Close()
+	}
+	for i, query := range queries {
+		for state := range query.Updates() {
+			if state.Err != nil {
+				panic(state.Err)
+			}
+			if state.HasData && !state.Fetching {
+				fmt.Printf("component %d: %s\n", i+1, state.Data)
+				break
+			}
+		}
+	}
+	fmt.Printf("loader calls: %d\n", calls.Load())
+}
 ```
 
-`Query` 后台加载数据，同键查询共享缓存与请求。用 `Snapshot()` 读取状态，用 `Updates()` 接收变化；需要等待结果时使用 `Fetch`。
+预期输出：
+
+```text
+component 1: hello
+component 2: hello
+loader calls: 1
+```
+
+`Query` 后台加载数据。这两个组件会加入同一个正在执行的请求，或复用它的新鲜结果。`Updates()` 提供初始状态和最新变化，慢消费者可能跳过中间状态；用 `Snapshot()` 读取当前状态，不需要订阅而只想等待结果时使用 `Fetch`。
 
 ## 使用场景
 
@@ -61,7 +122,9 @@ defer query.Close()
 
 ## Bubble Tea 示例
 
-[完整代码与说明](examples/bubbletea/)展示查询状态如何进入 TUI 消息循环，包括后台刷新、失败后保留数据和退出清理。示例需要 Go 1.26+。
+[运行任务看板](examples/bubbletea/)，查看列表、详情和统计三个视图如何订阅同一个查询。切换任务完成状态会刷新三个视图，也可以注入失败，查看保留旧数据和恢复过程。示例需要 Go 1.26+。
+
+订阅与修改流程见 [Bubble Tea 实践文档](docs/bubbletea.zh-CN.md)。
 
 ```sh
 cd examples/bubbletea
@@ -77,6 +140,22 @@ cd examples/mcp
 go run .
 ```
 
+## Redis 示例
+
+[源码与运行说明](examples/redis/)演示共享结果、缓存故障回源、远端标签和跨实例失效通知。示例需要 Go 1.26+ 与本地 Redis 服务。
+
+配置、预期输出与 API 契约见[共享缓存文档](docs/shared-cache.zh-CN.md)和[共享失效文档](docs/shared-invalidation.zh-CN.md)。
+
+## 可复现的 benchmark
+
+对同一份数据**串行读取 100 次**，比较**无缓存、首次加载和缓存命中**，见 [benchmark 文档](benchmarks/benchmarks.zh-CN.md)。主表展示总耗时和实际加载次数，内部开销与并发诊断单独说明。
+
+```sh
+go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
+```
+
+[独立并发测试](benchmarks/benchmarks.zh-CN.md#独立并发请求测试)固定每批 100 次读取、GOMAXPROCS=4、4 个请求 goroutine，每个读取 25 次，比较同一个 key 与不同 key 的缓存表现。
+
 ## 功能文档
 
 在线阅读[中英文文档站](https://waterkyuu.github.io/cacheq/)。
@@ -84,10 +163,19 @@ go run .
 | 文档 | 说明 |
 | --- | --- |
 | [查询与条件请求](docs/queries.zh-CN.md) | `Query`、状态、更新通知、条件开关、刷新、`Fetch` 和 HTTP 加载函数 |
-| [查询配置](docs/query-options.zh-CN.md) | 按消费者覆盖默认配置、独立新鲜度、重试错误判断、超时和共享请求策略 |
+| [查询配置](docs/query-options.zh-CN.md) | 共享加载配置、可复用的类型化查询定义、新鲜期、重试和超时 |
+| [统一查询筛选](docs/query-filters.zh-CN.md) | 为失效、等待刷新、取消和删除复用精确键与条件筛选 |
+| [查询标签](docs/query-tags.zh-CN.md) | 声明关联查询分组，按标签筛选，管理登记和保留规则 |
+| [自动批量加载](docs/batching.zh-CN.md) | 并发 key 组批、通过 LoadMany 加载已知 key、查询 API 集成、逐 key 结果和取消 |
 | [缓存与生命周期](docs/cache.zh-CN.md) | 所有缓存读写、配置、自动删除、取消、删除、关闭及错误处理 |
-| [缓存失效](docs/invalidation.zh-CN.md) | 单键、批量、条件失效及刷新模式 |
+| [共享结果缓存](docs/shared-cache.zh-CN.md) | 可选 Redis 缓存、Codec、原始新鲜期、按 key 失效、条件写入与故障处理 |
+| [共享失效通知与标签](docs/shared-invalidation.zh-CN.md) | 跨实例通知、远端标签版本、watcher 生命周期、连接恢复和 Redis 原子标签布局 |
+| [失效与刷新](docs/invalidation.zh-CN.md) | 单键、批量、条件失效，可等待刷新及有界补刷 |
+| [原子缓存更新](docs/updates.zh-CN.md) | 类型安全的缓存转换、共享只读值、并发冲突和显式重试契约 |
+| [写入与关联失效](docs/mutations.zh-CN.md) | 写入状态、可选等待刷新、关联失效及独立的同步错误 |
+| [执行并发预算](docs/execution.zh-CN.md) | 共享并发限制、有界 FIFO 队列、过载处理和取消 |
 | [可观测性](docs/observability.zh-CN.md) | 缓存命中、请求合并、加载结果与耗时、重试和清理统计 |
+| [诊断事件](docs/events.zh-CN.md) | 按 key 记录加载原因与来源、共享加载编号、合并次数、重试、结果丢弃和有界订阅 |
 | [MCP 资源缓存](docs/mcp.zh-CN.md) | 服务端资源复用、剩余 TTL、变化通知、授权隔离和 e2e |
 
 完整集成程序在 `examples`，API 细节见功能文档。缓存值作为共享只读数据使用；修改切片或映射前先复制。不同类型不能复用同一个键。

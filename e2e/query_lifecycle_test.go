@@ -183,9 +183,21 @@ func TestSharedClientMutation(t *testing.T) {
 	api := newUserAPI(t)
 	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Hour})
 	t.Cleanup(client.Close)
-	detail := cacheq.Query(client, "user:42", readJSON[user](api.server.Client(), api.server.URL+"/users/42"))
-	list := cacheq.Query(client, "users", readJSON[[]user](api.server.Client(), api.server.URL+"/users"))
-	config := cacheq.Query(client, "settings", readJSON[settings](api.server.Client(), api.server.URL+"/settings"))
+	detail := cacheq.Query(
+		client,
+		"user:42",
+		readJSON[user](api.server.Client(), api.server.URL+"/users/42"),
+	)
+	list := cacheq.Query(
+		client,
+		"users",
+		readJSON[[]user](api.server.Client(), api.server.URL+"/users"),
+	)
+	config := cacheq.Query(
+		client,
+		"settings",
+		readJSON[settings](api.server.Client(), api.server.URL+"/settings"),
+	)
 	t.Cleanup(detail.Close)
 	t.Cleanup(list.Close)
 	t.Cleanup(config.Close)
@@ -196,7 +208,7 @@ func TestSharedClientMutation(t *testing.T) {
 	if detail.Snapshot().Data.Name != "Alice" {
 		t.Fatal("mutation changed cache without invalidation")
 	}
-	if err := client.Invalidate([]any{"user:42", "users", "users"}, cacheq.InvalidateOptions{}); err != nil {
+	if err := client.Invalidate([]any{"user:42", "users", "users"}); err != nil {
 		t.Fatal(err)
 	}
 	await(t, detail, func(s cacheq.Snapshot[user]) bool { return s.Data.Name == "Bob" && !s.Fetching })

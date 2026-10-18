@@ -1,0 +1,316 @@
+Date: 2026-10-08 (Asia/Shanghai)
+Source: a396e0580ccddb7811dacf318fcc94d3a8ef8b74
+Go: go1.27.1 darwin/arm64
+CPU: Apple M3 Pro
+Scenario: Workers=4 / SameKey / FirstLoad; 64 requests per batch
+Profiles were collected sequentially, separately from uninstrumented benchmark samples.
+Profile recording changes timings; these numbers do not replace the benchmark tables.
+
+Profile command (run once with CPU=1, then once with CPU=4):
+go test -run '^$' -bench '^BenchmarkConcurrentFetch$/^Workers=4$/^SameKey$/^FirstLoad$' -benchtime=2s -count=1 -cpu=CPU -cpuprofile=/tmp/cacheq-firstload-cpuCPU.pprof -mutexprofile=/tmp/cacheq-firstload-mutexCPU.pprof -mutexprofilefraction=1 -blockprofile=/tmp/cacheq-firstload-blockCPU.pprof -blockprofilerate=1 -o /tmp/cacheq-firstload-profile.test
+
+Trace command (run once with CPU=1, then once with CPU=4):
+/tmp/cacheq-firstload-profile.test -test.run '^$' -test.bench '^BenchmarkConcurrentFetch$/^Workers=4$/^SameKey$/^FirstLoad$' -test.benchtime=1000x -test.count=1 -test.cpu=CPU -test.trace=/tmp/cacheq-firstload-traceCPU.out
+
+GOMAXPROCS=1: profiled benchmark output
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad         	   51792	     45989 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         0.0002896 merged/batch	        64.00 requests/batch	    6224 B/op	     144 allocs/op
+PASS
+ok  	github.com/Waterkyuu/cacheq	5.084s
+
+Command: go tool pprof -top -nodecount=15 /tmp/cacheq-firstload-profile.test /tmp/cacheq-firstload-cpu1.pprof
+File: cacheq-firstload-profile.test
+Type: cpu
+Time: 2026-10-08 04:19:08 CST
+Duration: 4.70s, Total samples = 3.03s (64.43%)
+Showing nodes accounting for 2.99s, 98.68% of 3.03s total
+Dropped 25 nodes (cum <= 0.02s)
+Showing top 15 nodes out of 16
+      flat  flat%   sum%        cum   cum%
+     2.62s 86.47% 86.47%      2.62s 86.47%  runtime.kevent
+     0.37s 12.21% 98.68%      0.37s 12.21%  crypto/internal/fips140/sha256.blockSHA2
+         0     0% 98.68%      0.37s 12.21%  crypto/internal/fips140/sha256.(*Digest).Write
+         0     0% 98.68%      0.37s 12.21%  crypto/internal/fips140/sha256.block
+         0     0% 98.68%      0.37s 12.21%  crypto/sha256.Sum256
+         0     0% 98.68%      0.37s 12.21%  github.com/Waterkyuu/cacheq.(*Client).execute
+         0     0% 98.68%      0.03s  0.99%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0% 98.68%      0.37s 12.21%  github.com/Waterkyuu/cacheq.(*Client).run
+         0     0% 98.68%      0.03s  0.99%  github.com/Waterkyuu/cacheq.Fetch[go.shape.[32]uint8]
+         0     0% 98.68%      0.37s 12.21%  github.com/Waterkyuu/cacheq.eraseFetcher[go.shape.[32]uint8].func1
+         0     0% 98.68%      0.37s 12.21%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func1
+         0     0% 98.68%      0.03s  0.99%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+         0     0% 98.68%      2.62s 86.47%  runtime.netpoll
+         0     0% 98.68%      2.62s 86.47%  runtime.startTheWorld.func1
+         0     0% 98.68%      2.62s 86.47%  runtime.startTheWorldWithSema
+
+Command: go tool pprof -top -nodecount=15 /tmp/cacheq-firstload-profile.test /tmp/cacheq-firstload-mutex1.pprof
+File: cacheq-firstload-profile.test
+Type: delay
+Time: 2026-10-08 04:19:13 CST
+Showing nodes accounting for 8.08us, 100% of 8.08us total
+Showing top 15 nodes out of 16
+      flat  flat%   sum%        cum   cum%
+    8.08us   100%   100%     8.08us   100%  runtime.unlock (inline)
+         0     0%   100%        4us 49.48%  _.goready.func1
+         0     0%   100%        4us 49.48%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1.1
+         0     0%   100%        4us 49.48%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch
+         0     0%   100%        4us 49.48%  runtime.closechan
+         0     0%   100%     4.08us 50.52%  runtime.gcBgMarkWorker
+         0     0%   100%     4.08us 50.52%  runtime.gcMarkDone
+         0     0%   100%     4.08us 50.52%  runtime.gcMarkTermination
+         0     0%   100%     4.08us 50.52%  runtime.gcMarkTermination.func3
+         0     0%   100%        4us 49.48%  runtime.goready (inline)
+         0     0%   100%        4us 49.48%  runtime.ready
+         0     0%   100%     4.08us 50.52%  runtime.startTheWorldWithSema
+         0     0%   100%     8.08us   100%  runtime.systemstack
+         0     0%   100%        4us 49.48%  runtime.wakep
+         0     0%   100%        4us 49.48%  testing.(*B).launch
+
+Command: go tool pprof -top -nodecount=15 -focus=cacheq.\(\*Client\).fetch /tmp/cacheq-firstload-profile.test /tmp/cacheq-firstload-block1.pprof
+File: cacheq-firstload-profile.test
+Type: delay
+Time: 2026-10-08 04:19:13 CST
+Active filters:
+   focus=cacheq.\(\*Client\).fetch
+Showing nodes accounting for 1.56s, 6.89% of 22.71s total
+      flat  flat%   sum%        cum   cum%
+     1.56s  6.89%  6.89%      1.56s  6.89%  runtime.selectgo
+         0     0%  6.89%      1.56s  6.89%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0%  6.89%      1.56s  6.89%  github.com/Waterkyuu/cacheq.Fetch[go.shape.[32]uint8]
+         0     0%  6.89%      1.56s  6.89%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+
+GOMAXPROCS=1: trace benchmark output
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad         	    1000	     50626 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         0 merged/batch	        64.00 requests/batch	    6225 B/op	     144 allocs/op
+PASS
+
+Trace profile: go tool trace -pprof=sched /tmp/cacheq-firstload-trace1.out
+Main binary filename not available.
+Type: delay
+Showing nodes accounting for 147.93ms, 96.18% of 153.81ms total
+Dropped 26 nodes (cum <= 0.77ms)
+      flat  flat%   sum%        cum   cum%
+  117.06ms 76.11% 76.11%   117.06ms 76.11%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch
+   30.88ms 20.08% 96.18%    30.88ms 20.08%  runtime.goschedIfBusy
+         0     0% 96.18%   117.06ms 76.11%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1.1
+         0     0% 96.18%    30.88ms 20.08%  runtime.bgsweep
+         0     0% 96.18%   116.82ms 75.95%  testing.(*B).launch
+         0     0% 96.18%   117.23ms 76.22%  testing.(*B).runN
+
+Trace profile: go tool trace -pprof=sync /tmp/cacheq-firstload-trace1.out
+Main binary filename not available.
+Type: delay
+Showing nodes accounting for 399.90ms, 100% of 399.90ms total
+Dropped 3 nodes (cum <= 2ms)
+Showing top 15 nodes out of 23
+      flat  flat%   sum%        cum   cum%
+  324.39ms 81.12% 81.12%   324.39ms 81.12%  runtime.chanrecv1
+   48.06ms 12.02% 93.14%    48.06ms 12.02%  sync.(*WaitGroup).Wait
+   27.45ms  6.86%   100%    27.45ms  6.86%  runtime.selectgo
+         0     0%   100%    27.45ms  6.86%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0%   100%    27.45ms  6.86%  github.com/Waterkyuu/cacheq.Fetch[...]
+         0     0%   100%    80.67ms 20.17%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch
+         0     0%   100%    80.23ms 20.06%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1
+         0     0%   100%    79.64ms 19.92%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1
+         0     0%   100%    48.06ms 12.02%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1.1
+         0     0%   100%    48.06ms 12.02%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch
+         0     0%   100%    30.17ms  7.54%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+         0     0%   100%    81.12ms 20.28%  main.main
+         0     0%   100%   321.66ms 80.44%  testing.(*B).Run
+         0     0%   100%    79.09ms 19.78%  testing.(*B).doBench
+         0     0%   100%    47.96ms 11.99%  testing.(*B).launch
+
+GOMAXPROCS=4: profiled benchmark output
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4         	   38755	     61735 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.999 merged/batch	        64.00 requests/batch	    6239 B/op	     147 allocs/op
+PASS
+ok  	github.com/Waterkyuu/cacheq	5.268s
+
+Command: go tool pprof -top -nodecount=15 /tmp/cacheq-firstload-profile.test /tmp/cacheq-firstload-cpu4.pprof
+File: cacheq-firstload-profile.test
+Type: cpu
+Time: 2026-10-08 04:19:27 CST
+Duration: 5.20s, Total samples = 5.30s (101.86%)
+Showing nodes accounting for 5.17s, 97.55% of 5.30s total
+Dropped 46 nodes (cum <= 0.03s)
+Showing top 15 nodes out of 80
+      flat  flat%   sum%        cum   cum%
+     2.23s 42.08% 42.08%      2.23s 42.08%  runtime.pthread_cond_signal
+     1.61s 30.38% 72.45%      1.61s 30.38%  runtime.pthread_cond_wait
+     0.49s  9.25% 81.70%      0.49s  9.25%  runtime.usleep
+     0.36s  6.79% 88.49%      0.36s  6.79%  runtime.pthread_cond_timedwait_relative_np
+     0.30s  5.66% 94.15%      0.30s  5.66%  runtime.kevent
+     0.07s  1.32% 95.47%      0.07s  1.32%  crypto/internal/fips140/sha256.blockSHA2
+     0.04s  0.75% 96.23%      0.04s  0.75%  runtime.pthread_kill
+     0.02s  0.38% 96.60%      0.06s  1.13%  runtime.pcvalue
+     0.01s  0.19% 96.79%      0.03s  0.57%  runtime.mapaccess2
+     0.01s  0.19% 96.98%      0.39s  7.36%  runtime.runqgrab
+     0.01s  0.19% 97.17%      0.03s  0.57%  runtime.scanObject
+     0.01s  0.19% 97.36%      0.03s  0.57%  runtime.semacquire1
+     0.01s  0.19% 97.55%      0.05s  0.94%  runtime.step
+         0     0% 97.55%      1.97s 37.17%  _.goready.func1
+         0     0% 97.55%      0.07s  1.32%  crypto/internal/fips140/sha256.(*Digest).Write
+
+Command: go tool pprof -top -nodecount=15 /tmp/cacheq-firstload-profile.test /tmp/cacheq-firstload-mutex4.pprof
+File: cacheq-firstload-profile.test
+Type: delay
+Time: 2026-10-08 04:19:33 CST
+Showing nodes accounting for 384.97ms, 99.63% of 386.38ms total
+Dropped 107 nodes (cum <= 1.93ms)
+      flat  flat%   sum%        cum   cum%
+  384.97ms 99.63% 99.63%   385.05ms 99.65%  sync.(*Mutex).Unlock (inline)
+         0     0% 99.63%   385.02ms 99.65%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0% 99.63%   385.03ms 99.65%  github.com/Waterkyuu/cacheq.Fetch[go.shape.[32]uint8]
+         0     0% 99.63%   385.04ms 99.65%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+
+Command: go tool pprof -top -nodecount=15 -focus=cacheq.\(\*Client\).fetch /tmp/cacheq-firstload-profile.test /tmp/cacheq-firstload-block4.pprof
+File: cacheq-firstload-profile.test
+Type: delay
+Time: 2026-10-08 04:19:33 CST
+Active filters:
+   focus=cacheq.\(\*Client\).fetch
+Showing nodes accounting for 5652.41ms, 19.47% of 29032.72ms total
+      flat  flat%   sum%        cum   cum%
+ 5195.33ms 17.89% 17.89%  5195.33ms 17.89%  runtime.selectgo
+  457.08ms  1.57% 19.47%   457.08ms  1.57%  sync.(*Mutex).Lock (inline)
+         0     0% 19.47%  5652.41ms 19.47%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0% 19.47%  5652.41ms 19.47%  github.com/Waterkyuu/cacheq.Fetch[go.shape.[32]uint8]
+         0     0% 19.47%  5652.41ms 19.47%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+
+GOMAXPROCS=4: trace benchmark output
+goos: darwin
+goarch: arm64
+pkg: github.com/Waterkyuu/cacheq
+cpu: Apple M3 Pro
+BenchmarkConcurrentFetch/Workers=4/SameKey/FirstLoad-4         	    1000	     61582 ns/op	         4.000 goroutines/batch	         1.000 loads/batch	         2.997 merged/batch	        64.00 requests/batch	    6318 B/op	     147 allocs/op
+PASS
+
+Trace profile: go tool trace -pprof=sched /tmp/cacheq-firstload-trace4.out
+Main binary filename not available.
+Type: delay
+Showing nodes accounting for 48194.89us, 98.41% of 48973.19us total
+Dropped 51 nodes (cum <= 244.87us)
+      flat  flat%   sum%        cum   cum%
+17677.76us 36.10% 36.10% 17732.16us 36.21%  github.com/Waterkyuu/cacheq.(*Client).execute
+17017.92us 34.75% 70.85% 17017.92us 34.75%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch
+11579.33us 23.64% 94.49% 11579.78us 23.65%  sync.(*Mutex).Unlock
+ 1254.91us  2.56% 97.05%  1254.91us  2.56%  sync.(*WaitGroup).Add
+  422.79us  0.86% 97.92%   422.79us  0.86%  runtime.systemstack_switch
+  190.40us  0.39% 98.31%   622.47us  1.27%  runtime.gcMarkDone
+   46.02us 0.094% 98.40% 11686.02us 23.86%  github.com/Waterkyuu/cacheq.(*Client).fetch
+    4.80us 0.0098% 98.41% 11743.94us 23.98%  github.com/Waterkyuu/cacheq.Fetch[...]
+    0.96us 0.002% 98.41%   432.06us  0.88%  runtime.gcMarkTermination
+         0     0% 98.41% 17017.92us 34.75%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1.1
+         0     0% 98.41% 12998.85us 26.54%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+         0     0% 98.41%   631.75us  1.29%  runtime.gcBgMarkWorker
+         0     0% 98.41%  1254.91us  2.56%  sync.(*WaitGroup).Done
+         0     0% 98.41% 17032.51us 34.78%  testing.(*B).launch
+         0     0% 98.41% 17121.47us 34.96%  testing.(*B).runN
+
+Trace profile: go tool trace -pprof=sync /tmp/cacheq-firstload-trace4.out
+Main binary filename not available.
+Type: delay
+Showing nodes accounting for 698.19ms, 100% of 698.26ms total
+Dropped 6 nodes (cum <= 3.49ms)
+Showing top 15 nodes out of 26
+      flat  flat%   sum%        cum   cum%
+  522.94ms 74.89% 74.89%   522.94ms 74.89%  runtime.chanrecv1
+  110.44ms 15.82% 90.71%   110.44ms 15.82%  runtime.selectgo
+   57.33ms  8.21% 98.92%    57.33ms  8.21%  sync.(*WaitGroup).Wait
+    7.47ms  1.07%   100%     7.47ms  1.07%  sync.(*Mutex).Lock
+         0     0%   100%   117.91ms 16.89%  github.com/Waterkyuu/cacheq.(*Client).fetch
+         0     0%   100%   117.91ms 16.89%  github.com/Waterkyuu/cacheq.Fetch[...]
+         0     0%   100%   104.59ms 14.98%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch
+         0     0%   100%   104.32ms 14.94%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1
+         0     0%   100%   103.92ms 14.88%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1
+         0     0%   100%    57.41ms  8.22%  github.com/Waterkyuu/cacheq_test.BenchmarkConcurrentFetch.func1.1.1
+         0     0%   100%    57.41ms  8.22%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch
+         0     0%   100%   123.17ms 17.64%  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2
+         0     0%   100%   104.89ms 15.02%  main.main
+         0     0%   100%    99.95ms 14.31%  runtime.(*wakeableSleep).sleep
+         0     0%   100%    99.95ms 14.31%  runtime.traceStartReadCPU.func1
+
+Trace event extraction:
+- Parsed with go tool trace -d=parsed.
+- Selected caller goroutines by NotExist->Runnable TransitionStack entry
+  github.com/Waterkyuu/cacheq_test.benchmarkConcurrentFetch.func2.
+- Both traces contain 4004 callers and 1001 loaders: 1000 measured batches plus
+  one calibration batch, each with four callers and one loader.
+- Counted caller Running->Waiting events with Client.fetch and runtime.selectgo
+  as pending waits, and Client.fetch with sync.(*Mutex).Lock as cache-lock waits.
+- Matched Waiting->Runnable for blocking durations and subsequent
+  Runnable->Running for time from being ready to resuming execution.
+- All selected pending wake events have Client.execute in the wake stack.
+- Pending waits include the caller that initiated the load. merged/batch in the
+  benchmark counts only callers joining an existing load, so it excludes that caller.
+- Event count and total durations per batch divide by 1001, including calibration.
+- Sums across callers are aggregate waiting, not elapsed batch time or added latency.
+- No cache-lock waiting event was observed for CPU=1; this does not mean the lock
+  is absent, free to acquire, or incapable of contention in other workloads.
+
+Trace event summary (durations in microseconds):
+{
+  "1": {
+    "batches_including_calibration": 1001,
+    "workers": 4004,
+    "loaders": 1001,
+    "pending_woken_by_execute": 1001,
+    "pending": {
+      "wait_events": 1001,
+      "events_per_batch": 1.0,
+      "aggregate_wait_us_per_batch": 27.422433566433565,
+      "wait_median_us": 26.816,
+      "resume_events": 1001,
+      "aggregate_runnable_delay_us_per_batch": 0.4857222777222778,
+      "runnable_delay_median_us": 0.192
+    },
+    "cache_lock": {
+      "wait_events": 0,
+      "events_per_batch": 0.0,
+      "aggregate_wait_us_per_batch": 0.0,
+      "wait_median_us": 0,
+      "resume_events": 0,
+      "aggregate_runnable_delay_us_per_batch": 0.0,
+      "runnable_delay_median_us": 0
+    }
+  },
+  "4": {
+    "batches_including_calibration": 1001,
+    "workers": 4004,
+    "loaders": 1001,
+    "pending_woken_by_execute": 4001,
+    "pending": {
+      "wait_events": 4001,
+      "events_per_batch": 3.997002997002997,
+      "aggregate_wait_us_per_batch": 110.32739660339661,
+      "wait_median_us": 27.328,
+      "resume_events": 4001,
+      "aggregate_runnable_delay_us_per_batch": 17.660098901098902,
+      "runnable_delay_median_us": 4.928
+    },
+    "cache_lock": {
+      "wait_events": 10288,
+      "events_per_batch": 10.277722277722278,
+      "aggregate_wait_us_per_batch": 7.466368631368631,
+      "wait_median_us": 0.256,
+      "resume_events": 10288,
+      "aggregate_runnable_delay_us_per_batch": 11.567766233766234,
+      "runnable_delay_median_us": 0.384
+    }
+  }
+}
+
+Additional event classification for GOMAXPROCS=4:
+Of the 10288 caller cache-lock blocking events, 9957 occurred after that caller
+had been made runnable by Client.execute completing its pending load; 331 were
+before that wake-up. The post-load events occur on subsequent Fetch calls,
+since the pending result return path does not reacquire the Client lock.

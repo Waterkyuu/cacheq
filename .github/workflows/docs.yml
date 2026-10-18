@@ -12,13 +12,6 @@ on:
       - '.github/workflows/website.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'docs/**'
-      - 'website/**'
-      - '*.go'
-      - 'go.mod'
-      - '.github/workflows/docs.yml'
-      - '.github/workflows/website.yml'
   workflow_dispatch:
 
 concurrency:
@@ -48,7 +41,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Deploy documentation
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

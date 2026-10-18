@@ -1,8 +1,14 @@
 # 缓存读写、过期与生命周期
 
+跨进程结果复用参见[共享结果缓存](shared-cache.zh-CN.md)。查询状态仍保存在本地；`Get`、`Set`、`Update`、删除与清理保持本地操作语义。
+
 [English](cache.en-US.md) · [查询与条件请求](queries.zh-CN.md) · [缓存失效](invalidation.zh-CN.md)
 
-所有功能都使用同一个 `*cacheq.Client`。下面的片段放在业务函数中，`ctx` 是调用者的 `context.Context`，`client` 是应用入口创建并注入的客户端。需要导入 `cacheq "github.com/Waterkyuu/cacheq"`，以及各片段用到的 `context`、`time`、`errors` 或 `fmt`。
+一个 `Client` 保存类型化结果，管理新鲜期、保留期和共享加载。本文介绍本地读写、预加载、绝对过期时间、淘汰、取消及资源释放。
+
+## API 片段前提
+
+除标为完整程序的示例外，Go 代码块均为业务函数中的局部片段。包含 `return err` 的片段需要放在返回 `error` 的函数中。`ctx` 是非 nil 的调用者 context；`client` 由应用入口创建并注入；`users` 是[查询文档](queries.zh-CN.md)中的查询对象。需导入 `cacheq "github.com/Waterkyuu/cacheq"` 及各片段使用的标准库包。
 
 缓存命中、请求合并和清理次数见[可观测性文档](observability.zh-CN.md)。
 
@@ -27,18 +33,69 @@ defer client.Close()
 
 | 配置 | 用途 | 默认值 |
 | --- | --- | --- |
-| `StaleTime` | 普通查询结果能直接复用多长时间 | 0，结果立即变旧 |
-| `GCTime` | 不再被使用的缓存保留多长时间 | 0，不自动删除；负数也禁用 |
+| `StaleTime` | 普通结果的新鲜时间 | 0，结果立即过期 |
+| `GCTime` | 闲置缓存的保留时间 | 0，不自动删除；负数也禁用 |
 | `MaxEntries` | 缓存结果和错误的条目上限，按 LRU 淘汰 | 0，不限制；负数也禁用 |
-| `MaxAge` | 数据从最后一次写入起最多可用多久 | 0，不限制；负数也禁用 |
-| `Retry` | 初次失败后最多追加多少次尝试 | 0，不重试 |
-| `RetryDelay` | 第几次重试前等待多久，第一次编号为 1 | 从 1 秒开始指数增长，上限 30 秒 |
+| `MaxAge` | 数据从最后一次写入起的最长可用时间 | 0，不限制；负数也禁用 |
+| `Retry` | 初次失败后的追加尝试次数上限 | 0，不重试 |
+| `RetryIf` | 筛选允许追加尝试的错误 | nil，次数允许时重试所有可重试错误 |
+| `RetryDelay` | 追加尝试前的等待时间，第一次编号为 1 | 从 1 秒开始指数增长，上限 30 秒 |
 | `Timeout` | 整次加载的时间上限，包括重试与等待 | 0，不额外设置超时，仍响应调用者 context |
+| `Executor` | 可选的共享并发与排队预算 | nil，不限制执行 |
 | `Clock` | 新鲜期和保留期比较使用的时钟 | `time.Now` |
 
-配置作用于这个客户端。取消和截止时间错误不重试。超时会取消 context，不能强制终止完全忽略 context 的加载函数。
+所有时长字段使用 `time.Duration`。`StaleTime` 为零或负数时，普通结果立即过期；`Retry` 非正时不追加尝试，`Timeout` 非正时不额外设置超时。
 
-## `Get[V]`：只读缓存，不请求
+这些配置提供客户端默认值。[消费者配置](query-options.zh-CN.md)可以覆盖新鲜期、重试和超时；容量、GC、最长可用时间和时钟仍由客户端管理。取消、截止时间错误、`ErrQueueFull` 及 `ErrBatcherClosed` 不重试，即使 `RetryIf` 返回 true。超时会取消 context，不能强制终止完全忽略 context 的加载函数。
+
+通过[执行预算](execution.zh-CN.md)限制活动加载尝试和排队数量，排队时间计入整体超时。
+
+## `Client.Get`：按键读取，无需指定结果类型
+
+`client.Get(key)` 返回 `Snapshot[any]`，包含实际缓存值和共享查询状态，无需指定或检查结果类型。`Data` 保留动态类型；访问具体类型的字段或方法时，需要使用 Go 类型断言。非法键通过 `Snapshot.Err` 返回 `ErrInvalidKey`，已关闭客户端返回 `ErrClosed`。
+
+以下完整程序通过两种 API 读取同一份缓存。将代码保存为已导入 cacheq 的 Go 模块中的 `main.go`，运行 `go run .`。
+
+```go
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+)
+
+// main reads cached state with and without specifying a result type.
+func main() {
+	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	defer client.Close()
+	if err := cacheq.Set(client, "greeting", "hello"); err != nil {
+		panic(err)
+	}
+	state := client.Get("greeting")
+	if state.HasData {
+		fmt.Println("cached:", state.Data)
+	}
+	typed := cacheq.Get[string](client, "greeting")
+	if typed.HasData {
+		fmt.Println("typed:", typed.Data)
+	}
+}
+```
+
+预期输出：
+
+```text
+cached: hello
+typed: hello
+```
+
+两种 API 都不启动请求、不建立订阅。未知键在 `Client.Get` 中返回 `Idle`、`HasData: false` 和 `Data: nil`；读取不会绑定结果类型。`HasData` 用于区分缺失数据与已缓存的 nil 或零值。读取使用客户端默认新鲜期，执行 `MaxAge` 检查，更新 LRU 使用顺序，并重新计算闲置保留期。读取发现超龄数据时，可能通知已有查询对象数据已被移除。持续更新通知使用查询对象的 `Updates()`。
+
+缓存值仍是共享的只读数据。无类型读取不会改变键的类型绑定，也不会放宽写入、类型化读取或订阅的类型检查。
+
+## `Get[V]`：读取缓存状态
 
 ```go
 state := cacheq.Get[string](client, "greeting")
@@ -47,9 +104,7 @@ if state.HasData {
 }
 ```
 
-`Get` 不需要加载函数，不启动请求，也不建立订阅。显式写 `[string]` 是因为没有加载函数可供推断结果类型。未知键返回 `Idle`，不会把这个键绑定成 `string`。
-
-读取已有缓存会重新计算闲置保留期。持续更新通知使用查询对象的 `Updates()`，见[查询文档](queries.zh-CN.md)。
+已知结果类型且需要类型化的 `Snapshot[V]` 时，使用 `cacheq.Get[V]`。显式写 `[string]` 是因为没有加载函数可供推断结果类型。静态结果类型不兼容时返回 `ErrTypeMismatch`；无类型读取 `Client.Get` 不执行此检查。与无类型读取不同，类型化读取在数据缺失时返回 `V` 的零值。两种 API 的其他缓存读取和生命周期行为一致。
 
 ## `Set`：直接安装本地数据
 
@@ -66,7 +121,7 @@ if err := cacheq.Set(client, "feature-flags", map[string]bool{"search": true}); 
 
 缓存值是共享的只读数据。修改切片、映射或指针指向的数据前，先复制，再 `Set`；直接修改共享数据不会发送通知，也可能引起数据竞争。
 
-## `Prefetch`：提前准备后面要用的数据
+## `Prefetch`：预加载
 
 ```go
 getGreeting := func(context.Context) (string, error) {
@@ -80,16 +135,17 @@ if err := cacheq.Prefetch(
 ); err != nil {
 	return err
 }
+
 ```
 
 等待缓存准备完成，只返回错误，不返回数据。后续 `Fetch` 或 `Query` 能复用它。已有新鲜缓存不会重新加载；同键正在加载时共用请求。实际加载函数可以是查询文档中的 HTTP 请求。
 
-## `FetchWithExpiry` 与 `Loader`：数据自带截止时间
+## `FetchWithExpiry` 与 `Loader`：绝对新鲜期
 
-比如磁盘保存的数据原本一分钟后过期，恢复时应保留原截止时间。
+恢复持久化数据时，可以保留该记录原有的新鲜期截止时间。
 
 ```go
-// In production, obtain both fields from the same persisted cache record.
+// In production, obtain both fields from the same persisted record.
 savedValue := "restored"
 savedExpiresAt := time.Now().Add(time.Minute)
 load := func(context.Context) (string, time.Time, error) {
@@ -107,7 +163,7 @@ if err != nil {
 _ = value
 ```
 
-`Loader[V]` 表示 `func(context.Context) (V, time.Time, error)`。第二项是绝对截止时间，而非从这次读取开始重新计时。零截止时间或已过期时间使结果立即变旧。
+`Loader[V]` 表示 `func(context.Context) (V, time.Time, error)`。第二项保留原记录的绝对新鲜期截止时间，不会从本次读取重新计算新鲜期；`MaxAge` 仍从数据安装到当前客户端时开始计时。零截止时间或已过期时间使结果立即变旧。
 
 通常错误不会安装新数据。如果加载函数同时返回未来的截止时间和错误，则明确缓存兜底值及该错误，截止前直接返回它们；即使兜底值是零值也有 `HasData: true`。启用 `MaxAge` 时，该截止时间可能被缩短。刷新失败保留之前成功的数据，但不会保留超过 `MaxAge` 的值。
 
@@ -118,13 +174,14 @@ client := cacheq.NewClient(cacheq.Options{
 	StaleTime: time.Minute,
 	GCTime:    5 * time.Minute,
 })
+defer client.Close()
 ```
 
-新鲜期和保留期是两回事：一分钟后数据变旧，仍可在后台刷新时显示；只有没有查询对象、没有请求、持续五分钟没有读写时才会删除。
+新鲜期与保留期独立：一分钟后数据过期，仍可在后台刷新时读取；只有没有查询对象、没有请求、持续五分钟没有读写时才会删除。
 
 读写重新计时。查询对象存在时暂停删除，包括禁用的查询对象；请求运行时也暂停。最后一个查询对象关闭或请求结束后恢复计时。`Remove`、`Clear`、`Close` 会释放对应定时器。容量淘汰和数据最长可用时间是独立策略，见下文。
 
-`Clock` 可以替换比较用的时钟，但不替换真实定时器调度器。库内的 GC 边界测试同时替换时钟和内部调度器，避免业务测试依赖真实等待。
+`Clock` 替换时间比较使用的时钟，不替换真实定时器调度。仅改变注入时钟不会触发 GC 定时器。
 
 ## `MaxEntries`：按 LRU 限制缓存条目数
 
@@ -159,7 +216,7 @@ defer client.Close()
 
 年龄在缓存操作和发布状态时检查。仅时间经过不会发送通知或启动请求。读取发现超龄数据时，会通知已有查询对象；新建启用的 `Query` 或调用 `Fetch` 可以加载替代值。之前拿到的快照是普通值，不会被追溯修改。零值或负数 `MaxAge` 禁用此策略。
 
-## 可运行的容量与年龄示例
+## 完整示例：容量与最长可用时间
 
 把程序复制到已引入 cacheq 的应用中。示例注入时钟，不需要等待或发起请求就能验证年龄边界。
 
@@ -193,20 +250,26 @@ func main() {
 	if err := cacheq.Set(client, "c", "third"); err != nil {
 		panic(err)
 	}
-	fmt.Println("retained:", cacheq.Get[string](client, "a").HasData,
-		cacheq.Get[string](client, "b").HasData, cacheq.Get[string](client, "c").HasData)
+	fmt.Println(
+		"retained:",
+		cacheq.Get[string](client, "a").HasData,
+		cacheq.Get[string](client, "b").HasData,
+		cacheq.Get[string](client, "c").HasData,
+	)
 	now = now.Add(10 * time.Minute)
 	fmt.Println("over age:", cacheq.Get[string](client, "a").HasData,
 		cacheq.Get[string](client, "c").HasData)
 }
 ```
 
+预期输出：
+
 ```text
 retained: true false true
 over age: false false
 ```
 
-## `Cancel`：结束这个键正在进行的请求
+## `Cancel`：取消键的活动加载
 
 ```go
 if err := client.Cancel("greeting"); err != nil {
@@ -215,6 +278,8 @@ if err := client.Cancel("greeting"); err != nil {
 ```
 
 保留已有数据，取消正在运行的请求，通知消费者请求已停止。加载函数需要响应 context。没有请求时也可以调用，不会自动重启请求。
+
+`Cancel` 和 `Remove` 也接受 `[]any`、`func(any) bool` 和 `QueryFilter`，共用同一套查询筛选。已有键筛选、条件函数执行和校验规则见[统一查询筛选](query-filters.zh-CN.md)。
 
 ## `Remove`：删除一个键
 
@@ -228,7 +293,7 @@ if err := client.Remove("greeting"); err != nil {
 
 现有查询对象还在时，该键的类型约束继续保留，防止它收到其他类型的数据。要改用另一种类型，应先关闭所有旧查询对象，再删除该键，然后创建新类型的查询。
 
-## `Clear`：清空数据，继续使用客户端
+## `Clear`：清空缓存
 
 ```go
 client.Clear()
@@ -236,23 +301,23 @@ client.Clear()
 
 清空所有结果、取消正在进行的请求、停止清理定时器。现有查询对象及其类型约束仍在，收到无数据状态，之后可以主动刷新。不会因清空而自动发起请求。
 
-## 两种 `Close`：释放消费者与关闭整个应用客户端
+## 关闭查询对象与客户端
 
 ```go
-users.Close()  // Release one query consumer.
-client.Close() // Stop all client-owned work and close every query channel.
+users.Close()  // Release one consumer without canceling shared work.
+client.Close() // Cancel all work and close all query channels permanently.
 ```
 
-查询对象 `Close` 不会取消共享请求，也不会删除已有数据。客户端 `Close` 取消所有请求、关闭所有更新通道、清空缓存和定时器，并永久拒绝新操作。重复关闭安全。
+查询对象 `Close` 不会取消共享请求，也不会删除已有数据。客户端 `Close` 取消所有请求、关闭查询更新通道及[事件订阅](events.zh-CN.md)、清空缓存和定时器，并永久拒绝新操作。重复关闭安全。
 
 查询对象关闭后 `Snapshot()` 仍可读取兼容的共享缓存，`SetEnabled` 和 `Refetch` 返回 `ErrQueryClosed`。客户端关闭后读写操作返回 `ErrClosed`。
 
-## 错误如何判断
+## 错误处理
 
 ```go
 state := cacheq.Get[int](client, "greeting")
 if errors.Is(state.Err, cacheq.ErrTypeMismatch) {
-	// Use the result type associated with this key, or choose a different key.
+	// Use this key's declared result type or select a different key.
 }
 ```
 
@@ -264,11 +329,11 @@ if errors.Is(state.Err, cacheq.ErrTypeMismatch) {
 | `ErrInvalidKey` | 键为 nil，或包含不能比较的值 |
 | `ErrNoFetcher` | 创建查询没有加载函数，或需要请求却没有加载函数 |
 
-`Query` 始终需要非 nil 加载函数。`Fetch[V]` 和 `FetchWithExpiry[V]` 可以传 nil 来读取**已有新鲜缓存**；缺失或过期时返回 `ErrNoFetcher`。只想读状态时使用 `Get[V]`。
+`Query` 始终需要非 nil 加载函数。`Fetch[V]` 和 `FetchWithExpiry[V]` 可以传 nil 来读取**已有新鲜缓存**；缺失或过期时返回 `ErrNoFetcher`。无需指定结果类型的状态读取使用 `Client.Get`，类型化读取使用 `Get[V]`。
 
-静态类型与动态值不同：`Query[any]` 的键绑定的是 `any`，对它写数据应使用 `Set[any]`；直接传入具体字符串的 `Set` 会推断为 `string`，因此产生类型冲突。正常业务应使用具体类型。
+静态类型与动态值不同：`Get[any]` 要求键绑定的静态类型是 `any`，不等同于可读取任意已有结果类型的 `Client.Get`。`Query[any]` 的键绑定的是 `any`，对它写数据应使用 `Set[any]`；直接传入具体字符串的 `Set` 会推断为 `string`，因此产生类型冲突。正常业务应使用具体类型。
 
-## 验证这些功能
+## 验证
 
 ```sh
 go test -race ./e2e -run 'Test(HTTPCapacityEviction|HTTPMaxAge|HTTPCancellation|HTTPRetriesAndRetainedData|PublicCacheOperations)' -count=1

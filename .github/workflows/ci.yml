@@ -30,6 +30,7 @@ jobs:
         run: |
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           sh .github/scripts/release_test.sh
+          sh .github/scripts/dependabot_merge_test.sh
       - name: Check module metadata
         run: |
           go mod tidy
@@ -85,6 +86,71 @@ jobs:
       - run: go test -race ./... -count=1
       - run: go build -o "$RUNNER_TEMP/cacheq-mcp" .
       - run: go run .
+
+  redis:
+    name: Redis shared store
+    runs-on: ubuntu-latest
+    env:
+      CACHEQ_REQUIRE_REDIS: '1'
+    defaults:
+      run:
+        working-directory: store/redis
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: store/redis/go.sum
+      - name: Install local integration-test server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          command -v redis-server
+      - run: go mod verify
+      - name: Check adapter module metadata
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - run: go vet ./...
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: store/redis
+          args: --config ../../.golangci.yml --timeout=5m
+      - run: go test -race ./... -count=1
+      - run: go build ./...
+
+      - name: Check Redis example module
+        working-directory: examples/redis
+        run: |
+          go mod verify
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go vet ./...
+          go test -race ./... -count=1
+          go build ./...
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: examples/redis
+          args: --config ../../.golangci.yml --timeout=5m
+      - name: Run Redis examples
+        working-directory: examples/redis
+        env:
+          REDIS_ADDR: 127.0.0.1:16379
+        run: |
+          redis-server --bind 127.0.0.1 --port 16379 --save '' --appendonly no &
+          redis_pid=$!
+          trap 'kill "$redis_pid"; wait "$redis_pid" || true' EXIT
+          for _ in {1..50}; do
+            if redis-cli -h 127.0.0.1 -p 16379 ping >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.1
+          done
+          redis-cli -h 127.0.0.1 -p 16379 ping
+          go run ./shared_cache
+          go run ./shared_invalidation
 
   test:
     name: Test (${{ matrix.os }}, Go ${{ matrix.go }})

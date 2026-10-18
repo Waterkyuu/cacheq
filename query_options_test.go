@@ -9,36 +9,129 @@ import (
 	"time"
 )
 
-// TestQueryOptionsDefaultEnabled keeps automatic loading on unless the final options explicitly disable it.
+// TestSharedQueryOptions lets explicit reads share a disabled handle's freshness and retry configuration.
+func TestSharedQueryOptions(t *testing.T) {
+	for _, api := range []string{"fetch", "prefetch", "refetch"} {
+		t.Run(api, func(t *testing.T) {
+			c, _ := newAgeClient(t, Options{})
+			hour, retries := time.Hour, 1
+			failure := errors.New("offline")
+			calls, predicates, delays := 0, 0, 0
+			options := QueryOptions{
+				Disable: true, StaleTime: &hour, Retry: &retries,
+				RetryIf: func(err error) bool { predicates++; return errors.Is(err, failure) },
+				RetryDelay: func(attempt int) time.Duration {
+					delays++
+					if attempt != 1 {
+						t.Errorf("retry attempt = %d", attempt)
+					}
+					return 0
+				},
+			}
+			load := func(context.Context) (int, error) {
+				calls++
+				if calls == 1 {
+					return 0, failure
+				}
+				return 42, nil
+			}
+			h := Query(c, "user", load, options)
+			t.Cleanup(h.Close)
+			if err := c.Invalidate("user"); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 0 || h.Snapshot().Fetching {
+				t.Fatal("disabled handle loaded automatically")
+			}
+			var err error
+			switch api {
+			case "fetch":
+				_, err = Fetch(context.Background(), c, "user", load, options)
+			case "prefetch":
+				err = Prefetch(context.Background(), c, "user", load, options)
+			case "refetch":
+				_, err = h.Refetch(context.Background())
+			}
+			state := h.Snapshot()
+			if err != nil || state.Data != 42 || state.Stale || state.Fetching {
+				t.Fatalf("explicit %s: state=%+v err=%v", api, state, err)
+			}
+			if calls != 2 || predicates != 1 || delays != 1 {
+				t.Fatalf("calls=%d predicates=%d delays=%d", calls, predicates, delays)
+			}
+			if err := Prefetch(context.Background(), c, "user", load, options); err != nil || calls != 2 {
+				t.Fatalf("prefetch ignored shared freshness: %v, calls=%d", err, calls)
+			}
+			if !Get[int](c, "user").Stale {
+				t.Fatal("consumer policy changed Client defaults")
+			}
+		})
+	}
+}
+
+// TestPrefetchOptionsSelection verifies defaults and freshness with individual overrides.
+func TestPrefetchOptionsSelection(t *testing.T) {
+	hour, zero, retries := time.Hour, time.Duration(0), 0
+	for _, tc := range []struct {
+		// name identifies the loading configuration being checked.
+		name string
+		// options supplies one loading policy for this operation.
+		options QueryOptions
+		// cached indicates whether the configuration accepts the stored result.
+		cached bool
+	}{
+		{name: "defaults"},
+		{name: "fresh disabled", options: QueryOptions{Disable: true, StaleTime: &hour}, cached: true},
+		{name: "zero freshness", options: QueryOptions{StaleTime: &zero}},
+		{name: "retry only", options: QueryOptions{Retry: &retries}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, now := newAgeClient(t, Options{StaleTime: time.Minute})
+			Set(c, "user", 1)
+			now.Store(int64(time.Minute))
+			calls := 0
+			err := Prefetch(context.Background(), c, "user", func(context.Context) (int, error) {
+				calls++
+				return 2, nil
+			}, tc.options)
+			want, wantCalls := 2, 1
+			if tc.cached {
+				want, wantCalls = 1, 0
+			}
+			if err != nil || Get[int](c, "user").Data != want || calls != wantCalls {
+				t.Fatalf("prefetch = %+v, %v, calls=%d", Get[int](c, "user"), err, calls)
+			}
+		})
+	}
+}
+
+// TestQueryOptionsDefaultEnabled keeps automatic loading on unless the configuration disables it.
 func TestQueryOptionsDefaultEnabled(t *testing.T) {
 	freshness, timeout, retries := time.Minute, time.Hour, 1
 	for _, tc := range []struct {
-		// name identifies the omitted or explicit enablement setting.
+		// name identifies the zero-value or explicit enablement setting.
 		name string
 		// options contains the complete option values supplied to Query.
-		options []QueryOptions
+		options QueryOptions
 		// automatic indicates whether construction and invalidation should load data.
 		automatic bool
 	}{
-		{name: "omitted", automatic: true},
-		{name: "empty", options: []QueryOptions{{}}, automatic: true},
-		{name: "freshness only", options: []QueryOptions{{StaleTime: &freshness}}, automatic: true},
-		{name: "retry only", options: []QueryOptions{{Retry: &retries}}, automatic: true},
-		{name: "timeout only", options: []QueryOptions{{Timeout: &timeout}}, automatic: true},
-		{name: "retry predicate only", options: []QueryOptions{{RetryIf: func(error) bool { return false }}}, automatic: true},
-		{name: "retry delay only", options: []QueryOptions{{RetryDelay: func(int) time.Duration { return 0 }}}, automatic: true},
-		{name: "enabled", options: []QueryOptions{{Disable: false}}, automatic: true},
-		{name: "disabled", options: []QueryOptions{{Disable: true}}},
-		{name: "disabled with freshness", options: []QueryOptions{{Disable: true, StaleTime: &freshness}}},
-		{name: "last omitted flag", options: []QueryOptions{{Disable: true}, {StaleTime: &freshness}}, automatic: true},
-		{name: "last disabled flag", options: []QueryOptions{{StaleTime: &freshness}, {Disable: true}}},
+		{name: "defaults", automatic: true},
+		{name: "freshness only", options: QueryOptions{StaleTime: &freshness}, automatic: true},
+		{name: "retry only", options: QueryOptions{Retry: &retries}, automatic: true},
+		{name: "timeout only", options: QueryOptions{Timeout: &timeout}, automatic: true},
+		{name: "retry predicate only", options: QueryOptions{RetryIf: func(error) bool { return false }}, automatic: true},
+		{name: "retry delay only", options: QueryOptions{RetryDelay: func(int) time.Duration { return 0 }}, automatic: true},
+		{name: "enabled", options: QueryOptions{Disable: false}, automatic: true},
+		{name: "disabled", options: QueryOptions{Disable: true}},
+		{name: "disabled with freshness", options: QueryOptions{Disable: true, StaleTime: &freshness}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newInvalidationClient(t)
 			var calls atomic.Int32
 			handle := Query(c, "users", func(context.Context) (int, error) {
 				return int(calls.Add(1)), nil
-			}, tc.options...)
+			}, tc.options)
 			t.Cleanup(handle.Close)
 			if tc.automatic {
 				awaitState(t, handle.Updates(), func(s Snapshot[int]) bool { return s.Data == 1 && !s.Fetching })
@@ -150,8 +243,53 @@ func TestQueryOptionsFreshness(t *testing.T) {
 	}
 }
 
-// TestFetchOptionsFreshness applies per-call cache decisions without registering policies on the key.
-func TestFetchOptionsFreshness(t *testing.T) {
+// TestQueryOptionsSelection verifies empty defaults and explicit per-call overrides.
+func TestQueryOptionsSelection(t *testing.T) {
+	hour, zero := time.Hour, time.Duration(0)
+	retries := 0
+	for _, tc := range []struct {
+		// name identifies the loading configuration.
+		name string
+		// options contains the complete overrides passed to Fetch.
+		options QueryOptions
+		// cached indicates whether the configured freshness reuses the stored value.
+		cached bool
+	}{
+		{name: "defaults"},
+		{name: "single", options: QueryOptions{StaleTime: &hour}, cached: true},
+		{name: "zero freshness", options: QueryOptions{StaleTime: &zero}},
+		{name: "retry only", options: QueryOptions{Retry: &retries}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, now := newAgeClient(t, Options{StaleTime: time.Minute})
+			if err := Set(c, "users", 7); err != nil {
+				t.Fatal(err)
+			}
+			now.Store(int64(time.Minute))
+			var calls int
+			value, err := Fetch(
+				context.Background(),
+				c,
+				"users",
+				func(context.Context) (int, error) {
+					calls++
+					return 8, nil
+				},
+				tc.options,
+			)
+			want, wantCalls := 8, 1
+			if tc.cached {
+				want, wantCalls = 7, 0
+			}
+			if err != nil || value != want || calls != wantCalls {
+				t.Fatalf("value=%d err=%v calls=%d, want %d and %d calls", value, err, calls, want, wantCalls)
+			}
+		})
+	}
+}
+
+// TestImperativeOptionsFreshness applies per-call cache decisions without registering policies on the key.
+func TestImperativeOptionsFreshness(t *testing.T) {
 	c, now := newAgeClient(t, Options{StaleTime: time.Minute})
 	var calls int
 	fetch := func(context.Context) (int, error) {
@@ -163,7 +301,7 @@ func TestFetchOptionsFreshness(t *testing.T) {
 		t.Fatal(err)
 	}
 	now.Store(int64(time.Minute))
-	value, err := FetchWithOptions(context.Background(), c, "users", fetch, FetchOptions{StaleTime: &hour})
+	value, err := Fetch(context.Background(), c, "users", fetch, QueryOptions{StaleTime: &hour})
 	if err != nil || value != 1 || calls != 1 {
 		t.Fatalf("longer policy = %d, %v; calls=%d", value, err, calls)
 	}
@@ -171,14 +309,14 @@ func TestFetchOptionsFreshness(t *testing.T) {
 	if err != nil || value != 2 || calls != 2 {
 		t.Fatalf("default policy = %d, %v; calls=%d", value, err, calls)
 	}
-	value, err = FetchWithOptions(context.Background(), c, "users", fetch, FetchOptions{StaleTime: &zero})
+	value, err = Fetch(context.Background(), c, "users", fetch, QueryOptions{StaleTime: &zero})
 	if err != nil || value != 3 || calls != 3 {
 		t.Fatalf("zero freshness = %d, %v; calls=%d", value, err, calls)
 	}
 	if Get[int](c, "users").Stale {
 		t.Fatal("the last caller's zero freshness changed Client freshness")
 	}
-	value, err = FetchWithOptions[int](context.Background(), c, "users", nil, FetchOptions{StaleTime: &hour})
+	value, err = Fetch[int](context.Background(), c, "users", nil, QueryOptions{StaleTime: &hour})
 	if err != nil || value != 3 {
 		t.Fatalf("cache-only lookup = %d, %v", value, err)
 	}
@@ -210,8 +348,8 @@ func TestQueryOptionsExplicitExpiry(t *testing.T) {
 		}
 	}
 	now.Store(int64(2 * time.Minute))
-	if _, err := FetchWithOptions[int](
-		context.Background(), c, "explicit", nil, FetchOptions{StaleTime: &hour},
+	if _, err := Fetch[int](
+		context.Background(), c, "explicit", nil, QueryOptions{StaleTime: &hour},
 	); !errors.Is(err, ErrNoFetcher) {
 		t.Fatalf("expired explicit deadline = %v", err)
 	}
@@ -250,28 +388,28 @@ func TestQueryOptionsRetries(t *testing.T) {
 		// name identifies the policy and terminal error combination.
 		name string
 		// options supplies the per-consumer overrides being exercised.
-		options FetchOptions
+		options QueryOptions
 		// failure is returned by every loader attempt.
 		failure error
 		// attempts is the expected number of actual loader invocations.
 		attempts int
 	}{
 		{name: "inherit", failure: transient, attempts: 3},
-		{name: "disable", options: FetchOptions{Retry: &zero}, failure: transient, attempts: 1},
-		{name: "limit", options: FetchOptions{Retry: &one}, failure: transient, attempts: 2},
+		{name: "disable", options: QueryOptions{Retry: &zero}, failure: transient, attempts: 1},
+		{name: "limit", options: QueryOptions{Retry: &one}, failure: transient, attempts: 2},
 		{name: "client predicate", failure: permanent, attempts: 1},
 		{
 			name: "override predicate", failure: permanent, attempts: 3,
-			options: FetchOptions{RetryIf: func(error) bool { return true }},
+			options: QueryOptions{RetryIf: func(error) bool { return true }},
 		},
 		{
 			name: "reject transient", failure: transient, attempts: 1,
-			options: FetchOptions{RetryIf: func(error) bool { return false }},
+			options: QueryOptions{RetryIf: func(error) bool { return false }},
 		},
 		{name: "cancel", failure: context.Canceled, attempts: 1},
 		{name: "deadline", failure: context.DeadlineExceeded, attempts: 1},
 	} {
-		for _, api := range []string{"fetch", "query"} {
+		for _, api := range []string{"fetch", "prefetch", "query"} {
 			t.Run(tc.name+"/"+api, func(t *testing.T) {
 				c := NewClient(Options{
 					Retry: 2, RetryDelay: func(int) time.Duration { return 0 },
@@ -284,15 +422,15 @@ func TestQueryOptionsRetries(t *testing.T) {
 					return 0, fmt.Errorf("load: %w", tc.failure)
 				}
 				var err error
-				if api == "fetch" {
-					_, err = FetchWithOptions(context.Background(), c, "users", fetch, tc.options)
-				} else {
-					handle := Query(c, "users", fetch, QueryOptions{
-						Disable:    true,
-						Retry:      tc.options.Retry,
-						RetryIf:    tc.options.RetryIf,
-						RetryDelay: tc.options.RetryDelay,
-					})
+				switch api {
+				case "fetch":
+					_, err = Fetch(context.Background(), c, "users", fetch, tc.options)
+				case "prefetch":
+					err = Prefetch(context.Background(), c, "users", fetch, tc.options)
+				case "query":
+					options := tc.options
+					options.Disable = true
+					handle := Query(c, "users", fetch, options)
 					t.Cleanup(handle.Close)
 					_, err = handle.Refetch(context.Background())
 				}
@@ -346,7 +484,7 @@ func TestQueryOptionsTimeout(t *testing.T) {
 		{name: "override", timeout: &hour, duration: time.Hour},
 		{name: "disable", timeout: &zero},
 	} {
-		for _, api := range []string{"fetch", "query"} {
+		for _, api := range []string{"fetch", "prefetch", "query"} {
 			t.Run(tc.name+"/"+api, func(t *testing.T) {
 				c := NewClient(Options{Timeout: 2 * time.Hour})
 				t.Cleanup(c.Close)
@@ -357,15 +495,19 @@ func TestQueryOptionsTimeout(t *testing.T) {
 				}
 				var deadline time.Time
 				var err error
-				if api == "fetch" {
-					deadline, err = FetchWithOptions(
+				switch api {
+				case "fetch":
+					deadline, err = Fetch(
 						context.Background(),
 						c,
 						"users",
 						fetch,
-						FetchOptions{Timeout: tc.timeout},
+						QueryOptions{Timeout: tc.timeout},
 					)
-				} else {
+				case "prefetch":
+					err = Prefetch(context.Background(), c, "users", fetch, QueryOptions{Timeout: tc.timeout})
+					deadline = Get[time.Time](c, "users").Data
+				case "query":
 					handle := Query(c, "users", fetch, QueryOptions{Disable: true, Timeout: tc.timeout})
 					t.Cleanup(handle.Close)
 					deadline, err = handle.Refetch(context.Background())
@@ -394,10 +536,10 @@ func TestQueryOptionsTimeout(t *testing.T) {
 	callerDeadline := time.Now().Add(time.Minute)
 	ctx, cancel := context.WithDeadline(context.Background(), callerDeadline)
 	defer cancel()
-	deadline, err := FetchWithOptions(ctx, c, "users", func(ctx context.Context) (time.Time, error) {
+	deadline, err := Fetch(ctx, c, "users", func(ctx context.Context) (time.Time, error) {
 		deadline, _ := ctx.Deadline()
 		return deadline, nil
-	}, FetchOptions{Timeout: &zero})
+	}, QueryOptions{Timeout: &zero})
 	if err != nil || !deadline.Equal(callerDeadline) {
 		t.Fatalf("caller deadline = %v, %v", deadline, err)
 	}
@@ -444,7 +586,7 @@ func TestQueryOptionsSharedRequest(t *testing.T) {
 	t.Cleanup(joiner.Close)
 	result := make(chan error, 1)
 	go func() {
-		_, err := FetchWithOptions(context.Background(), c, "users", joinFetch, FetchOptions{
+		_, err := Fetch(context.Background(), c, "users", joinFetch, QueryOptions{
 			Timeout: &zero, RetryIf: func(error) bool { return false },
 		})
 		result <- err
@@ -474,10 +616,10 @@ func TestQueryOptionsRetryCallback(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var calls, predicates, delays int
-	_, err := FetchWithOptions(ctx, c, "users", func(context.Context) (int, error) {
+	_, err := Fetch(ctx, c, "users", func(context.Context) (int, error) {
 		calls++
 		return 0, errors.New("offline")
-	}, FetchOptions{
+	}, QueryOptions{
 		RetryIf: func(error) bool {
 			predicates++
 			c.Stats()

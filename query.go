@@ -36,24 +36,35 @@ type QueryHandle[V any] struct {
 }
 
 // Query creates a typed handle and loads missing or stale data in the background.
-// Automatic loading defaults to enabled; if options are supplied, the last option wins.
+// Automatic loading defaults to enabled; omitted options use Client defaults.
 // Nil policy fields inherit Client defaults; each handle evaluates its own ordinary freshness.
 // Concurrent loads share the initiator's policy; automatic invalidation uses the oldest enabled handle.
 // Invalid keys, incompatible result types, and nil fetchers are reported through Snapshot and Updates.
+// Extra configurations produce ErrTooManyOptions through the same failed-handle contract.
 // Disabled handles still receive shared updates and may explicitly Refetch. Close releases the subscription.
 func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOptions) *QueryHandle[V] {
-	enabled := true
-	policy := client.options
-	for _, option := range options {
-		// A freshness-only override must not disable loading just because enablement was omitted.
-		enabled = !option.Disable
-		policy = resolvePolicy(client.options, option.fetchOptions())
+	definition, err := QueryDefinition(key, fetch, options...)
+	return query(client, definition, err)
+}
+
+// query registers a typed subscription and its definition's labels before starting automatic work.
+// A constructor error produces a failed handle without registering the zero definition.
+func query[V any](client *Client, definition Definition[V], constructorErr error) *QueryHandle[V] {
+	key := definition.Key
+	enabled := !definition.Options.Disable
+	var request queryRequest
+	if constructorErr == nil {
+		request = definition.request(client.options, TriggerQuery)
 	}
+	policy := request.options
 	handle := &QueryHandle[V]{client: client, key: key, updates: make(chan Snapshot[V], 1)}
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	handle.err = client.checkLocked(key, reflect.TypeFor[V]())
-	if handle.err == nil && fetch == nil {
+	handle.err = constructorErr
+	if handle.err == nil {
+		handle.err = client.checkLocked(key, reflect.TypeFor[V]())
+	}
+	if handle.err == nil && definition.Fetcher == nil {
 		handle.err = ErrNoFetcher
 	}
 	if handle.err != nil {
@@ -63,9 +74,11 @@ func Query[V any](client *Client, key any, fetch Fetcher[V], options ...QueryOpt
 	}
 	// Bind before registering a typed publisher so no concurrent writer can install another type.
 	_ = client.bindLocked(key, reflect.TypeFor[V]())
+	client.registerTagsLocked(key, request.tags)
+	client.registerSharedLocked(key, request)
 	observer := &subscription{
 		enabled: enabled,
-		request: eraseFetcher(fetch, policy),
+		request: request,
 		order:   client.nextObserver,
 		publish: func(state Snapshot[any]) { publishLatest(handle.updates, typedSnapshot[V](state)) },
 		close:   func() { close(handle.updates) },
@@ -94,7 +107,7 @@ func (h *QueryHandle[V]) Snapshot() Snapshot[V] {
 	if h.err != nil {
 		return Snapshot[V]{Status: Error, Stale: true, Err: h.err}
 	}
-	return getSnapshot[V](h.client, h.key, h.observer.request.options)
+	return typedSnapshot[V](h.client.getSnapshot(h.key, reflect.TypeFor[V](), h.observer.request.options))
 }
 
 // Updates returns the initial and latest states; slow readers may skip intermediate transitions.
@@ -114,7 +127,9 @@ func (h *QueryHandle[V]) SetEnabled(enabled bool) error {
 	}
 	h.observer.enabled = enabled
 	if enabled {
-		c.loadObservedLocked(h.key, h.observer.request)
+		request := h.observer.request
+		request.trigger = TriggerEnable
+		c.loadObservedLocked(h.key, request)
 	}
 	return nil
 }
@@ -126,11 +141,13 @@ func (h *QueryHandle[V]) Refetch(ctx context.Context) (V, error) {
 		var zero V
 		return zero, h.err
 	}
+	request := h.observer.request
+	request.trigger = TriggerRefetch
 	value, err := h.client.fetch(
 		ctx,
 		h.key,
 		reflect.TypeFor[V](),
-		h.observer.request,
+		request,
 		true,
 		h.observer,
 	)
@@ -172,38 +189,24 @@ func (h *QueryHandle[V]) activeLocked() error {
 
 // Fetch waits for fresh data without owning a long-lived subscription.
 // The result type is inferred from fetch, allowing one client to serve unrelated data types.
-func Fetch[V any](ctx context.Context, client *Client, key any, fetch Fetcher[V]) (V, error) {
-	value, err := client.fetch(
-		ctx,
-		key,
-		reflect.TypeFor[V](),
-		eraseFetcher(fetch, client.options),
-		false,
-		nil,
-	)
-	return typedValue[V](value), err
-}
-
-// FetchWithOptions waits for data using this call's copied overrides of Client defaults.
+// An omitted configuration uses Client defaults; extra values return ErrTooManyOptions without loading.
+// Disable controls automatic subscriptions only and does not suppress this explicit read.
 // Ordinary freshness is evaluated independently; explicit loader deadlines stay authoritative.
 // Joining in-flight work preserves its initiator's loader, retries, and timeout.
 // Canceling ctx stops this caller's wait; a configured timeout applies only to loads it starts.
-func FetchWithOptions[V any](
+func Fetch[V any](
 	ctx context.Context,
 	client *Client,
 	key any,
 	fetch Fetcher[V],
-	options FetchOptions,
+	options ...QueryOptions,
 ) (V, error) {
-	value, err := client.fetch(
-		ctx,
-		key,
-		reflect.TypeFor[V](),
-		eraseFetcher(fetch, resolvePolicy(client.options, options)),
-		false,
-		nil,
-	)
-	return typedValue[V](value), err
+	definition, err := QueryDefinition(key, fetch, options...)
+	if err != nil {
+		var zero V
+		return zero, err
+	}
+	return definition.Fetch(ctx, client)
 }
 
 // FetchWithExpiry loads data with an absolute freshness deadline, preserving the age of restored data.
@@ -220,7 +223,7 @@ func FetchWithExpiry[V any](ctx context.Context, client *Client, key any, load L
 		ctx,
 		key,
 		reflect.TypeFor[V](),
-		queryRequest{load: erased, options: client.options},
+		queryRequest{load: erased, options: client.options, trigger: TriggerFetch},
 		false,
 		nil,
 	)
@@ -228,35 +231,51 @@ func FetchWithExpiry[V any](ctx context.Context, client *Client, key any, load L
 }
 
 // Prefetch warms a typed key without returning its data; unlike browser prefetch APIs it returns errors.
-func Prefetch[V any](ctx context.Context, client *Client, key any, fetch Fetcher[V]) error {
-	_, err := Fetch(
-		ctx,
-		client,
-		key,
-		fetch,
-	)
-	return err
+// It uses the supplied loading policy like Fetch and ignores Disable.
+// Omitted options use Client defaults; extra values return ErrTooManyOptions without loading.
+func Prefetch[V any](
+	ctx context.Context,
+	client *Client,
+	key any,
+	fetch Fetcher[V],
+	options ...QueryOptions,
+) error {
+	definition, err := QueryDefinition(key, fetch, options...)
+	if err != nil {
+		return err
+	}
+	return definition.Prefetch(ctx, client)
+}
+
+// Get reads cached state without requiring a result type, starting a request, or creating a subscription.
+// Data retains its dynamic type; use HasData to distinguish missing data from a cached nil or zero value.
+// Reads use Client freshness defaults and restart inactive retention without binding an unused key.
+// Invalid keys and closed clients return errors; existing result type bindings remain unchanged.
+func (c *Client) Get(key any) Snapshot[any] {
+	return c.getSnapshot(key, nil, c.options)
 }
 
 // Get reads typed cached state without starting a request or binding a previously unused key.
 // Incompatible result types return ErrTypeMismatch instead of panicking or exposing another query's data.
+// Use Client.Get to inspect cached state without specifying or checking a result type.
 func Get[V any](client *Client, key any) Snapshot[V] {
-	return getSnapshot[V](client, key, client.options)
+	return typedSnapshot[V](client.getSnapshot(key, reflect.TypeFor[V](), client.options))
 }
 
 // getSnapshot reads shared state using one consumer's freshness without changing another consumer's policy.
-func getSnapshot[V any](client *Client, key any, options Options) Snapshot[V] {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if err := client.checkLocked(key, reflect.TypeFor[V]()); err != nil {
-		return Snapshot[V]{Status: Error, Stale: true, Err: err}
+// A nil result type skips type matching while preserving key validation and cache lifecycle behavior.
+func (c *Client) getSnapshot(key any, typ reflect.Type, options Options) Snapshot[any] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.checkLocked(key, typ); err != nil {
+		return Snapshot[any]{Status: Error, Stale: true, Err: err}
 	}
-	if client.expireDataLocked(key) {
-		client.notifyLocked(key)
+	if c.expireDataLocked(key) {
+		c.notifyLocked(key)
 	}
-	client.touchCapacityLocked(key)
-	client.touchGCLocked(key)
-	return typedSnapshot[V](client.withFreshnessLocked(key, client.snapshotLocked(key), options))
+	c.touchCapacityLocked(key)
+	c.touchGCLocked(key)
+	return c.withFreshnessLocked(key, c.snapshotLocked(key), options)
 }
 
 // Set installs a typed local result, cancels older loads, and notifies all compatible handles.
@@ -267,16 +286,25 @@ func Set[V any](client *Client, key any, value V) error {
 	if err := client.bindLocked(key, reflect.TypeFor[V]()); err != nil {
 		return err
 	}
-	client.cancelLocked(key)
-	now := client.options.Clock()
-	client.entries[key] = entry{
-		typ: reflect.TypeFor[V](), value: value, hasData: true, updatedAt: now,
-		expiresAt: client.limitExpiry(now, now.Add(client.options.StaleTime)), ordinary: true,
-	}
-	client.touchCapacityLocked(key)
-	client.touchGCLocked(key)
-	client.notifyLocked(key)
+	client.setLocked(key, value, reflect.TypeFor[V]())
 	return nil
+}
+
+// setLocked installs already-validated local data while serializing cancellation and notifications.
+func (c *Client) setLocked(key, value any, typ reflect.Type) {
+	c.cancelLocked(key, ReasonSet)
+	now := c.options.Clock()
+	cached := entry{
+		typ: typ, value: value, hasData: true, updatedAt: now, tags: c.entries[key].tags,
+		shared:    c.entries[key].shared,
+		expiresAt: c.limitExpiry(now, now.Add(c.options.StaleTime)), ordinary: true,
+	}
+	c.advanceRevisionLocked(&cached)
+	c.entries[key] = cached
+	c.emitEventLocked(Event{Key: key, Kind: EventLocalWrite, Reason: ReasonSet})
+	c.touchCapacityLocked(key)
+	c.touchGCLocked(key)
+	c.notifyLocked(key)
 }
 
 // fetch shares one erased loader while keeping cancellation and type binding atomic with cache access.
@@ -290,6 +318,7 @@ func (c *Client) fetch(
 ) (any, error) {
 	useCache := !force
 	var countedLookup, countedMerge bool
+	var joinedFlight *flight
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -313,13 +342,18 @@ func (c *Client) fetch(
 			c.notifyLocked(key)
 		}
 		cached := c.entries[key]
-		state := c.withFreshnessLocked(key, c.snapshotLocked(key), request.options)
-		fresh := !state.Stale
+		// A cache decision only needs freshness; building a snapshot repeats age checks and clock reads under mu.
+		_, fresh := c.entryFreshnessLocked(cached, request.options.StaleTime)
 		if useCache && !countedLookup {
 			c.recordLookupLocked(fresh)
 			countedLookup = true
 		}
 		if !force && fresh {
+			c.registerTagsLocked(key, request.tags)
+			c.registerSharedLocked(key, request)
+			c.emitEventLocked(
+				Event{Key: key, Kind: EventCacheHit, Trigger: request.trigger, Reason: ReasonFresh, Err: cached.err},
+			)
 			c.touchCapacityLocked(key)
 			c.touchGCLocked(key)
 			c.mu.Unlock()
@@ -329,25 +363,41 @@ func (c *Client) fetch(
 			c.mu.Unlock()
 			return nil, ErrNoFetcher
 		}
+		pending := c.pending[key]
+		if pending != nil && pending.request.options.Executor.heldBy(ctx) {
+			// Joining preserves the initiator's budget, even when this caller overrides or disables its own.
+			// Reject before registering or invalidating state so a caller-held slot cannot block its own wait.
+			c.mu.Unlock()
+			return nil, ErrExecutionReentry
+		}
 		if err := c.bindLocked(key, typ); err != nil {
 			c.mu.Unlock()
 			return nil, err
 		}
+		c.registerTagsLocked(key, request.tags)
+		c.registerSharedLocked(key, request)
 		if force {
 			cached = c.entries[key]
 			cached.expiresAt = time.Time{}
 			cached.invalidated = true
+			cached.staleReason = ReasonRefetch
+			c.advanceRevisionLocked(&cached)
 			c.entries[key] = cached
 			c.notifyLocked(key)
 			force = false
 		}
-		pending := c.pending[key]
 		if pending == nil {
 			pending = c.startLocked(ctx, key, request)
-		} else if !countedMerge {
-			// Owner cancellation can repeat this loop, but one caller still represents one shared request.
-			c.stats.MergedRequests++
-			countedMerge = true
+		} else {
+			if !countedMerge {
+				// Owner cancellation can repeat this loop, but one caller still represents one shared request.
+				c.stats.MergedRequests++
+				countedMerge = true
+			}
+			if joinedFlight != pending {
+				c.joinLoadLocked(key, pending, request)
+				joinedFlight = pending
+			}
 		}
 		c.mu.Unlock()
 		select {
@@ -368,13 +418,18 @@ func (c *Client) fetch(
 
 // loadObservedLocked records an enabled consumer's cache decision and starts or joins a stale load.
 func (c *Client) loadObservedLocked(key any, request queryRequest) {
-	state := c.withFreshnessLocked(key, c.snapshotLocked(key), request.options)
-	c.recordLookupLocked(!state.Stale)
-	if !state.Stale {
+	// Enabling a consumer must still discard over-age data before checking its freshness policy.
+	c.expireDataLocked(key)
+	_, fresh := c.entryFreshnessLocked(c.entries[key], request.options.StaleTime)
+	c.recordLookupLocked(fresh)
+	if fresh {
+		c.emitEventLocked(Event{Key: key, Kind: EventCacheHit, Trigger: request.trigger, Reason: ReasonFresh,
+			Err: c.entries[key].err})
 		return
 	}
-	if c.pending[key] != nil {
+	if pending := c.pending[key]; pending != nil {
 		c.stats.MergedRequests++
+		c.joinLoadLocked(key, pending, request)
 		return
 	}
 	c.startLocked(c.ctx, key, request)
@@ -382,7 +437,7 @@ func (c *Client) loadObservedLocked(key any, request queryRequest) {
 
 // eraseFetcher copies an ordinary fetcher's policy and retains static typing at the API boundary.
 func eraseFetcher[V any](fetch Fetcher[V], options Options) queryRequest {
-	request := queryRequest{options: options, ordinary: true}
+	request := queryRequest{options: options, ordinary: true, trigger: TriggerFetch}
 	if fetch == nil {
 		return request
 	}

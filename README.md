@@ -5,7 +5,7 @@
 
   <p><strong>English</strong> | <a href="./README.zh-CN.md">简体中文</a></p>
 
-  <p><strong>Cache, retry, and share your queries</strong></p>
+  <p><strong>Manage shared query data, state, and refresh lifecycles</strong></p>
   <p>A typed, dependency-free query client for Go 1.22 and later</p>
   <p>Share data across components, combine duplicate requests, and observe query state.</p>
 
@@ -16,15 +16,39 @@
   <p><a href="#features">Features</a> · <a href="#install">Install</a></p>
 </div>
 
+## When to use cacheq
+
+Use cacheq when your Go application needs to coordinate data loading and
+synchronization: reuse cached results, share concurrent requests, batch reads,
+or refresh related queries after a write.
+
+It fits backend services, CLI/TUI applications, and background workers. You
+provide the HTTP requests, database operations, or other loaders; cacheq manages
+how they execute and how consumers receive their results.
+
+| Application scenario | How cacheq helps |
+| --- | --- |
+| Several handlers or components read the same user, configuration, or resource | Reuse fresh cached data and share in-flight requests for the same key |
+| A list or aggregation needs many objects from a backend with a bulk API | Collect different-key loads into batches, or submit known keys with `LoadMany` |
+| A successful write must update a detail view and refresh related lists or totals | Coordinate cache updates and invalidation through Mutation; optionally wait for associated refreshes |
+| Multiple callers need the same query key, loader, and loading policy | Create reusable definitions with `QueryDefinition` and shared `QueryOptions`; use tags and filters to manage related queries |
+| A view or long-running task needs to react to loading, results, errors, and refreshes | Subscribe to typed query updates; inspect diagnostic events to trace execution |
+| Reads and writes share a database or service with limited capacity | Bound active callbacks and queued work with a shared `Executor` |
+
+cacheq owns query state and local results within one process. Selected queries can
+reuse serialized results across processes through an optional
+[shared result cache](docs/shared-cache.en-US.md), including a separate Redis adapter.
+For simple local values that only need expiration, a TTL cache may be sufficient.
+
 ## Features
 
-- One shared client caches different result types: details, lists, and configuration.
-- Each query retains static typing; incompatible types for a key return an error.
-- One `Query` entry point supplies state, updates, enablement, and manual refresh.
-- Freshness, background refresh, same-key request sharing, retries, and load timeouts.
-- Per-consumer freshness, retry filtering, and timeout overrides through query and fetch options.
-- Single-key, mixed-type batch, and predicate invalidation with optional deferred refresh.
-- Local writes, prefetching, cancellation, and inactive cache cleanup.
+- Type-safe shared queries and caching.
+- Cache policies and lifecycle management.
+- Optional shared result caching with Redis and per-key invalidation.
+- Cache updates, mutations, and invalidation.
+- Automatic batch loading.
+- Shared execution budgets.
+- Query observability.
 
 ## Install
 
@@ -36,17 +60,61 @@ Import `github.com/Waterkyuu/cacheq` as package `cacheq`. Requires Go 1.22 or la
 
 ## Quick start
 
-```go
-client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
-defer client.Close()
+Save this complete program as `main.go` in a Go module that imports cacheq, then run `go run .`. It needs no server or credentials.
 
-query := cacheq.Query(client, "greeting", func(context.Context) (string, error) {
-	return "hello", nil
-})
-defer query.Close()
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"github.com/Waterkyuu/cacheq"
+)
+
+// main gives two components the same query without loading the data twice.
+func main() {
+	client := cacheq.NewClient(cacheq.Options{StaleTime: time.Minute})
+	defer client.Close()
+
+	var calls atomic.Int32
+	load := func(context.Context) (string, error) {
+		calls.Add(1)
+		return "hello", nil
+	}
+	queries := []*cacheq.QueryHandle[string]{
+		cacheq.Query(client, "greeting", load),
+		cacheq.Query(client, "greeting", load),
+	}
+	for _, query := range queries {
+		defer query.Close()
+	}
+	for i, query := range queries {
+		for state := range query.Updates() {
+			if state.Err != nil {
+				panic(state.Err)
+			}
+			if state.HasData && !state.Fetching {
+				fmt.Printf("component %d: %s\n", i+1, state.Data)
+				break
+			}
+		}
+	}
+	fmt.Printf("loader calls: %d\n", calls.Load())
+}
 ```
 
-`Query` loads in the background; queries with the same key share cached data and requests. Use `Snapshot()` for state, `Updates()` for notifications, or `Fetch` to wait for a result.
+Expected output:
+
+```text
+component 1: hello
+component 2: hello
+loader calls: 1
+```
+
+`Query` loads in the background. These two components either join the same active request or reuse its fresh result. `Updates()` delivers the initial and latest states; slow consumers can skip intermediate transitions. Use `Snapshot()` for current state, or `Fetch` to wait for a result without subscribing.
 
 ## Use cases
 
@@ -61,7 +129,9 @@ After a successful mutation, use `Invalidate` for related queries. HTTP cache ke
 
 ## Bubble Tea example
 
-[Full source and instructions](examples/bubbletea/) demonstrate query updates in a TUI, background refresh, retained data on failure, and exit cleanup. The example requires Go 1.26+.
+[Run the task board](examples/bubbletea/) to see list, detail, and summary views subscribe to one query. Toggle a task to refresh all three views, or inject a failure to see retained data and recovery. The example requires Go 1.26+.
+
+See the [walkthrough](docs/bubbletea.en-US.md) for the subscription and mutation flow.
 
 ```sh
 cd examples/bubbletea
@@ -77,6 +147,22 @@ cd examples/mcp
 go run .
 ```
 
+## Redis examples
+
+[Source and run instructions](examples/redis/) demonstrate shared results, cache failure fallback, remote tags, and cross-instance invalidation notifications. These examples require Go 1.26+ and a local Redis server.
+
+See the [shared cache guide](docs/shared-cache.en-US.md) and [shared invalidation guide](docs/shared-invalidation.en-US.md) for setup, expected output, and API contracts.
+
+## Reproducible benchmarks
+
+Compare **no cache, first load, and cache hits** for **100 sequential reads** of the same data in the [benchmark guide](benchmarks/benchmarks.en-US.md). The main table reports total time and actual loader calls; internal cost and concurrency diagnostics are documented separately.
+
+```sh
+go test -run '^$' -bench '^BenchmarkCacheBenefit$' -benchmem -count=3 -cpu=1
+```
+
+The [concurrent request scenarios](benchmarks/benchmarks.en-US.md#concurrent-request-scenarios) compare cache behavior for shared and distinct keys with 100 reads, GOMAXPROCS=4, and four request goroutines performing 25 reads each.
+
 ## Feature guides
 
 Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English or Chinese.
@@ -84,10 +170,19 @@ Read the [documentation website](https://waterkyuu.github.io/cacheq/) in English
 | Guide | Coverage |
 | --- | --- |
 | [Queries and conditions](docs/queries.en-US.md) | `Query`, snapshots, updates, enablement, refresh, `Fetch`, and HTTP loaders |
-| [Query options](docs/query-options.en-US.md) | Per-consumer defaults, independent freshness, filtered retries, timeouts, and shared request ownership |
+| [Query options](docs/query-options.en-US.md) | Shared loading options, reusable typed query definitions, freshness, retries, and timeouts |
+| [Query filters](docs/query-filters.en-US.md) | Reusable key and predicate selection for invalidation, awaited refresh, cancellation, and removal |
+| [Query tags](docs/query-tags.en-US.md) | Declare related query groups, select by label, and manage registration and retention |
+| [Automatic batch loading](docs/batching.en-US.md) | Concurrent-key batching, LoadMany for known keys, query API integration, per-key results, and cancellation |
 | [Cache and lifecycle](docs/cache.en-US.md) | Cache operations, options, cleanup, cancellation, removal, closure, and errors |
-| [Invalidation](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, and refresh modes |
+| [Shared result cache](docs/shared-cache.en-US.md) | Optional Redis caching, codecs, source freshness, per-key invalidation, conditional writes, and failure handling |
+| [Shared invalidation and tags](docs/shared-invalidation.en-US.md) | Cross-instance notifications, remote tag generations, watcher lifecycle, connection recovery, and atomic Redis tag layouts |
+| [Invalidation & refresh](docs/invalidation.en-US.md) | Single-key, batch, predicate invalidation, awaitable refresh, and bounded follow-up loads |
+| [Atomic cache updates](docs/updates.en-US.md) | Conflict-safe typed transformations, immutable values, and explicit retry contracts |
+| [Mutations & synchronization](docs/mutations.en-US.md) | Write state, optional refresh waiting, associated invalidation, and separate synchronization errors |
+| [Execution budgets](docs/execution.en-US.md) | Shared concurrency limits, bounded FIFO queues, overload handling, and cancellation |
 | [Observability](docs/observability.en-US.md) | Cache hits, shared requests, load outcomes and duration, retries, and cleanup statistics |
+| [Diagnostic events](docs/events.en-US.md) | Per-key load causes and sources, shared operation IDs, joins, retries, discarded results, and bounded subscriptions |
 | [MCP resource caching](docs/mcp.en-US.md) | Server-side reuse, remaining TTL, change notifications, private scopes, and e2e |
 
 Complete integrations live in `examples`; the guides cover API details. Treat cached values as immutable; copy slices and maps before modifying them. Different result types cannot reuse the same key.

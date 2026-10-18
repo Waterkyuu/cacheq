@@ -1,6 +1,17 @@
 ---
 import { Code } from "@astrojs/starlight/components";
-const queryCode = `client := cacheq.NewClient(cacheq.Options{
+const queryCode = `type User struct {
+    Name string
+}
+
+loadUser := func(context.Context) (User, error) {
+    return User{Name: "Alice"}, nil
+}
+loadUsers := func(context.Context) ([]User, error) {
+    return []User{{Name: "Alice"}}, nil
+}
+
+client := cacheq.NewClient(cacheq.Options{
     StaleTime: time.Minute,
 })
 defer client.Close()
@@ -14,56 +25,6 @@ const { chinese = false } = Astro.props;
 const base = import.meta.env.BASE_URL;
 const docs = `${base}${chinese ? "zh-CN/" : ""}docs/`;
 const logo = `${base}cacheq.png`;
-const guides = [
-	{
-		slug: "queries",
-		title: chinese ? "查询与条件请求" : "Queries & conditions",
-		description: chinese
-			? "共享请求，读取状态，满足条件再加载。"
-			: "Share requests, read state, and load when ready.",
-		api: "Query · SetEnabled · Updates",
-	},
-	{
-		slug: "query-options",
-		title: chinese ? "查询配置" : "Query options",
-		description: chinese
-			? "按消费者配置新鲜时间、重试和超时。"
-			: "Set freshness, retries, and timeouts per consumer.",
-		api: "QueryOptions · FetchWithOptions",
-	},
-	{
-		slug: "cache",
-		title: chinese ? "缓存与生命周期" : "Cache & lifecycle",
-		description: chinese
-			? "复用新鲜数据，后台刷新，自动清理缓存。"
-			: "Reuse data, refresh in the background, and clean up.",
-		api: "StaleTime · GCTime · Prefetch",
-	},
-	{
-		slug: "invalidation",
-		title: chinese ? "缓存失效" : "Invalidation",
-		description: chinese
-			? "把相关缓存一起作废，选择何时重新请求。"
-			: "Invalidate related data and choose when to refetch.",
-		api: "Invalidate · RefetchMode",
-	},
-	{
-		slug: "observability",
-		title: chinese ? "可观测性" : "Observability",
-		description: chinese
-			? "查看缓存命中、请求合并、加载和清理统计。"
-			: "Measure cache hits, shared requests, loads, and cleanup.",
-		api: "Stats",
-	},
-	{
-		slug: "mcp",
-		title: chinese ? "MCP 资源缓存" : "MCP resource caching",
-		description: chinese
-			? "共享资源读取，保留有效期，接收变化通知。"
-			: "Share resource reads, preserve TTL, and notify on changes.",
-		api: "FetchWithExpiry · Invalidate · Stats",
-	},
-];
 ---
 
 <div class="home">
@@ -96,24 +57,12 @@ const guides = [
 			<span>·</span> MIT
 		</span>
 	</section>
-	<section class="home-guides" aria-label={chinese ? "功能指南" : "Feature guides"}>
-		{guides.map((guide) => (
-			<a class="guide-card" href={docs + guide.slug + "/"}>
-				<h2>
-					{guide.title}
-					<span aria-hidden="true">↗</span>
-				</h2>
-				<p>{guide.description}</p>
-				<code>{guide.api}</code>
-			</a>
-		))}
-	</section>
 	<section class="home-code">
 		<h2>{chinese ? "一个客户端，多种类型。" : "One client. Different result types."}</h2>
 		<p>
 			{chinese
-				? "用户详情与用户列表共用缓存，各自保留类型。"
-				: "Profiles and lists share the same client, while keeping their types."}
+				? "User 用户详情与 []User 用户列表使用同一客户端，各自保留类型。"
+				: "A User profile and a []User list share the same client, while keeping their types."}
 		</p>
 		<Code code={queryCode} lang="go" />
 		<a class="home-inline-link" href={docs + "queries/"}>
