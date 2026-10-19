@@ -15,7 +15,7 @@
 		"test:build": "node --test tests/*.test.mts"
 	},
 	"dependencies": {
-		"@astrojs/react": "7.0.1",
+		"@astrojs/react": "7.1.0",
 		"@astrojs/starlight": "0.42.6",
 		"astro": "7.3.8",
 		"react": "19.3.1",
